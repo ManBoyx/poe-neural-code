@@ -1,0 +1,753 @@
+                                      ╔══════════════════════════╗
+                                      ║     POE NEURAL CODE      ║
+                                      ║    TERMINAL ECLIPSE      ║
+                                      ╚════════════╤═════════════╝
+                                                   │
+                                      ┌────────────▼─────────────┐
+                                      │ ENVIRONNEMENT DE TRAVAIL │
+                                      │ Python · Windows/Linux  │
+                                      └────────────┬─────────────┘
+                                                   │
+          ┌────────────────────┬───────────────────┼───────────────────┬─────────────────────┐
+          │                    │                   │                   │                     │
+          ▼                    ▼                   ▼                   ▼                     ▼
+  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐   ┌────────────────┐
+  │   INTERFACE    │  │     AGENT      │  │    MÉMOIRE     │  │ CONSOMMATION   │   │ CONFIGURATION  │
+  │   TERMINALE    │  │ PROGRAMMATION  │  │  PERSISTANTE   │  │  ET BUDGETS    │   │ ET PROTECTION  │
+  └───────┬────────┘  └───────┬────────┘  └───────┬────────┘  └───────┬────────┘   └───────┬────────┘
+          │                    │                   │                   │                     │
+          ▼                    ▼                   ▼                   ▼                     ▼
+     [BRANCHE A]          [BRANCHE B]          [BRANCHE C]          [BRANCHE D]           [BRANCHE E]
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ BRANCHE A                                      INTERFACE TERMINALE
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+                                      ┌──────────────────────────┐
+                                      │     TERMINAL ECLIPSE     │
+                                      │  Interface type OpenCode │
+                                      └────────────┬─────────────┘
+                                                   │
+             ┌────────────────────┬────────────────┼────────────────┬────────────────────┐
+             ▼                    ▼                ▼                ▼                    ▼
+    ┌─────────────────┐  ┌────────────────┐ ┌──────────────┐ ┌────────────────┐  ┌─────────────────┐
+    │ ÉCRAN D’ACCUEIL │  │ ZONE CENTRALE  │ │ BARRE DE     │ │ PANNEAU        │  │ BARRE D’ÉTAT    │
+    │                 │  │                │ │ SAISIE       │ │ LATÉRAL        │  │                 │
+    └────────┬────────┘  └───────┬────────┘ └──────┬───────┘ └───────┬────────┘  └────────┬────────┘
+             │                   │                │                 │                    │
+             ├─ Ouvrir projet    ├─ Conversation  ├─ Demandes       ├─ Todo facultative  ├─ Modèle actif
+             ├─ Nouveau projet   ├─ Réponses IA   ├─ Commandes /…   ├─ Tâche en cours    ├─ Connexion
+             ├─ Reprendre chat   ├─ Actions       ├─ Historique     ├─ District actif    ├─ Contexte estimé
+             ├─ Voir mémoire     ├─ Différences   └─ Annulation     ├─ Souvenirs utiles  ├─ Outil actif
+             └─ Paramètres       ├─ Commandes                      │                    └─ Budget restant
+                                 ├─ Résultats                      └─ Consommation
+                                 └─ Erreurs                            │
+                                                                      ├─ Aujourd’hui
+                                                                      ├─ Mois / cycle
+                                                                      ├─ Session
+                                                                      └─ Renouvellement
+
+                                      ┌──────────────────────────┐
+                                      │ COMPORTEMENTS COMMUNS    │
+                                      └────────────┬─────────────┘
+                                                   │
+                          ┌────────────────────────┼────────────────────────┐
+                          ▼                        ▼                        ▼
+                 ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+                 │ NAVIGATION      │      │ AFFICHAGE       │      │ RÉACTIVITÉ      │
+                 └────────┬────────┘      └────────┬────────┘      └────────┬────────┘
+                          ├─ Clavier               ├─ Progressif            ├─ Tâches de fond
+                          ├─ Défilement            ├─ Outils repliables     ├─ Annulation
+                          └─ Redimensionnement     └─ Erreurs explicites   └─ Pas de gel UI
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ BRANCHE B                                     AGENT DE PROGRAMMATION
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+                                      ┌──────────────────────────┐
+                                      │    DEMANDE UTILISATEUR   │
+                                      └────────────┬─────────────┘
+                                                   │
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ IDENTIFIER LE TRAVAIL    │
+                                      │ Projet · objectif · état │
+                                      └────────────┬─────────────┘
+                                                   │
+                           ┌───────────────────────┼───────────────────────┐
+                           ▼                       ▼                       ▼
+                  ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+                  │ MÉMOIRE UTILE   │     │ CONTEXTE RÉCENT  │     │ ÉTAT DES FICHIERS│
+                  │ Branche C       │     │ Conversation    │     │ Sources actuelles│
+                  └────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+                           └───────────────────────┼───────────────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ CONSTRUIRE LE CONTEXTE   │
+                                      │ Utile · ciblé · borné    │
+                                      └────────────┬─────────────┘
+                                                   │
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ CONTRÔLER LE BUDGET      │◄──────────── Branche D
+                                      └────────────┬─────────────┘
+                                                   │
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ CONNECTEUR DE MODÈLE     │
+                                      │ Connexion de base        │
+                                      └────────────┬─────────────┘
+                                                   │
+                                    ┌──────────────┴──────────────┐
+                                    ▼                             ▼
+                           ┌─────────────────┐           ┌─────────────────┐
+                           │ POE PAR DÉFAUT  │           │ AUTRE FOURNISSEUR│
+                           │                 │           │ Extension future│
+                           └────────┬────────┘           └────────┬────────┘
+                                    └──────────────┬──────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ RÉPONSE DU MODÈLE        │
+                                      └────────────┬─────────────┘
+                                                   │
+                              ┌────────────────────┴────────────────────┐
+                              ▼                                         ▼
+                     ┌─────────────────┐                       ┌─────────────────┐
+                     │ RÉPONSE SIMPLE  │                       │ ACTION DEMANDÉE │
+                     └────────┬────────┘                       └────────┬────────┘
+                              │                                         │
+                              │                                         ▼
+                              │                              ┌─────────────────────┐
+                              │                              │ VÉRIFIER PERMISSIONS│◄── Branche E
+                              │                              └──────────┬──────────┘
+                              │                                         │
+                              │                     ┌───────────────────┴──────────────────┐
+                              │                     ▼                                      ▼
+                              │            ┌─────────────────┐                    ┌─────────────────┐
+                              │            │ ACTION AUTORISÉE│                    │ ACTION SENSIBLE │
+                              │            └────────┬────────┘                    └────────┬────────┘
+                              │                     │                                      │
+                              │                     │                             Confirmation / refus
+                              │                     │                                      │
+                              │                     └───────────────────┬──────────────────┘
+                              │                                         ▼
+                              │                              ┌─────────────────────┐
+                              │                              │ OUTILS DISPONIBLES  │
+                              │                              └──────────┬──────────┘
+                              │                                         │
+                              │        ┌───────────────┬────────────────┼────────────────┐
+                              │        ▼               ▼                ▼                ▼
+                              │   ┌──────────┐   ┌──────────┐   ┌──────────────┐  ┌──────────────┐
+                              │   │ FICHIERS │   │ COMMANDES│   │ TESTS/BUILDS │  │ OUTILS MCP   │
+                              │   └────┬─────┘   └────┬─────┘   └──────┬───────┘  └──────┬───────┘
+                              │        │              │                │                 │
+                              │        ├─ Lire        ├─ Exécuter      ├─ Compiler       ├─ Serveurs autorisés
+                              │        ├─ Rechercher  ├─ Capturer      ├─ Tester         ├─ Permissions propres
+                              │        ├─ Créer       ├─ Limiter durée └─ Vérifier       └─ Résultats contrôlés
+                              │        └─ Modifier    └─ Annuler
+                              │        │              │                │                 │
+                              │        └──────────────┴────────────────┼─────────────────┘
+                              │                                         ▼
+                              │                              ┌─────────────────────┐
+                              │                              │ RÉSULTAT RÉEL       │
+                              │                              │ Succès / erreur     │
+                              │                              └──────────┬──────────┘
+                              │                                         │
+                              │                         ┌───────────────┴────────────────┐
+                              │                         ▼                                ▼
+                              │                  Travail terminé                  Nouvelle étape
+                              │                         │                                │
+                              │                         │                  Retour au contexte
+                              │                         │                  avec résultat d’outil
+                              └─────────────────────────┤
+                                                        ▼
+                                           ┌──────────────────────────┐
+                                           │ SAUVEGARDER ET INFORMER  │
+                                           │ Actions · résultats · état│
+                                           └────────────┬─────────────┘
+                                                        │
+                                                        ▼
+                                                  Branche C
+
+    LIMITES DE LA BOUCLE
+    ├── Nombre d’étapes configurable
+    ├── Délais et annulation
+    ├── Détection des erreurs répétées
+    ├── Arrêt en cas de blocage
+    └── Aucun résultat inventé
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ BRANCHE C                                      NEURAL MEMORY ENGINE
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+                                      ┌──────────────────────────┐
+                                      │     MÉMOIRE CENTRALE     │
+                                      │ SQLite + archives disque│
+                                      └────────────┬─────────────┘
+                                                   │
+                         ┌─────────────────────────┼─────────────────────────┐
+                         ▼                         ▼                         ▼
+                ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
+                │ PRÉFÉRENCES     │       │ INDEX GLOBAL    │       │ DISTRICTS       │
+                │ EXPLICITES      │       │ ET RÉFÉRENCES   │       │ Un par projet   │
+                └────────┬────────┘       └────────┬────────┘       └────────┬────────┘
+                         │                         │                         │
+                         ├─ Langue                 ├─ Entités                ├─ Projet A
+                         ├─ Présentation           ├─ Mots-clés              ├─ Projet B
+                         └─ Règles utilisateur     └─ Recherche filtrée      └─ Projet C
+                                                                             │
+                                                                             ▼
+                                                         ┌────────────────────────────┐
+                                                         │ DISTRICT : discord-rust    │
+                                                         │ Exemple de projet isolé    │
+                                                         └──────────────┬─────────────┘
+                                                                        │
+                   ┌─────────────────────────┬──────────────────────────┼──────────────────────┐
+                   ▼                         ▼                          ▼                      ▼
+          ┌─────────────────┐      ┌──────────────────┐       ┌─────────────────┐    ┌─────────────────┐
+          │ IDENTITÉ        │      │ DISCUSSIONS      │       │ DÉPARTEMENTS    │    │ FICHE DE REPRISE│
+          └────────┬────────┘      └────────┬─────────┘       └────────┬────────┘    └────────┬────────┘
+                   │                        │                          │                      │
+                   ├─ Identifiant           ├─ Session 001            │                      ├─ But actuel
+                   ├─ Dossier               ├─ Session 002            │                      ├─ Architecture
+                   ├─ Description           └─ Session 003            │                      ├─ Contraintes
+                   └─ Permissions                    │                │                      ├─ Décisions
+                                                     ▼                │                      ├─ Dernier résultat
+                                            Segments cohérents        │                      ├─ Travail en cours
+                                                     │                │                      ├─ Blocages
+                                                     ▼                │                      └─ Prochaine action
+                                            Originaux conservés       │
+                                                                      │
+            ┌──────────────────┬──────────────────┬───────────────────┼──────────────────┬─────────────────┐
+            ▼                  ▼                  ▼                   ▼                  ▼                 ▼
+    ┌───────────────┐ ┌────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌────────────────┐
+    │ OBJECTIFS     │ │ ARCHITECTURE   │ │ CODE/FICHIERS  │ │ TÂCHES         │ │ TESTS/ERREURS  │ │ DOCUMENTATION  │
+    └───────┬───────┘ └───────┬────────┘ └───────┬────────┘ └───────┬────────┘ └───────┬────────┘ └───────┬────────┘
+            │                 │                  │                  │                  │                  │
+            ├─ Besoins        ├─ Choix validés   ├─ Modules         ├─ À faire         ├─ Commandes       ├─ Références
+            ├─ Contraintes    ├─ Justifications  ├─ Fichiers clés   ├─ En cours        ├─ Résultats       ├─ Procédures
+            └─ Hors périmètre ├─ Hypothèses      ├─ Fonctions       ├─ Vérifié         ├─ Blocages        └─ Explications
+                              └─ Alternatives   └─ Versions        └─ Bloqué          └─ Corrections
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ C.1                                  ENTITÉS, MOTS-CLÉS ET LIENS
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+                                      ┌──────────────────────────┐
+                                      │ NOUVEAU PASSAGE D’ÉCHANGE│
+                                      └────────────┬─────────────┘
+                                                   │
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ EXTRACTION DES ÉLÉMENTS  │
+                                      │ importants et vérifiables│
+                                      └────────────┬─────────────┘
+                                                   │
+                  ┌────────────────┬───────────────┼────────────────┬─────────────────┐
+                  ▼                ▼               ▼                ▼                 ▼
+          ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐  ┌──────────────┐
+          │ FICHIER      │ │ SYMBOLE      │ │ NOTION       │ │ DÉCISION     │  │ ERREUR       │
+          └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘  └──────┬───────┘
+                 │                │                │                │                 │
+                 ▼                ▼                ▼                ▼                 ▼
+       src/auth/session.rs  SessionManager     expiration     centraliser      code/message
+                                                             les sessions     exact
+                 │                │                │                │                 │
+                 └────────────────┴────────────────┼────────────────┴─────────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ LIENS DE CONTEXTE        │
+                                      └────────────┬─────────────┘
+                                                   │
+                         ┌─────────────────────────┼─────────────────────────┐
+                         ▼                         ▼                         ▼
+                ┌─────────────────┐       ┌─────────────────┐       ┌─────────────────┐
+                │ SOURCE ORIGINALE│       │ RÉSUMÉ STRUCTURÉ│       │ ÉTAT ASSOCIÉ    │
+                └────────┬────────┘       └────────┬────────┘       └────────┬────────┘
+                         │                         │                         │
+                         ├─ Session                ├─ Faits utiles          ├─ Décision active
+                         ├─ Segment                ├─ Noms exacts           ├─ Tâche ouverte
+                         ├─ Date                   └─ Références            ├─ Hypothèse
+                         └─ Messages                                        └─ Information périmée
+
+                                      ┌──────────────────────────┐
+                                      │ FICHE D’UNE ENTITÉ       │
+                                      └────────────┬─────────────┘
+                                                   │
+                                                   ├── Identifiant stable
+                                                   ├── Type et nom exact
+                                                   ├── Alias de recherche
+                                                   ├── District / département
+                                                   ├── Liens vers les sources
+                                                   ├── Importance et justification
+                                                   ├── Version / dernière validation
+                                                   └── Statut actif, remplacé ou à vérifier
+
+    EXEMPLE DE RÉCUPÉRATION
+    ┌───────────────────────┐     ┌───────────────────────┐     ┌──────────────────────────┐
+    │ « Reprends session.rs »│────►│ Entité fichier exacte │────►│ Résumé + décision + tâche│
+    └───────────────────────┘     └───────────────────────┘     └────────────┬─────────────┘
+                                                                            │
+                                                                            ▼
+                                                               Passage original si nécessaire
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ C.2                                      MOTEUR DE RECHERCHE SQLITE
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+                                      ┌──────────────────────────┐
+                                      │ REQUÊTE DE RECHERCHE     │
+                                      └────────────┬─────────────┘
+                                                   │
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ FILTRE PROJET/PERMISSIONS│
+                                      └────────────┬─────────────┘
+                                                   │
+                         ┌─────────────────────────┴─────────────────────────┐
+                         ▼                                                   ▼
+              ┌──────────────────────┐                           ┌──────────────────────┐
+              │ INDEX EXACTS SQLITE  │                           │ SQLITE FTS5          │
+              └──────────┬───────────┘                           └──────────┬───────────┘
+                         │                                                   │
+                         ├─ Chemins de fichiers                              ├─ Résumés
+                         ├─ Noms de symboles                                 ├─ Décisions
+                         ├─ Identifiants                                     ├─ Notions
+                         └─ Alias contrôlés                                  └─ Texte indexé utile
+                         │                                                   │
+                         └─────────────────────────┬─────────────────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ CLASSEMENT / DÉDOUBLONNAGE│
+                                      └────────────┬─────────────┘
+                                                   │
+                                                   ├── Correspondance exacte
+                                                   ├── Pertinence textuelle
+                                                   ├── Information encore active
+                                                   ├── Importance
+                                                   └── Récence adaptée à la demande
+                                                   │
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ CHARGEMENT PROGRESSIF    │
+                                      └────────────┬─────────────┘
+                                                   │
+                                  Résumé → décision → extrait → original
+                                                   │
+                                                   ▼
+                                         Constructeur de contexte
+
+    RAPIDITÉ
+    ├── Index adaptés aux requêtes courantes
+    ├── Résultats limités avant chargement détaillé
+    ├── Cache des recherches répétées
+    ├── Indexation incrémentale
+    ├── Transactions courtes
+    ├── Archives découpées en blocs indépendants
+    └── Temps de recherche réellement mesurés
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ C.3                                       COMPACTAGE ET ARCHIVES
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+                                      ┌──────────────────────────┐
+                                      │ SEGMENT À COMPACTER      │
+                                      └────────────┬─────────────┘
+                                                   │
+                       ┌───────────────────────────┴───────────────────────────┐
+                       ▼                                                       ▼
+          ┌──────────────────────────┐                           ┌──────────────────────────┐
+          │ EXTRACTION STRUCTURÉE    │                           │ ARCHIVAGE DE L’ORIGINAL  │
+          └────────────┬─────────────┘                           └────────────┬─────────────┘
+                       │                                                       │
+                       ├─ Faits                                                ├─ Texte complet
+                       ├─ Décisions                                            ├─ Identifiant stable
+                       ├─ Hypothèses                                           ├─ Références
+                       ├─ Tâches                                               └─ Bloc compressé
+                       ├─ Fichiers et symboles                                 │
+                       └─ Contradictions                                       ▼
+                       │                                            Décompression à la demande
+                       ▼
+          ┌──────────────────────────┐
+          │ RÉSUMÉS HIÉRARCHIQUES    │
+          └────────────┬─────────────┘
+                       │
+                       ├── Niveau 1 : segment de discussion
+                       ├── Niveau 2 : département
+                       └── Niveau 3 : fiche globale du projet
+                       │
+                       ▼
+          ┌──────────────────────────┐
+          │ CONTRÔLE DE COHÉRENCE    │
+          └────────────┬─────────────┘
+                       │
+                       ├── Noms exacts préservés
+                       ├── Sources accessibles
+                       ├── Incertitudes conservées
+                       ├── Décisions remplacées identifiées
+                       └── Aucun effacement implicite des originaux
+
+    DÉCLENCHEURS
+    ├── Segment terminé
+    ├── Contexte trop volumineux
+    ├── Fin de session si utile
+    └── Demande manuelle
+
+    ÉCONOMIE
+    ├── Ne pas recompacter les éléments inchangés
+    ├── Extraire localement ce qui peut l’être
+    ├── Compter le coût des résumés produits par un modèle
+    └── Traiter les travaux non urgents en arrière-plan
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ C.4                                          COUCHES DE MÉMOIRE
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+           ┌───────────────────────────────────────────────────────────────────────────┐
+           │ ARCHIVES DURABLES                                                        │
+           │ Originaux sur disque · compression physique · conservation longue durée  │
+           └────────────────────────────────────┬──────────────────────────────────────┘
+                                                │
+                                                ▼
+           ┌───────────────────────────────────────────────────────────────────────────┐
+           │ MÉMOIRE STRUCTURÉE SQLITE                                                │
+           │ Entités · liens · décisions · tâches · résumés · index de recherche       │
+           └────────────────────────────────────┬──────────────────────────────────────┘
+                                                │
+                                                ▼
+           ┌───────────────────────────────────────────────────────────────────────────┐
+           │ CACHE ACTIF LOCAL EN RAM                                                 │
+           │ Fiche projet · souvenirs utiles · résultats récemment consultés           │
+           └────────────────────────────────────┬──────────────────────────────────────┘
+                                                │
+                                                ▼
+           ┌───────────────────────────────────────────────────────────────────────────┐
+           │ CONTEXTE TRANSMIS AU MODÈLE                                               │
+           │ Sélection ciblée respectant la capacité et le budget disponibles          │
+           └───────────────────────────────────────────────────────────────────────────┘
+
+                                      ┌──────────────────────────┐
+                                      │ GESTION DU CACHE LOCAL   │
+                                      └────────────┬─────────────┘
+                                                   │
+                     ┌───────────────────┬─────────┴──────────┬───────────────────┐
+                     ▼                   ▼                    ▼                   ▼
+             ┌───────────────┐  ┌────────────────┐   ┌────────────────┐  ┌────────────────┐
+             │ TAILLE BORNÉE │  │ ÉPINGLAGE      │   │ INVALIDATION   │  │ ÉVICTION       │
+             └───────┬───────┘  └───────┬────────┘   └───────┬────────┘  └───────┬────────┘
+                     │                  │                    │                   │
+                     └─ RAM maximale    └─ Contraintes       └─ Source modifiée  └─ Peu utile/ancien
+                                           critiques
+
+    ÉVICTION DU CACHE ≠ SUPPRESSION DES ARCHIVES
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ C.5                                    CONSTRUCTION DU CONTEXTE DU MODÈLE
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+                                      ┌──────────────────────────┐
+                                      │ BUDGET DE CONTEXTE       │
+                                      └────────────┬─────────────┘
+                                                   │
+             ┌────────────────────┬────────────────┼────────────────┬─────────────────────┐
+             ▼                    ▼                ▼                ▼                     ▼
+    ┌─────────────────┐  ┌────────────────┐ ┌──────────────┐ ┌────────────────┐  ┌─────────────────┐
+    │ INSTRUCTIONS    │  │ DEMANDE ET     │ │ FICHE PROJET │ │ SOUVENIRS      │  │ RÉSERVE         │
+    │ ET OUTILS       │  │ ÉCHANGES RÉCENTS│ │ ET CONTRAINTES│ │ SÉLECTIONNÉS   │  │ POUR LA RÉPONSE │
+    └────────┬────────┘  └───────┬────────┘ └──────┬───────┘ └───────┬────────┘  └────────┬────────┘
+             └───────────────────┴────────────────┼────────────────┴─────────────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ CONTEXTE FINAL BORNÉ     │
+                                      └────────────┬─────────────┘
+                                                   │
+                                                   ▼
+                                                MODÈLE
+
+    SI DÉPASSEMENT
+    ├── Retirer les doublons
+    ├── Écarter les sorties devenues inutiles
+    ├── Décharger les extraits peu pertinents
+    ├── Remplacer l’ancien historique par ses résumés
+    └── Préserver les contraintes et références indispensables
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ C.6                                         SAUVEGARDE ET REPRISE
+────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+       ┌──────────────────────┐                                   ┌──────────────────────┐
+       │ FERMETURE DE SESSION │                                   │ RÉOUVERTURE DU PROJET│
+       └──────────┬───────────┘                                   └──────────┬───────────┘
+                  │                                                          │
+                  ├─ Sauver les échanges                                     ├─ Charger le district
+                  ├─ Sauver les actions                                      ├─ Lire la fiche projet
+                  ├─ Actualiser les tâches                                   ├─ Restaurer la tâche
+                  ├─ Actualiser les décisions                                ├─ Vérifier les fichiers
+                  └─ Écrire la fiche de reprise                              └─ Préparer le contexte
+                  │                                                          │
+                  ▼                                                          ▼
+       ┌──────────────────────┐                                   ┌──────────────────────┐
+       │ STOCKAGE PERSISTANT  │──────────────────────────────────►│ REPRISE CIBLÉE       │
+       └──────────────────────┘                                   └──────────────────────┘
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ BRANCHE D                                      CONSOMMATION ET BUDGETS
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+                                      ┌──────────────────────────┐
+                                      │ ÉVÉNEMENTS D’UTILISATION │
+                                      └────────────┬─────────────┘
+                                                   │
+                          ┌────────────────────────┼────────────────────────┐
+                          ▼                        ▼                        ▼
+                 ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+                 │ DONNÉES RÉELLES │      │ ESTIMATIONS     │      │ DONNÉES ABSENTES│
+                 └────────┬────────┘      └────────┬────────┘      └────────┬────────┘
+                          │                        │                        │
+                          ├─ Points si fournis     ├─ Méthode explicite    └─ « Indisponible »
+                          ├─ Tokens si fournis     ├─ Par modèle              Jamais inventées
+                          └─ Cache si détaillé     └─ Fourchette prudente
+                          │                        │
+                          └────────────┬───────────┘
+                                       ▼
+                           ┌──────────────────────────┐
+                           │ AGRÉGATION ET AFFICHAGE   │
+                           └────────────┬─────────────┘
+                                        │
+                    ┌───────────────────┼───────────────────┐
+                    ▼                   ▼                   ▼
+             ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐
+             │ JOUR / CYCLE │   │ SESSION      │   │ PROJET / MODÈLE  │
+             └──────────────┘   └──────────────┘   └──────────────────┘
+
+                                      ┌──────────────────────────┐
+                                      │ BUDGET GLOBAL LOCAL      │
+                                      │ Partagé entre modèles    │
+                                      └────────────┬─────────────┘
+                                                   │
+                       ┌───────────────────────────┼───────────────────────────┐
+                       ▼                           ▼                           ▼
+              ┌─────────────────┐         ┌─────────────────┐         ┌─────────────────┐
+              │ PLAFOND         │         │ PÉRIODE         │         │ PORTÉE          │
+              └────────┬────────┘         └────────┬────────┘         └────────┬────────┘
+                       ├─ Points                   ├─ Durée                    ├─ Tous modèles
+                       ├─ Tokens                   ├─ Fenêtre fixe/glissante   ├─ Modèle choisi
+                       └─ Alertes                  └─ Renouvellement local     └─ Session/projet
+                       │                           │                           │
+                       └───────────────────────────┼───────────────────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ /define token            │
+                                      │ Panneau de configuration │
+                                      └──────────────────────────┘
+
+    CONTRÔLE D’UN APPEL
+    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+    │ Estimer le coût │───►│ Réserver budget │───►│ Autoriser/bloquer│───►│ Réconcilier coût│
+    └─────────────────┘    └─────────────────┘    └─────────────────┘    └─────────────────┘
+
+    RÈGLES
+    ├── Inclure les appels de compactage
+    ├── Tenir compte des appels simultanés
+    ├── Distinguer budget local et solde fournisseur
+    ├── Aucun taux points/tokens universel
+    ├── Réinitialiser un budget ne recrédite pas le compte Poe
+    └── Signaler l’incertitude si le coût final n’est connu qu’après l’appel
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ BRANCHE E                                     CONFIGURATION ET PROTECTION
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+                                      ┌──────────────────────────┐
+                                      │ PARAMÈTRES DU LOGICIEL   │
+                                      └────────────┬─────────────┘
+                                                   │
+                  ┌───────────────────────┬────────┴──────────────┬───────────────────────┐
+                  ▼                       ▼                       ▼                       ▼
+         ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+         │ ENVIRONNEMENT   │     │ MÉMOIRE         │     │ PERMISSIONS     │     │ FIABILITÉ       │
+         └────────┬────────┘     └────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+                  │                       │                       │                       │
+                  ├─ Windows/Linux        ├─ Taille cache         ├─ Dossiers autorisés   ├─ Sauvegardes
+                  ├─ Python               ├─ Archives             ├─ Commandes permises   ├─ Migrations
+                  ├─ Projet actif         ├─ Compactage            ├─ Accès réseau         ├─ Transactions
+                  └─ Fournisseur          ├─ Recherche             ├─ Permissions MCP      ├─ Journalisation
+                                          └─ Rétention            └─ Confirmations         └─ Récupération
+
+                                      ┌──────────────────────────┐
+                                      │ FRONTIÈRE DE CONFIANCE   │
+                                      └────────────┬─────────────┘
+                                                   │
+                    ┌──────────────────────────────┼──────────────────────────────┐
+                    ▼                              ▼                              ▼
+          ┌────────────────────┐         ┌────────────────────┐         ┌────────────────────┐
+          │ FICHIERS ET DOCS   │         │ MÉMOIRE ET ARCHIVES │         │ SORTIES DES OUTILS │
+          │ Données non fiables│         │ Données non fiables │         │ Données non fiables│
+          └─────────┬──────────┘         └─────────┬──────────┘         └─────────┬──────────┘
+                    └──────────────────────────────┼──────────────────────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ NE PEUVENT PAS ACCORDER  │
+                                      │ DE NOUVEAUX PRIVILÈGES   │
+                                      └──────────────────────────┘
+
+    PROTECTIONS COMPLÉMENTAIRES
+    ├── Filtrer les secrets dans les journaux
+    ├── Contrôler les actions destructrices
+    ├── Prévoir délais et annulation
+    ├── Aucune élévation de privilèges implicite
+    └── Ne pas annoncer de sandbox sans isolation réelle
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ SOCLE TECHNIQUE                                ORGANISATION DES MODULES
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+                                      ┌──────────────────────────┐
+                                      │ APPLICATION PYTHON       │
+                                      └────────────┬─────────────┘
+                                                   │
+           ┌─────────────┬─────────────┬───────────┼─────────────┬─────────────┬─────────────┐
+           ▼             ▼             ▼           ▼             ▼             ▼             ▼
+       ┌───────┐   ┌───────────┐  ┌─────────┐ ┌─────────┐  ┌───────────┐ ┌──────────┐ ┌─────────┐
+       │  UI   │   │ PROVIDERS │  │  AGENT  │ │ MEMORY  │  │   TOOLS   │ │  USAGE   │ │ SECURITY│
+       └───┬───┘   └─────┬─────┘  └────┬────┘ └────┬────┘  └─────┬─────┘ └────┬─────┘ └────┬────┘
+           │             │             │           │              │            │            │
+           ├─ Accueil    ├─ Contrat    ├─ Boucle   ├─ SQLite      ├─ Fichiers  ├─ Mesures   ├─ Permissions
+           ├─ Terminal   └─ Poe        ├─ Outils   ├─ Archives    ├─ Commandes ├─ Estimation└─ Filtrage
+           ├─ Panneaux                 └─ État     ├─ Entités     └─ MCP       └─ Budgets
+           └─ Dialogues                            ├─ Recherche
+                                                   ├─ Cache
+                                                   ├─ Contexte
+                                                   ├─ Compactage
+                                                   └─ Intégrité
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ VALIDATION                                     CONTRÔLES TRANSVERSAUX
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+                                      ┌──────────────────────────┐
+                                      │ TESTS ET MESURES         │
+                                      └────────────┬─────────────┘
+                                                   │
+                  ┌────────────────┬───────────────┼────────────────┬─────────────────┐
+                  ▼                ▼               ▼                ▼                 ▼
+          ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐  ┌──────────────┐
+          │ AGENT        │ │ MÉMOIRE      │ │ PERFORMANCE  │ │ BUDGETS      │  │ SÉCURITÉ     │
+          └──────┬───────┘ └──────┬───────┘ └──────┬───────┘ └──────┬───────┘  └──────┬───────┘
+                 │                │                │                │                 │
+                 ├─ Actions       ├─ Persistance   ├─ Latence SQL   ├─ Compteurs       ├─ Accès refusés
+                 ├─ Annulation    ├─ Sources       ├─ RAM bornée    ├─ Renouvellement  ├─ Confirmations
+                 └─ Résultats     ├─ Recherche     ├─ UI réactive   ├─ Concurrence     └─ Secrets protégés
+                                  ├─ Compactage    └─ Gros volumes └─ Coûts inclus
+                                  └─ Reprise
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ CONSTRUCTION                                   PROGRESSION DU PROJET
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+     ┌──────────────────┐
+     │ 1. SOCLE         │
+     │ Terminal + Poe   │
+     │ Chats persistants│
+     └────────┬─────────┘
+              ▼
+     ┌──────────────────┐
+     │ 2. AGENT         │
+     │ Fichiers/outils  │
+     │ Tests/permissions│
+     └────────┬─────────┘
+              ▼
+     ┌──────────────────┐
+     │ 3. MÉMOIRE       │
+     │ SQLite + entités │
+     │ Districts + liens│
+     └────────┬─────────┘
+              ▼
+     ┌──────────────────┐
+     │ 4. OPTIMISATION  │
+     │ Cache + résumés  │
+     │ Contexte ciblé   │
+     └────────┬─────────┘
+              ▼
+     ┌──────────────────┐
+     │ 5. CONSOMMATION  │
+     │ Mesures + budgets│
+     │ Limites + panneau│
+     └────────┬─────────┘
+              ▼
+     ┌──────────────────┐
+     │ 6. EXTENSIONS    │
+     │ MCP + fiabilité  │
+     │ Tests multiplatef│
+     └──────────────────┘
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+ PRINCIPES                                      CE QUE LE SYSTÈME GARANTIT OU NON
+════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    MÉMOIRE EXTERNE ORGANISÉE
+    └── Ce n’est pas une modification des neurones du modèle.
+
+    CACHE LOCAL RAPIDE
+    └── Prépare les informations ; ne les rend pas automatiquement connues du modèle.
+
+    ARCHIVES COMPRESSÉES
+    └── Réduisent le stockage ; pas les tokens du texte une fois décompressé.
+
+    RÉSUMÉS COURTS
+    └── Réduisent le contexte ; les originaux compensent la perte possible de détails.
+
+    RECHERCHE CIBLÉE
+    └── Évite de relire tout l’historique ; ne garantit pas une latence nulle.
+
+    BUDGETS LOCAUX
+    └── Encadrent les appels ; ne créent pas de points supplémentaires.
+
+    CONNEXION AU FOURNISSEUR
+    └── Connexion de base incluse ; architecture API avancée reportée.
+
+
+                                      ╔══════════════════════════╗
+                                      ║     RÉSULTAT FINAL       ║
+                                      ╚════════════╤═════════════╝
+                                                   │
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ OUVRIR UN PROJET         │
+                                      └────────────┬─────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ RETROUVER SON ÉTAT       │
+                                      └────────────┬─────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ CHARGER LE CONTEXTE UTILE│
+                                      └────────────┬─────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ AGIR AVEC AUTORISATION   │
+                                      └────────────┬─────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ VÉRIFIER LES RÉSULTATS   │
+                                      └────────────┬─────────────┘
+                                                   ▼
+                                      ┌──────────────────────────┐
+                                      │ MÉMORISER ET REPRENDRE   │
+                                      │ SANS TOUT RETRANSMETTRE  │
+                                      └──────────────────────────┘

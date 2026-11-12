@@ -1,0 +1,14 @@
+{
+  "provider": "poe",
+  "model": null,
+  "max_output_tokens": 4096,
+  "max_agent_steps": 25,
+  "command_timeout_s": 120,
+  "auto_accept_edits": false,
+  "sidebar_visible": true,
+  "points_per_usd": null,
+  "context_window_override": null,
+  "reserve_for_output_ratio": 0.25,
+  "compact_trigger_ratio": 0.6,
+  "mcp_config": null
+}

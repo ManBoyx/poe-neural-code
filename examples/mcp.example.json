@@ -1,0 +1,17 @@
+{
+  "servers": {
+    "exemple-local": {
+      "command": "python",
+      "args": ["chemin/vers/serveur_mcp.py"],
+      "env": {},
+      "timeout_s": 30,
+      "trusted_tools": [],
+      "enabled": false
+    },
+    "exemple-http": {
+      "url": "http://localhost:8000/mcp",
+      "timeout_s": 30,
+      "enabled": false
+    }
+  }
+}

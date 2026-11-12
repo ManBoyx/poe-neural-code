@@ -1,0 +1,1001 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                           POE NEURAL CODE                            ║
+║                  Terminal de programmation : ECLIPSE                 ║
+║                                                                      ║
+║   Agent de programmation + mémoire persistante + recherche SQLite    ║
+║   Interface inspirée d’OpenCode · Python · Windows / Linux           ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+                                    │
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         OBJECTIF DU PROJET                           │
+│                                                                          │
+│ Construire un environnement terminal capable de :                         │
+│                                                                          │
+│  • Discuter avec un modèle et agir réellement sur un projet.               │
+│  • Lire, créer et modifier des fichiers avec permissions.                  │
+│  • Exécuter des commandes, builds et tests.                                │
+│  • Utiliser des outils et des serveurs MCP autorisés.                      │
+│  • Conserver les conversations et les connaissances importantes.           │
+│  • Reprendre un projet sans renvoyer tout son historique.                  │
+│  • Retrouver rapidement fichiers, décisions et passages anciens.           │
+│  • Réduire le contexte inutile sans supprimer les sources.                 │
+│  • Afficher et encadrer la consommation de points et de tokens.            │
+└──────────────────────────────────────────────────────────────────────────┘
+                                    │
+             ┌──────────────────────┼──────────────────────┐
+             ▼                      ▼                      ▼
+    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+    │ INTERFACE       │    │ AGENT           │    │ MÉMOIRE         │
+    │ Terminal        │◄──►│ Programmation   │◄──►│ Persistante     │
+    │ Utilisateur     │    │ Outils / tâches │    │ Recherche/cache │
+    └─────────────────┘    └─────────────────┘    └─────────────────┘
+             │                      │                      │
+             └──────────────────────┼──────────────────────┘
+                                    ▼
+                         ┌─────────────────────┐
+                         │ BUDGETS ET SÉCURITÉ  │
+                         │ Contrôles communs    │
+                         └─────────────────────┘
+
+
+════════════════════════════════════════════════════════════════════════════
+01 · INTERFACE DU TERMINAL ECLIPSE
+════════════════════════════════════════════════════════════════════════════
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ ECLIPSE · Projet : discord-rust · Modèle : sélectionné · Connecté          │
+├──────────────────────────────────────────────────┬───────────────────────┤
+│                                                  │ PANNEAU LATÉRAL       │
+│ CONVERSATION ET ACTIVITÉ                          │                       │
+│                                                  │ TÂCHES — optionnel    │
+│ > Demande utilisateur                            │ [✓] Examiner le code  │
+│                                                  │ [~] Modifier sessions │
+│ Réponse progressive de l’agent                    │ [ ] Lancer les tests  │
+│                                                  │                       │
+│ ┌─ Lecture de fichier ─────────────────────────┐ │ MÉMOIRE ACTIVE        │
+│ │ src/auth/session.rs                          │ │ District courant     │
+│ └──────────────────────────────────────────────┘ │ Département actif    │
+│                                                  │ Sources sélectionnées │
+│ ┌─ Commande / résultat ────────────────────────┐ │                       │
+│ │ cargo test                                   │ │ CONSOMMATION          │
+│ │ Résultat réel de l’exécution                 │ │ Aujourd’hui : … pts  │
+│ └──────────────────────────────────────────────┘ │ Mois/cycle : … pts   │
+│                                                  │ Budget restant : …    │
+│                                                  │ Renouvellement : …    │
+├──────────────────────────────────────────────────┴───────────────────────┤
+│ > Saisir une demande ou une commande /…                                  │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Contexte : estimation / capacité · Tâche : active · Annulation disponible │
+└──────────────────────────────────────────────────────────────────────────┘
+
+    ÉCRAN D’ACCUEIL
+    ├── Ouvrir un dossier de projet
+    ├── Créer un nouveau district
+    ├── Reprendre une session
+    ├── Consulter la mémoire
+    └── Accéder aux paramètres
+
+    COMPORTEMENT
+    ├── Navigation au clavier
+    ├── Interface redimensionnable
+    ├── Affichage progressif si le fournisseur le permet
+    ├── Résultats d’outils repliables
+    ├── État de connexion et erreurs explicites
+    ├── Annulation des opérations longues
+    └── Todo list facultative :
+        pas de génération répétée si elle n’apporte rien
+
+
+════════════════════════════════════════════════════════════════════════════
+02 · CONNEXION AU MODÈLE — PÉRIMÈTRE MINIMAL
+════════════════════════════════════════════════════════════════════════════
+
+                         ┌──────────────────────┐
+                         │ APPLICATION ECLIPSE  │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                         ┌──────────────────────┐
+                         │ CONNECTEUR ABSTRAIT  │
+                         │ Envoi / réception    │
+                         │ Erreurs / usage      │
+                         └──────────┬───────────┘
+                                    │
+                    ┌───────────────┴────────────────┐
+                    ▼                                ▼
+          ┌───────────────────┐            ┌───────────────────┐
+          │ POE               │            │ AUTRE FOURNISSEUR │
+          │ Fournisseur       │            │ Extension future  │
+          │ par défaut        │            │ du connecteur     │
+          └───────────────────┘            └───────────────────┘
+
+    INCLUS
+    ├── Connexion de base nécessaire au fonctionnement
+    ├── Transmission du contexte sélectionné
+    ├── Réception des réponses
+    ├── Gestion des interruptions et erreurs
+    └── Récupération des métriques réellement disponibles
+
+    HORS PÉRIMÈTRE POUR LE MOMENT
+    ├── Conception détaillée de la gestion des clés
+    ├── Passerelle API centrale
+    ├── Duplication de connexions
+    ├── Gestion multi-comptes
+    └── Routage avancé entre fournisseurs
+
+    RÈGLE
+    └── Vérifier les capacités documentées.
+        Ne pas inventer un cache fournisseur, une métrique ou une connexion.
+
+
+════════════════════════════════════════════════════════════════════════════
+03 · BOUCLE DE L’AGENT DE PROGRAMMATION
+════════════════════════════════════════════════════════════════════════════
+
+    DEMANDE UTILISATEUR
+            │
+            ▼
+    Identifier le projet et l’objectif
+            │
+            ▼
+    Charger l’état du projet et rechercher les souvenirs utiles
+            │
+            ▼
+    Construire un contexte borné
+            │
+            ▼
+    Interroger le modèle
+            │
+            ▼
+    ┌───────────────────────────────────────────────────────┐
+    │ Le modèle propose une réponse ou une action d’outil  │
+    └──────────────────────────┬────────────────────────────┘
+                               │
+                 ┌─────────────┴─────────────┐
+                 ▼                           ▼
+          RÉPONSE SIMPLE               ACTION NÉCESSAIRE
+                 │                           │
+                 │                           ▼
+                 │                Vérifier les permissions
+                 │                           │
+                 │                           ▼
+                 │                Demander confirmation
+                 │                si l’action le nécessite
+                 │                           │
+                 │                           ▼
+                 │                Exécuter l’outil réel
+                 │                           │
+                 │                           ▼
+                 │                Collecter le résultat
+                 │                           │
+                 │                           ▼
+                 │                Mettre à jour le contexte
+                 │                           │
+                 │                           └──► Boucle suivante
+                 ▼
+    Enregistrer réponse, actions, résultats et état de travail
+
+    OUTILS
+    ├── Lire et rechercher dans les fichiers
+    ├── Créer ou modifier des fichiers
+    ├── Afficher les différences avant/après
+    ├── Exécuter des commandes autorisées
+    ├── Lancer builds, tests et vérifications
+    ├── Interroger la mémoire locale
+    └── Appeler les outils MCP autorisés
+
+    CONTRÔLE DE LA BOUCLE
+    ├── Nombre d’étapes configurable
+    ├── Délais d’exécution
+    ├── Détection des erreurs répétées
+    ├── Arrêt ou confirmation en cas de blocage
+    └── Aucun succès annoncé sans résultat vérifié
+
+
+════════════════════════════════════════════════════════════════════════════
+04 · NEURAL MEMORY ENGINE — VUE GLOBALE
+════════════════════════════════════════════════════════════════════════════
+
+    « Neural » désigne ici une mémoire applicative organisée.
+    Ce système ne modifie pas les poids du modèle.
+
+                        ┌─────────────────────────┐
+                        │    MÉMOIRE CENTRALE     │
+                        │ SQLite + archives disque│
+                        └────────────┬────────────┘
+                                     │
+          ┌──────────────────────────┼─────────────────────────┐
+          ▼                          ▼                         ▼
+ ┌──────────────────┐     ┌──────────────────┐      ┌──────────────────┐
+ │ PRÉFÉRENCES      │     │ INDEX GLOBAL     │      │ DISTRICTS        │
+ │ UTILISATEUR      │     │ Recherche        │      │ Un par projet    │
+ │ Explicites       │     │ et références    │      │ Isolés par défaut│
+ └──────────────────┘     └──────────────────┘      └────────┬─────────┘
+                                                            │
+                            ┌───────────────────────────────┘
+                            ▼
+                ┌───────────────────────────────┐
+                │ DISTRICT : discord-rust       │
+                │ Projet, sessions, connaissances│
+                └───────────────┬───────────────┘
+                                │
+       ┌────────────────────────┼───────────────────────────┐
+       ▼                        ▼                           ▼
+ ┌──────────────┐       ┌────────────────┐        ┌──────────────────┐
+ │ DISCUSSIONS  │       │ DÉPARTEMENTS   │        │ ÉTAT DU PROJET   │
+ │ Sessions et  │       │ Organisation   │        │ Reprise rapide   │
+ │ historique   │       │ thématique     │        │ du travail       │
+ └──────┬───────┘       └────────┬───────┘        └──────────────────┘
+        │                       │
+        ▼                       ├── Objectifs et contraintes
+ SEGMENTS SOURCES               ├── Architecture et décisions
+        │                       ├── Code et fichiers
+        │                       ├── Tâches et progression
+        │                       ├── Tests et erreurs
+        │                       └── Documentation et références
+        │                                   │
+        └────────────────┬──────────────────┘
+                         ▼
+               ENTITÉS + MOTS-CLÉS + LIENS
+                         │
+                         ▼
+             RÉSUMÉS STRUCTURÉS ET VERSIONNÉS
+                         │
+                         ▼
+                CACHE DE TRAVAIL LOCAL
+                         │
+                         ▼
+              CONSTRUCTEUR DE CONTEXTE
+                         │
+                         ▼
+                       MODÈLE
+
+
+════════════════════════════════════════════════════════════════════════════
+05 · CONTENU D’UN DISTRICT
+════════════════════════════════════════════════════════════════════════════
+
+    DISTRICT : discord-rust
+    │
+    ├── IDENTITÉ
+    │   ├── Identifiant stable
+    │   ├── Nom et description
+    │   ├── Dossier du projet
+    │   └── Permissions associées
+    │
+    ├── DISCUSSIONS
+    │   ├── Session 001 : conception
+    │   ├── Session 002 : authentification
+    │   └── Session 003 : correction de l’expiration
+    │
+    ├── DÉPARTEMENT : OBJECTIFS ET CONTRAINTES
+    │   ├── Fonctionnalités attendues
+    │   ├── Contraintes techniques
+    │   └── Éléments explicitement hors périmètre
+    │
+    ├── DÉPARTEMENT : ARCHITECTURE ET DÉCISIONS
+    │   ├── Choix validés et justification
+    │   ├── Hypothèses non confirmées
+    │   ├── Alternatives rejetées
+    │   └── Décisions remplacées et contradictions
+    │
+    ├── DÉPARTEMENT : CODE ET FICHIERS
+    │   ├── Carte des modules
+    │   ├── Fichiers importants
+    │   ├── Fonctions et structures importantes
+    │   └── Observations liées à une version du code
+    │
+    ├── DÉPARTEMENT : TÂCHES ET PROGRESSION
+    │   ├── À faire
+    │   ├── En cours
+    │   ├── Terminé et vérifié
+    │   └── Bloqué
+    │
+    ├── DÉPARTEMENT : TESTS ET ERREURS
+    │   ├── Commandes exécutées
+    │   ├── Résultats et dates
+    │   ├── Erreurs identifiées
+    │   └── Corrections essayées
+    │
+    ├── DÉPARTEMENT : DOCUMENTATION
+    │   ├── Références utiles
+    │   ├── Procédures
+    │   └── Explications du fonctionnement
+    │
+    └── FICHE DE REPRISE
+        ├── But actuel
+        ├── Architecture résumée
+        ├── Contraintes essentielles
+        ├── Dernières décisions actives
+        ├── Dernier résultat vérifié
+        ├── Tâche en cours
+        ├── Blocages
+        └── Prochaine action proposée
+
+
+════════════════════════════════════════════════════════════════════════════
+06 · MOTS-CLÉS, FICHIERS IMPORTANTS ET CONTEXTE ASSOCIÉ
+════════════════════════════════════════════════════════════════════════════
+
+    PASSAGE DE CONVERSATION
+    « Le renouvellement des sessions doit passer par SessionManager,
+      dans src/auth/session.rs. Il faut encore tester l’expiration. »
+                                  │
+                                  ▼
+                         EXTRACTION D’ENTITÉS
+                                  │
+          ┌───────────────────────┼────────────────────────┐
+          ▼                       ▼                        ▼
+ FICHIER                    SYMBOLE                    NOTIONS
+ src/auth/session.rs        SessionManager             session
+                                                       expiration
+                                                       renouvellement
+          │                       │                        │
+          └───────────────────────┼────────────────────────┘
+                                  ▼
+                         LIENS DE MÉMOIRE
+                                  │
+          ┌───────────────────────┼────────────────────────┐
+          ▼                       ▼                        ▼
+ SEGMENT ORIGINAL          DÉCISION ACTIVE              TÂCHE
+ Messages concernés        Centraliser la logique      Tester
+ + date + session          dans SessionManager         l’expiration
+          │                       │                        │
+          └───────────────────────┼────────────────────────┘
+                                  ▼
+                         RÉSUMÉ STRUCTURÉ
+    « Sessions : renouvellement centralisé dans SessionManager
+      [src/auth/session.rs]. Test d’expiration restant à effectuer. »
+                                  │
+                                  ▼
+                         INDEXATION RECHERCHABLE
+
+    POUR CHAQUE ENTITÉ
+    ├── Identifiant stable
+    ├── Type : fichier / symbole / notion / erreur / autre
+    ├── Nom exact
+    ├── Nom normalisé pour la recherche
+    ├── Alias éventuels
+    ├── District et département
+    ├── Segments et résumés associés
+    ├── Importance et raison de cette importance
+    ├── Dates de création et de dernière validation
+    └── État : actif / remplacé / à vérifier
+
+    RÈGLES D’IMPORTANCE
+    ├── Mention explicite : « ce fichier est important »
+    ├── Décision validée
+    ├── Fichier réellement modifié
+    ├── Symbole central au travail actuel
+    ├── Erreur ou blocage actif
+    ├── Références répétées
+    └── Épinglage manuel de l’utilisateur
+
+    GARDE-FOUS
+    ├── Ne pas transformer chaque mot en mot-clé important
+    ├── Conserver les noms exacts malgré le compactage
+    ├── Ne pas fusionner deux fichiers ayant seulement le même nom
+    ├── Conserver les anciens noms après un renommage
+    └── Distinguer un fait vérifié d’une hypothèse du modèle
+
+
+════════════════════════════════════════════════════════════════════════════
+07 · RECHERCHE RAPIDE AVEC SQLITE
+════════════════════════════════════════════════════════════════════════════
+
+    DEMANDE
+    « Reprends le problème d’expiration dans session.rs »
+                                  │
+                                  ▼
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ 1. FILTRER PAR DISTRICT ET PERMISSIONS                              │
+    │    Chercher dans le bon projet avant toute recherche globale.      │
+    └─────────────────────────────┬──────────────────────────────────────┘
+                                  ▼
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ 2. RECHERCHER LES IDENTIFIANTS EXACTS                               │
+    │    Chemin de fichier, nom de symbole, code d’erreur.                │
+    │    Index SQLite classiques adaptés aux égalités.                   │
+    └─────────────────────────────┬──────────────────────────────────────┘
+                                  ▼
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ 3. RÉSOUDRE LES ALIAS                                               │
+    │    session.rs → src/auth/session.rs, si la correspondance est sûre. │
+    │    En cas d’ambiguïté : conserver plusieurs candidats.              │
+    └─────────────────────────────┬──────────────────────────────────────┘
+                                  ▼
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ 4. COMPLÉTER AVEC SQLITE FTS5                                      │
+    │    Recherche textuelle : expiration, session, renouvellement.       │
+    │    Recherche dans les résumés et textes indexés utiles.             │
+    └─────────────────────────────┬──────────────────────────────────────┘
+                                  ▼
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ 5. CLASSER ET DÉDOUBLONNER                                         │
+    │    Correspondance exacte + pertinence textuelle + état actif       │
+    │    + importance + récence pertinente pour la demande.               │
+    └─────────────────────────────┬──────────────────────────────────────┘
+                                  ▼
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ 6. CHARGER LE MINIMUM SUFFISANT                                    │
+    │    Résumé → décision → passage original si nécessaire.              │
+    │    Lire le fichier actuel avant toute modification.                 │
+    └─────────────────────────────┬──────────────────────────────────────┘
+                                  ▼
+                          CONTEXTE DU MODÈLE
+
+    OPTIMISATIONS
+    ├── SQLite FTS5 pour le plein texte
+    ├── Index exacts sur chemins et symboles
+    ├── Index sur les relations entités ↔ segments
+    ├── Limitation du nombre de résultats avant chargement
+    ├── Requêtes SQL paramétrées
+    ├── Transactions courtes
+    ├── Mode WAL si adapté au stockage utilisé
+    ├── Indexation progressive en arrière-plan
+    └── Mesure des temps réels sur une base représentative
+
+    EXTENSION FACULTATIVE
+    └── Recherche sémantique seulement si les mesures montrent un besoin.
+        Elle n’est pas indispensable à la première version.
+
+
+════════════════════════════════════════════════════════════════════════════
+08 · STOCKAGE SQLITE ET ARCHIVES
+════════════════════════════════════════════════════════════════════════════
+
+    STOCKAGE LOCAL
+    │
+    ├── memory.sqlite
+    │   │
+    │   ├── districts           Projets
+    │   ├── departments         Domaines des projets
+    │   ├── sessions            Discussions et reprises
+    │   ├── segments            Passages sources et références
+    │   ├── entities            Fichiers, symboles, notions
+    │   ├── entity_aliases      Variantes et anciens noms
+    │   ├── entity_links        Relations entre entités et sources
+    │   ├── summaries           Résumés versionnés
+    │   ├── decisions           Choix, statut et justification
+    │   ├── tasks               Travail et progression
+    │   ├── project_state       Fiche de reprise
+    │   ├── usage_events        Consommation observée / estimée
+    │   ├── budget_policies     Limites et périodes
+    │   └── search_fts          Index plein texte FTS5
+    │
+    ├── archives/
+    │   └── Blocs de conversations compressés indépendamment
+    │
+    ├── snapshots/
+    │   └── États sauvegardés et métadonnées nécessaires à la reprise
+    │
+    └── logs/
+        └── Actions, erreurs et événements avec données sensibles filtrées
+
+    INTÉGRITÉ
+    ├── Identifiants stables
+    ├── Références vers les sources
+    ├── Versions et migrations de schéma
+    ├── Écritures transactionnelles
+    ├── Sauvegarde cohérente de la base et des archives
+    ├── Vérification des références manquantes
+    └── Suppression explicite et contrôlée par l’utilisateur
+
+
+════════════════════════════════════════════════════════════════════════════
+09 · LES COUCHES DE CACHE ET DE MÉMOIRE
+════════════════════════════════════════════════════════════════════════════
+
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ COUCHE 1 — ARCHIVES DURABLES                                       │
+    │ Conversations originales et résultats utiles conservés sur disque. │
+    │ Compression par blocs ; décompression ciblée.                       │
+    └─────────────────────────────┬──────────────────────────────────────┘
+                                  │
+                                  ▼
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ COUCHE 2 — MÉMOIRE STRUCTURÉE SQLITE                               │
+    │ Entités, décisions, tâches, résumés et liens vers les sources.      │
+    │ Recherche rapide sans relire toutes les archives.                  │
+    └─────────────────────────────┬──────────────────────────────────────┘
+                                  │
+                                  ▼
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ COUCHE 3 — CACHE ACTIF LOCAL EN RAM                                │
+    │ Fiche projet, résultats récents et souvenirs utiles au travail.     │
+    │ Taille bornée ; éviction des éléments peu utiles.                   │
+    └─────────────────────────────┬──────────────────────────────────────┘
+                                  │
+                                  ▼
+    ┌────────────────────────────────────────────────────────────────────┐
+    │ COUCHE 4 — CONTEXTE TRANSMIS AU MODÈLE                              │
+    │ Sélection réellement envoyée pour produire la prochaine réponse.   │
+    │ Bornée par la fenêtre du modèle et le budget de l’application.     │
+    └────────────────────────────────────────────────────────────────────┘
+
+    CACHE ACTIF
+    ├── Taille maximale configurable
+    ├── Éléments critiques épinglables
+    ├── Expiration des extraits temporaires
+    ├── Invalidation si la source change
+    ├── Éviction selon utilité et ancienneté
+    └── Une éviction du cache ne supprime pas l’archive
+
+    DISTINCTION ESSENTIELLE
+    ├── Cache local :
+    │   accélère l’accès et la préparation des informations.
+    │
+    └── Cache fournisseur :
+        mécanisme éventuel côté modèle, avec règles propres.
+        Ne pas supposer qu’il existe, dure indéfiniment ou est gratuit.
+
+
+════════════════════════════════════════════════════════════════════════════
+10 · COMPACTAGE INTELLIGENT
+════════════════════════════════════════════════════════════════════════════
+
+    NOUVEAUX ÉCHANGES
+            │
+            ▼
+    Découpage en segments cohérents
+            │
+            ▼
+    Extraction locale des noms, fichiers et symboles
+            │
+            ▼
+    Identification des faits, décisions, hypothèses et tâches
+            │
+            ▼
+    Création d’un résumé structuré
+            │
+            ▼
+    Vérification des noms exacts et des références
+            │
+            ▼
+    Enregistrement du résumé et de ses sources
+            │
+            ▼
+    Compression physique des originaux sur disque
+            │
+            ▼
+    Mise à jour des index et de la fiche projet
+
+    NIVEAUX DE SYNTHÈSE
+    ├── Niveau 1 : résumé d’un segment de discussion
+    ├── Niveau 2 : synthèse d’un département
+    └── Niveau 3 : fiche globale du projet
+
+    INFORMATIONS À PRÉSERVER
+    ├── Demande et contraintes explicites
+    ├── Décisions et raisons
+    ├── Chemins de fichiers et symboles exacts
+    ├── État des tâches
+    ├── Résultats réellement vérifiés
+    ├── Erreurs et blocages
+    ├── Incertitudes et contradictions
+    └── Références vers les originaux
+
+    DÉCLENCHEMENT
+    ├── Contexte devenu trop volumineux
+    ├── Segment terminé
+    ├── Fin de session, si utile
+    └── Demande manuelle
+
+    ÉCONOMIE
+    ├── Ne pas résumer à nouveau un segment inchangé
+    ├── Privilégier l’extraction locale déterministe
+    ├── Compter le coût des appels de compactage
+    └── Effectuer les travaux non urgents en arrière-plan
+
+    ATTENTION
+    ├── Compression physique :
+    │   réduit le stockage ; ne réduit pas les tokens après décompression.
+    │
+    ├── Résumé :
+    │   réduit le texte envoyé ; peut perdre des détails.
+    │
+    └── Conservation des originaux :
+        permet de récupérer ces détails à la demande.
+
+
+════════════════════════════════════════════════════════════════════════════
+11 · CONSTRUCTION DU CONTEXTE
+════════════════════════════════════════════════════════════════════════════
+
+    CAPACITÉ DISPONIBLE POUR UN APPEL AU MODÈLE
+    │
+    ├── Instructions de fonctionnement et règles de sécurité
+    ├── Définition des outils disponibles
+    ├── Demande utilisateur actuelle
+    ├── Échanges récents nécessaires
+    ├── Fiche de reprise du projet
+    ├── Décisions et contraintes essentielles
+    ├── Souvenirs sélectionnés par recherche
+    ├── Résultats d’outils nécessaires
+    ├── Réserve pour la réponse
+    └── Marge de sécurité
+
+    SI LE CONTEXTE DÉBORDE
+    │
+    ├── 1. Supprimer les doublons
+    ├── 2. Retirer les sorties d’outils devenues inutiles
+    ├── 3. Décharger les extraits temporaires peu pertinents
+    ├── 4. Remplacer les anciens échanges par leurs résumés
+    ├── 5. Conserver les contraintes et décisions essentielles
+    └── 6. Garder les références pour retrouver les détails
+
+    OBJECTIF
+    └── Un contexte court mais suffisant,
+        pas un résumé si court qu’il empêche de travailler correctement.
+
+
+════════════════════════════════════════════════════════════════════════════
+12 · REPRISE D’UN PROJET
+════════════════════════════════════════════════════════════════════════════
+
+    FERMETURE
+    ├── Enregistrer les échanges et résultats d’outils
+    ├── Sauvegarder tâches et décisions
+    ├── Actualiser la fiche de reprise
+    └── Conserver les références utiles du cache actif
+                         │
+                         ▼
+    RÉOUVERTURE
+    ├── Identifier le district
+    ├── Charger la fiche projet
+    ├── Restaurer la tâche en cours
+    ├── Vérifier les changements de fichiers
+    ├── Invalider les observations périmées
+    └── Préparer les souvenirs utiles au prochain message
+                         │
+                         ▼
+    PREMIÈRE INTERACTION
+    └── Le modèle reçoit l’état de travail pertinent,
+        puis récupère les détails complémentaires si nécessaire.
+
+
+════════════════════════════════════════════════════════════════════════════
+13 · CONSOMMATION, POINTS ET TOKENS
+════════════════════════════════════════════════════════════════════════════
+
+                       ┌────────────────────────┐
+                       │ ÉVÉNEMENTS D’UTILISATION│
+                       │ Appels et métriques    │
+                       └────────────┬───────────┘
+                                    │
+               ┌────────────────────┼────────────────────┐
+               ▼                    ▼                    ▼
+        MESURES RÉELLES       ESTIMATIONS          AGRÉGATIONS
+        Si disponibles       Avant / après appel  Jour, cycle,
+        chez le fournisseur  avec incertitude     projet, modèle
+               │                    │                    │
+               └────────────────────┼────────────────────┘
+                                    ▼
+                         PANNEAU DE CONSOMMATION
+
+    AFFICHER
+    ├── Points consommés aujourd’hui
+    ├── Points consommés sur le mois ou cycle d’abonnement
+    ├── Consommation de la session
+    ├── Répartition par modèle si disponible
+    ├── Tokens entrants / sortants si disponibles
+    ├── Coûts de compactage inclus
+    ├── Budget local restant
+    └── Date ou délai du prochain renouvellement local
+
+    QUALITÉ DES DONNÉES
+    ├── « Réel » : confirmé par une métrique disponible
+    ├── « Estimé » : calculé avec méthode et hypothèses explicites
+    └── « Indisponible » : aucune donnée fiable
+
+    CONVERSION POINTS ↔ TOKENS
+    ├── Pas de taux universel fixe
+    ├── Estimation propre à chaque modèle
+    ├── Distinction entrée / sortie / cache si les données le permettent
+    ├── Mise à jour selon tarifs et observations disponibles
+    └── Affichage d’une fourchette plutôt qu’une fausse précision
+
+    SOLDE GLOBAL DU COMPTE
+    └── Afficher le solde réel seulement s’il est accessible.
+        Sinon distinguer le budget local d’un solde fournisseur inconnu.
+
+
+════════════════════════════════════════════════════════════════════════════
+14 · LIMITES ET RENOUVELLEMENT DES BUDGETS
+════════════════════════════════════════════════════════════════════════════
+
+    BUDGET GLOBAL LOCAL — TOUS MODÈLES
+                         │
+            ┌────────────┼────────────┐
+            ▼            ▼            ▼
+         Modèle A     Modèle B     Modèle C
+            │            │            │
+            └────────────┼────────────┘
+                         ▼
+                  COMPTEUR PARTAGÉ
+
+    EXEMPLE DE POLITIQUE
+    ├── Plafond : 600 points
+    ├── Période : 30 minutes
+    ├── Portée : tous les modèles, ou portée sélectionnée
+    └── Renouvellement : selon le type de fenêtre configuré
+
+    IMPORTANT
+    └── Le renouvellement réinitialise l’autorisation locale.
+        Il ne recrédite pas les points du compte Poe.
+
+    TYPES DE LIMITES
+    ├── Points sur une période
+    ├── Tokens par appel ou session
+    ├── Taille du contexte
+    └── Alertes avant épuisement
+
+    AVANT UN APPEL
+    ├── Vérifier le budget disponible
+    ├── Réserver une estimation prudente du coût
+    ├── Tenir compte des appels déjà en cours
+    └── Réduire, bloquer ou demander confirmation si nécessaire
+
+    APRÈS UN APPEL
+    ├── Enregistrer les métriques disponibles
+    ├── Réconcilier estimation et consommation réelle
+    └── Libérer la réservation restante
+
+    LIMITE TECHNIQUE
+    └── Si le coût final n’est connu qu’après l’appel,
+        un plafond exact en points ne peut pas être garanti.
+        Prévoir une marge et signaler cette limite clairement.
+
+    COMMANDE ENVISAGÉE
+    └── /define token
+        Ouvre un panneau pour définir :
+        unité, plafond, portée, période et comportement au dépassement.
+
+
+════════════════════════════════════════════════════════════════════════════
+15 · SÉCURITÉ ET PERMISSIONS
+════════════════════════════════════════════════════════════════════════════
+
+    DEMANDE D’ACTION
+            │
+            ▼
+    Vérifier l’outil, le chemin et les permissions
+            │
+            ▼
+    Évaluer les conséquences
+            │
+       ┌────┴───────────────────┐
+       ▼                        ▼
+    AUTORISÉE               SENSIBLE / NON AUTORISÉE
+       │                        │
+       ▼                        ▼
+    Exécuter              Confirmation ou refus
+       │                        │
+       └──────────┬─────────────┘
+                  ▼
+             Journaliser
+
+    PROTECTIONS
+    ├── Limitation au dossier de projet autorisé
+    ├── Confirmation pour les opérations destructrices
+    ├── Contrôle des commandes et accès réseau
+    ├── Aucun privilège administrateur implicite
+    ├── Protection et filtrage des secrets dans les journaux
+    ├── Contrôle des permissions MCP
+    └── Annulation et délais pour les commandes longues
+
+    DONNÉES NON FIABLES
+    ├── Fichiers du projet
+    ├── Archives et souvenirs
+    ├── Sorties de commandes
+    ├── Documents externes
+    └── Réponses des outils MCP
+            │
+            ▼
+    Ces contenus ne peuvent pas modifier les règles de sécurité
+    ni accorder de nouvelles permissions à l’agent.
+
+    ISOLATION
+    └── Ne pas annoncer une sandbox si aucune isolation réelle
+        n’est mise en place.
+
+
+════════════════════════════════════════════════════════════════════════════
+16 · ARCHITECTURE LOGICIELLE PROPOSÉE
+════════════════════════════════════════════════════════════════════════════
+
+    poe_neural_code/
+    │
+    ├── app/
+    │   ├── main.py                 Démarrage
+    │   └── config.py               Configuration
+    │
+    ├── ui/
+    │   ├── home.py                 Accueil
+    │   ├── terminal.py             Interface principale
+    │   ├── task_panel.py           Todo list optionnelle
+    │   ├── memory_panel.py         État mémoire
+    │   ├── usage_panel.py          Consommation
+    │   └── budget_dialog.py        Réglage des limites
+    │
+    ├── providers/
+    │   ├── base.py                 Contrat commun minimal
+    │   └── poe.py                  Connecteur Poe
+    │
+    ├── agent/
+    │   ├── loop.py                 Boucle de travail
+    │   ├── tool_dispatcher.py      Appels d’outils
+    │   └── execution_state.py      État et annulation
+    │
+    ├── tools/
+    │   ├── files.py                Lecture et modifications
+    │   ├── commands.py             Commandes, builds, tests
+    │   └── mcp.py                  Outils MCP autorisés
+    │
+    ├── memory/
+    │   ├── database.py             SQLite et migrations
+    │   ├── district_manager.py     Projets
+    │   ├── department_manager.py   Organisation thématique
+    │   ├── archive_store.py        Originaux compressés
+    │   ├── entity_extractor.py     Fichiers, symboles, mots-clés
+    │   ├── entity_links.py         Liens vers les sources
+    │   ├── retrieval.py            Recherche et classement
+    │   ├── working_cache.py        Cache local borné
+    │   ├── context_builder.py      Contexte transmis
+    │   ├── compactor.py            Résumés
+    │   ├── integrity.py            Versions et contradictions
+    │   └── session_state.py        Sauvegarde et reprise
+    │
+    ├── usage/
+    │   ├── tracker.py              Événements de consommation
+    │   ├── estimator.py            Estimations par modèle
+    │   └── budgets.py              Limites et renouvellement
+    │
+    ├── security/
+    │   ├── permissions.py          Autorisations
+    │   └── redaction.py            Filtrage des données sensibles
+    │
+    ├── tests/
+    ├── pyproject.toml
+    ├── config.example.toml
+    ├── .gitignore
+    └── README.md
+
+    SOCLE TECHNIQUE
+    ├── Python
+    ├── Textual envisageable pour l’interface
+    ├── SQLite + FTS5 pour le stockage et la recherche
+    ├── Compression par blocs pour les archives
+    └── Bibliothèques maintenues et dépendances limitées
+
+
+════════════════════════════════════════════════════════════════════════════
+17 · TESTS ET CRITÈRES DE RÉUSSITE
+════════════════════════════════════════════════════════════════════════════
+
+    INTERFACE ET AGENT
+    ├── Ouverture d’un projet
+    ├── Affichage progressif et erreurs de connexion
+    ├── Lecture / modification de fichiers autorisés
+    ├── Exécution et annulation de commandes
+    └── Aucun résultat simulé présenté comme réel
+
+    MÉMOIRE
+    ├── Persistance après fermeture
+    ├── Reprise correcte de la tâche
+    ├── Recherche exacte d’un chemin et d’un symbole
+    ├── Recherche FTS5
+    ├── Résolution des alias sans mélange de projets
+    ├── Conservation des noms après compactage
+    ├── Accès aux passages originaux
+    ├── Gestion des décisions remplacées
+    └── Invalidation après modification d’un fichier
+
+    PERFORMANCE
+    ├── Temps de recherche mesuré
+    ├── Consommation RAM bornée
+    ├── Décompression ciblée
+    ├── Interface réactive pendant l’indexation
+    └── Tests sur différents volumes de mémoire
+
+    BUDGETS
+    ├── Compteur partagé entre modèles
+    ├── Renouvellement conforme à la période choisie
+    ├── Prise en compte des appels simultanés
+    ├── Distinction réel / estimé / indisponible
+    └── Inclusion des appels de compactage
+
+    SÉCURITÉ
+    ├── Refus des chemins non autorisés
+    ├── Confirmation des actions sensibles
+    ├── Protection des secrets
+    ├── Résistance aux instructions contenues dans les fichiers
+    └── Permissions MCP respectées
+
+
+════════════════════════════════════════════════════════════════════════════
+18 · ORDRE DE CONSTRUCTION
+════════════════════════════════════════════════════════════════════════════
+
+    ÉTAPE 1 — SOCLE FONCTIONNEL
+    ├── Interface terminale
+    ├── Connexion de base à Poe
+    ├── Conversations persistantes
+    └── Lecture de fichiers contrôlée
+                         │
+                         ▼
+    ÉTAPE 2 — AGENT DE PROGRAMMATION
+    ├── Modifications avec différences
+    ├── Commandes, builds et tests
+    ├── Permissions
+    └── Annulation et journalisation
+                         │
+                         ▼
+    ÉTAPE 3 — MÉMOIRE INDEXÉE
+    ├── Districts et départements
+    ├── SQLite FTS5
+    ├── Entités, mots-clés et liens
+    └── Fiche de reprise
+                         │
+                         ▼
+    ÉTAPE 4 — COMPACTAGE ET CACHE
+    ├── Résumés structurés
+    ├── Archives compressées
+    ├── Cache local borné
+    └── Construction dynamique du contexte
+                         │
+                         ▼
+    ÉTAPE 5 — CONSOMMATION ET LIMITES
+    ├── Mesures disponibles
+    ├── Estimations explicites
+    ├── Budgets et renouvellement
+    └── Panneau de configuration
+                         │
+                         ▼
+    ÉTAPE 6 — EXTENSIONS ET FIABILISATION
+    ├── MCP
+    ├── Autres fournisseurs si nécessaires
+    ├── Optimisations mesurées
+    └── Tests Windows et Linux
+
+
+════════════════════════════════════════════════════════════════════════════
+19 · PRINCIPES NON NÉGOCIABLES
+════════════════════════════════════════════════════════════════════════════
+
+    [1] Conserver les sources après compactage.
+
+    [2] Relier les mots-clés aux passages, pas à de simples étiquettes
+        dépourvues de contexte.
+
+    [3] Préserver les chemins, symboles et décisions exacts.
+
+    [4] Ne pas mélanger les connaissances de projets différents.
+
+    [5] Préparer rapidement le contexte plutôt que tout recharger.
+
+    [6] Ne pas confondre cache local et mémoire interne du modèle.
+
+    [7] Ne pas promettre de contexte illimité ni de coût nul.
+
+    [8] Une information mise en cache doit encore être transmise
+        ou rendue accessible au modèle pour qu’il l’utilise.
+
+    [9] Ne pas présenter une estimation de points comme une mesure réelle.
+
+   [10] Ne pas annoncer une action, un test ou une connexion non réalisés.
+
+   [11] Donner la priorité à une version réellement fonctionnelle,
+        puis améliorer progressivement la rapidité et la qualité.
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         RÉSULTAT RECHERCHÉ                           ║
+║                                                                      ║
+║ Ouvrir Eclipse → reprendre un projet → retrouver son état de travail  ║
+║ → identifier les fichiers et décisions utiles → agir avec contrôle  ║
+║ → vérifier les résultats → mémoriser sans tout retransmettre.        ║
+║                                                                      ║
+║ Stockage durable + recherche rapide + contexte ciblé + budgets clairs ║
+╚══════════════════════════════════════════════════════════════════════════════╝
