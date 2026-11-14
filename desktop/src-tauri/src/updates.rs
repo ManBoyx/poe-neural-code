@@ -157,7 +157,7 @@ pub async fn update_install(app: AppHandle, pending: State<'_, Pending>, on_even
     update.install(&bytes).map_err(|e| format!("mise à jour refusée : {e}"))?;
     let _ = on_event.send(InstallEvent::Done);
     // Linux : le nouveau paquet est en place, on redémarre. Windows : l'installateur ferme l'application lui-même.
-    app.state::<crate::pty::PtyState>().kill_all();
+    app.state::<crate::engine::Engine>().stop();
     app.restart();
 }
 

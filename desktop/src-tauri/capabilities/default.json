@@ -1,12 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Droits de la fenêtre principale : strict minimum (presse-papiers texte, ouverture de liens web).",
-  "windows": ["main"],
+  "description": "Droits de la fenêtre principale : strict minimum (presse-papiers texte, liens web, choix d'un dossier).",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
-    "opener:allow-open-url"
+    "opener:allow-open-url",
+    "dialog:allow-open"
   ]
 }
