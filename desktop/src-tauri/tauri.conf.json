@@ -29,7 +29,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage", "deb", "rpm", "nsis", "msi"],
+    "targets": [
+      "appimage",
+      "deb",
+      "rpm",
+      "nsis",
+      "msi"
+    ],
     "category": "DeveloperTool",
     "shortDescription": "Terminal de programmation avec agents IA",
     "longDescription": "Eclipse héberge le moteur Eclipse (agents IA, budgets, mémoire) et vos shells dans une même fenêtre.",
@@ -37,17 +43,55 @@
     "copyright": "© 2026 ManBoyx. Tous droits réservés.",
     "license": "LicenseRef-Proprietary",
     "licenseFile": "../../LICENSE",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
-    "resources": { "../../build/engine/dist/eclipse-engine/": "engine/" },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../build/engine/dist/eclipse-engine/": "engine/"
+    },
     "linux": {
-      "appimage": { "bundleMediaFramework": false },
-      "deb": { "section": "devel" },
-      "rpm": { "release": "1" }
+      "appimage": {
+        "bundleMediaFramework": false
+      },
+      "deb": {
+        "section": "devel"
+      },
+      "rpm": {
+        "release": "1"
+      }
     },
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" },
-      "nsis": { "installMode": "currentUser", "languages": ["French", "English"], "displayLanguageSelector": false },
-      "wix": { "language": ["fr-FR", "en-US"] }
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": [
+          "French",
+          "English"
+        ],
+        "displayLanguageSelector": false
+      },
+      "wix": {
+        "language": [
+          "fr-FR",
+          "en-US"
+        ]
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

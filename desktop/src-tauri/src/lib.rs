@@ -4,6 +4,7 @@
 mod paths;
 mod pty;
 mod shells;
+mod updates;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, RunEvent};
@@ -37,13 +38,17 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates::Pending::default())
         .manage(pty::PtyState::default())
         .invoke_handler(tauri::generate_handler![
             platform_info,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,
-            pty::pty_kill
+            pty::pty_kill,
+            updates::update_check,
+            updates::update_install
         ])
         .build(tauri::generate_context!())
         .expect("démarrage de l'application impossible");
