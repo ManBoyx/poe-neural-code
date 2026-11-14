@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Eclipse</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header id="bar" data-tauri-drag-region>
+      <span class="brand" data-tauri-drag-region><span class="ico">&#xF0594;</span> Eclipse</span>
+      <nav id="tabs" role="tablist"></nav>
+      <div class="add">
+        <button id="add-btn" class="icon-btn" title="Nouvel onglet (Ctrl+Maj+T)" aria-haspopup="menu"><span class="ico">&#xEA60;</span><span class="ico small">&#xEAB4;</span></button>
+        <div id="add-menu" class="menu" role="menu" hidden></div>
+      </div>
+      <span class="spacer" data-tauri-drag-region></span>
+      <button id="update-btn" class="pill" hidden title="Mise à jour disponible"><span class="ico">&#xEAC2;</span> <span id="update-label">Mise à jour</span></button>
+      <button id="settings-btn" class="icon-btn" title="Réglages"><span class="ico">&#xEB51;</span></button>
+    </header>
+    <main id="panes"></main>
+    <div id="toast" role="status" hidden></div>
+    <dialog id="settings"></dialog>
+    <dialog id="update-dialog"></dialog>
+    <script src="/boot.js"></script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

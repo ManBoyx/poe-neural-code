@@ -13,3 +13,11 @@ mcp.json
 
 # marqueurs de taches
 *.done
+
+# construction
+build/
+dist/
+node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+*.spec.bak

@@ -6,8 +6,10 @@ Les icônes Nerd Font s'affichent si une police Nerd Font est installée (détec
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 
 # nom -> (code Nerd Font, nom officiel, repli texte)
 _TABLE: dict[str, tuple[int, str, str]] = {
@@ -83,6 +85,9 @@ _MODE = "text"
 
 
 def nerd_font_installed() -> bool:
+    if sys.platform == "win32":
+        from ..platform_compat import nerd_font_on_windows
+        return nerd_font_on_windows()
     if not shutil.which("fc-list"):
         return False
     try:
@@ -93,8 +98,12 @@ def nerd_font_installed() -> bool:
 
 
 def configure(mode: str = "auto") -> str:
-    """mode : auto | nerd | text. Retourne le mode effectif."""
+    """mode : auto | nerd | text. Retourne le mode effectif.
+
+    ECLIPSE_ICONS (nerd | text) l'emporte : l'application desktop le fixe à nerd car elle embarque sa police.
+    """
     global _MODE
+    mode = os.environ.get("ECLIPSE_ICONS", "").lower() or mode
     _MODE = ("nerd" if nerd_font_installed() else "text") if mode == "auto" else ("nerd" if mode == "nerd" else "text")
     return _MODE
 

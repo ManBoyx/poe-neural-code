@@ -43,6 +43,7 @@ from .panels import render_claude, render_context, render_ext, render_files, ren
 from .theme import CUSTOM
 from .util import parse_duration
 from . import icons as I
+from .. import platform_compat as PC
 from .bars import bar
 from .widgets import AssistantAnswer, DiffBlock, NoticeLine, PromptArea, ThinkingBlock, ToolBlock, TurnFooter, UserBubble, WelcomeCard
 
@@ -1518,7 +1519,7 @@ class WorkScreen(Screen):
             ok = await self.app.push_screen_wait(ConfirmScreen("Démarrer le serveur Ollama (ollama serve) ?", "", "Il tournera en arrière-plan tant qu'Eclipse est ouvert."))
             if not ok:
                 return
-            self._ollama_proc = subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            self._ollama_proc = subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **PC.group_kwargs())
             for _ in range(30):
                 await asyncio.sleep(0.5)
                 up, models = await FR.ollama_status()

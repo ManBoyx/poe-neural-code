@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 
+from .. import platform_compat as PC
 from .base import Tool, ToolContext, ToolResult
 from .permissions import PermissionRequest
 
@@ -122,7 +123,9 @@ class WriteFile(Tool):
     async def run(self, args, ctx):
         p, _ = ctx.workspace.resolve(args["path"])
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(args["content"], encoding="utf-8")
+        # Fichier existant : on garde sa fin de ligne (LF ou CRLF) ; nouveau fichier : réglage new_file_eol (LF par défaut).
+        eol = PC.read_text_eol(p)[1] if p.is_file() else PC.eol_for_new_file(getattr(ctx.config, "new_file_eol", "lf"))
+        PC.write_text_eol(p, args["content"], eol)
         return ToolResult(True, f"écrit : {ctx.workspace.rel(p)} ({len(args['content'])} caractères)", {"path": ctx.workspace.rel(p)})
 
 
@@ -137,17 +140,18 @@ class EditFile(Tool):
         p, inside = ctx.workspace.resolve(args["path"])
         if not p.is_file():
             return p, inside, None, "fichier introuvable"
-        old = p.read_text(encoding="utf-8", errors="replace")
-        n = old.count(args["old_string"])
+        old = PC.read_text_eol(p)[0]  # texte en \n quelle que soit la fin de ligne du fichier
+        needle, repl = args["old_string"].replace("\r\n", "\n"), args["new_string"].replace("\r\n", "\n")
+        n = old.count(needle)
         if n != 1:
             return p, inside, None, f"old_string doit apparaître exactement une fois ({n} trouvées)"
-        return p, inside, old.replace(args["old_string"], args["new_string"], 1), None
+        return p, inside, old.replace(needle, repl, 1), None
 
     async def prepare(self, args, ctx):
         p, inside, new, err = self._compute(args, ctx)
         if err:
             return None  # l'erreur sera remontée par run()
-        old = p.read_text(encoding="utf-8", errors="replace")
+        old = PC.read_text_eol(p)[0]
         return PermissionRequest(self.name, "write", f"Modifier {ctx.workspace.rel(p)}", _diff(old, new, ctx.workspace.rel(p)),
                                  outside=not inside, grant_key="write", warnings=[] if inside else ["hors du projet"])
 
@@ -155,7 +159,7 @@ class EditFile(Tool):
         p, inside, new, err = self._compute(args, ctx)
         if err:
             return ToolResult(False, err)
-        p.write_text(new, encoding="utf-8")
+        PC.write_text_eol(p, new, PC.read_text_eol(p)[1])
         return ToolResult(True, f"modifié : {ctx.workspace.rel(p)}", {"path": ctx.workspace.rel(p)})
 
 

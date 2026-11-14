@@ -24,6 +24,7 @@ from .providers import build_provider, get_spec
 from .tools.base import Tool, ToolContext, ToolResult
 from .tools.exec_tool import kill_tree
 from .tools.permissions import PermissionRequest
+from . import platform_compat as PC
 
 HELPER_SYSTEM = ("You are consulted by another AI agent as a helper. You have no tools and cannot access any files: answer only from the text you are given. "
                  "Be concise and concrete; say clearly when you are unsure.")
@@ -92,9 +93,9 @@ def prompt_text(config) -> str:
 
 async def _run_process(cmd: list[str], stdin_text: str | None, cwd: str, cancel: asyncio.Event, timeout: float, on_line) -> tuple[int | None, str, str]:
     env = {k: v for k, v in os.environ.items() if k not in ("POE_API_KEY",)}
-    proc = await asyncio.create_subprocess_exec(*cmd, cwd=cwd, env=env, stdin=asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL,
+    proc = await asyncio.create_subprocess_exec(*PC.resolve_argv(cmd), cwd=cwd, env=env, stdin=asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL,
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=32 * 1024 * 1024,
-                                                **({"start_new_session": True} if os.name != "nt" else {}))
+                                                **PC.group_kwargs())
     assert proc.stdout and proc.stderr
     if stdin_text is not None and proc.stdin:
         proc.stdin.write(stdin_text.encode())
