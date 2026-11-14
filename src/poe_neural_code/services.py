@@ -100,6 +100,9 @@ class Services:
                 raise KeyError(aid)
             r = DelegatedRunner(self.config, self.budget, self.memory, self.ctx, self.session, self._emit or (lambda e: None), a, shutil.which(a.binary))
             r.ext = self.ext
+            # Accès direct à la mémoire (pont MCP limité aux 3 outils mémoire) : prêt côté Eclipse (DelegatedRunner.memory_bridge),
+            # mais OpenCode 2.1.4 n'a chargé notre serveur MCP ni par OPENCODE_CONFIG_CONTENT ni par OPENCODE_CONFIG lors des essais :
+            # non activé tant que ce n'est pas vérifié. Les agents délégués reçoivent le guide d'économie et les notes du projet.
             self.delegated[aid] = r
         return self.delegated[aid]
 
@@ -316,6 +319,9 @@ class Services:
 
     async def close(self) -> None:
         await self.bridge.stop()
+        for r in self.delegated.values():
+            if getattr(r, "memory_bridge", None) is not None:
+                await r.memory_bridge.stop()
         await self.mcp.close()
         await self.provider.aclose()
         self.session.save()

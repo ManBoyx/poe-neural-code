@@ -115,6 +115,25 @@ def transcript(sv: Services, limit: int = 200) -> list[dict]:
     return items
 
 
+def discussions_root() -> Path:
+    cfg = load_config()
+    return Path(cfg.discussions_dir).expanduser() if cfg.discussions_dir else Path.home() / "Projets" / "Eclipse"
+
+
+def new_discussion_dir(root: Path | None = None) -> Path:
+    """Dossier de travail neuf pour une discussion : l'IA y crée ses fichiers, la mémoire du projet y est rattachée."""
+    root = root or discussions_root()
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    d = root / f"discussion-{stamp}"
+    n = 2
+    while d.exists():
+        d = root / f"discussion-{stamp}-{n}"
+        n += 1
+    d.mkdir()
+    return d
+
+
 class Hub:
     """Une conversation ouverte à la fois (comme une fenêtre de discussion), plus les abonnés au flux d'événements."""
 
@@ -317,11 +336,14 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
             return {}
 
     async def info(_request):
+        current = hub.sv.session.id if hub.sv else None
+        # Conversations jamais utilisées (ni titre ni message) : masquées, sauf celle qui est ouverte
         sess = [{"id": s.id, "title": s.title or "(sans titre)", "workspace": s.workspace, "updated": s.updated, "mode": s.mode}
-                for s in list_sessions()[:200]]
+                for s in list_sessions()[:300] if s.title or s.messages or s.id == current][:200]
         cfg = load_config()
         dirs = list(dict.fromkeys([s["workspace"] for s in sess]))[:12]
         return JSONResponse({"version": __version__, "sessions": sess, "recent_dirs": dirs, "home": str(Path.home()),
+                             "discussions_dir": str(discussions_root()),
                              "theme": cfg.theme, "current": hub.sv.session.id if hub.sv else None})
 
     async def state(_request):
@@ -343,6 +365,27 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         except Exception as e:  # noqa: BLE001
             return bad(str(e))
         return JSONResponse(hub.state())
+
+    async def new_discussion(_request):
+        try:
+            d = new_discussion_dir()
+            await hub.open(str(d))
+        except Exception as e:  # noqa: BLE001
+            return bad(str(e))
+        return JSONResponse(hub.state())
+
+    async def settings(request):
+        d = await body(request)
+        cfg = load_config()
+        if "discussions_dir" in d:
+            v = (d.get("discussions_dir") or "").strip()
+            if v and not Path(v).expanduser().is_absolute():
+                return bad("chemin absolu attendu (ex. /home/vous/Projets/Eclipse)")
+            cfg.discussions_dir = v or None
+        save_config(cfg)
+        if hub.sv is not None and "discussions_dir" in d:
+            hub.sv.config.discussions_dir = cfg.discussions_dir
+        return JSONResponse({"discussions_dir": str(discussions_root())})
 
     async def remove(request):
         sid = request.path_params["sid"]
@@ -462,7 +505,8 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         Route("/", index),
         Route("/api/info", info), Route("/api/state", state), Route("/api/transcript", get_transcript), Route("/api/usage", usage),
         Route("/api/connections", connections), Route("/api/open", open_, methods=["POST"]),
-        Route("/api/sessions/{sid}", remove, methods=["DELETE"]), Route("/api/prompt", prompt, methods=["POST"]),
+        Route("/api/sessions/{sid}", remove, methods=["DELETE"]), Route("/api/new_discussion", new_discussion, methods=["POST"]),
+        Route("/api/settings", settings, methods=["POST"]), Route("/api/prompt", prompt, methods=["POST"]),
         Route("/api/interrupt", interrupt, methods=["POST"]), Route("/api/permission", permission, methods=["POST"]),
         Route("/api/model", model, methods=["POST"]), Route("/api/effort", effort, methods=["POST"]),
         Route("/api/agent", agent, methods=["POST"]), Route("/api/connect", connect, methods=["POST"]),

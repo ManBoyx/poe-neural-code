@@ -240,3 +240,12 @@ progress { width: 100%; accent-color: var(--accent); }
   .sidebar, .drawer { display: none; }
   .thread-inner, .composer-wrap { padding-left: 12px; padding-right: 12px; }
 }
+
+.btn.big { margin-top: 18px; padding: 10px 20px; font-size: 1rem; border-radius: 12px; display: inline-flex; gap: 10px; align-items: center; }
+.explain { display: grid; gap: 10px; margin: 26px auto 0; max-width: 620px; text-align: left; }
+.explain > div { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.explain .ico { grid-row: span 2; color: var(--accent); font-size: 1.1rem; padding-top: 3px; }
+.explain b { font-size: .94rem; }
+.explain span { color: var(--muted); font-size: .88rem; }
+.explain code { font-family: "JetBrainsMono NF", monospace; font-size: .82rem; overflow-wrap: anywhere; }
+.field input.text { padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--raised); min-width: 0; font-family: "JetBrainsMono NF", monospace; font-size: .85rem; }

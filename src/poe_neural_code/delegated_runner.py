@@ -7,6 +7,7 @@ Ce qu'Eclipse NE fait PAS : prévisualiser/autoriser les commandes de l'agent ex
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from typing import Any, Callable
 
@@ -21,6 +22,7 @@ from .session import Session
 from .tools.base import ToolContext
 from .tools.exec_tool import kill_tree
 from . import platform_compat as PC
+from .memory.guide import delegated_guide
 
 log = get_logger()
 
@@ -35,6 +37,7 @@ class DelegatedRunner:
         self.ext = None
         self._busy = False
         self._warned = False
+        self.memory_bridge = None  # pont MCP limité aux outils mémoire (agents qui savent l'utiliser : OpenCode)
 
     @property
     def scope_id(self) -> str:
@@ -79,6 +82,17 @@ class DelegatedRunner:
         prefix = "".join(n + "\n\n" for n in self.pending_context)
         self.pending_context.clear()
         prompt = prefix + user_text
+        mcp_env: dict[str, str] = {}
+        if self.memory_bridge is not None and a.id == "opencode":
+            try:
+                url = await self.memory_bridge.start()
+                # Format OpenCode 2 : "mcp": {"servers": {...}} (vérifié sur opencode v2.1.4)
+                mcp_env["OPENCODE_CONFIG_CONTENT"] = json.dumps({"mcp": {"servers": {"eclipse": {
+                    "type": "remote", "url": url, "headers": {"Authorization": f"Bearer {self.memory_bridge.token}"}}}}})
+            except Exception as e:  # noqa: BLE001
+                self.emit(StatusEvent(f"Mémoire d'Eclipse indisponible pour {a.label} : {e}", "warn"))
+        if not sess_id and mcp_env:  # consignes seulement si la mémoire leur est accessible (sinon : message non pollué)
+            prompt = f"{prompt}\n\n{delegated_guide(True)}"
         if not sess_id:  # agent sans session (ou première fois) : contexte structuré d'Eclipse, SEULEMENT s'il existe, APRÈS la demande
             pack = build_context(self.memory, self.session.district_id, self.session.conversation_id, token_budget=2500)
             if pack.refs:
@@ -104,6 +118,7 @@ class DelegatedRunner:
         if self.ctx.permissions.mode == "bypass" and not plan:
             self.emit(StatusEvent(f"BYPASS : {'les confirmations de ' + a.label + ' sont désactivées (' + ' '.join(a.bypass_args) + ')' if a.bypass_args else a.label + ' n’a pas d’option bypass connue : ses propres confirmations restent actives'}.", "warn"))
         env = {k: v for k, v in os.environ.items() if k not in ("POE_API_KEY",)}
+        env.update(mcp_env)
         try:
             proc = await asyncio.create_subprocess_exec(*PC.resolve_argv(cmd), cwd=str(self.ctx.workspace.root), env=env,
                                                         stdin=asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL,

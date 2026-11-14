@@ -203,9 +203,12 @@ export function ConnectionsModal({ onClose, onConnected }: { onClose: () => void
 export interface Prefs { theme: "system" | "dark" | "light"; fontSize: number; enterSends: boolean }
 export const DEFAULT_PREFS: Prefs = { theme: "system", fontSize: 15, enterSends: true };
 
-export function SettingsModal({ prefs, setPrefs, version, onClose, updates }: {
+export function SettingsModal({ prefs, setPrefs, version, onClose, updates, discussionsDir, onSaveDir }: {
   prefs: Prefs; setPrefs: (p: Prefs) => void; version: string; onClose: () => void; updates: preact.ComponentChildren;
+  discussionsDir: string; onSaveDir: (d: string) => Promise<string | null>;
 }) {
+  const [dir, setDir] = useState(discussionsDir);
+  const [dirMsg, setDirMsg] = useState("");
   return (
     <Modal title="Réglages" icon={I.settings} onClose={onClose}>
       <div class="field"><label>Thème</label>
@@ -218,6 +221,10 @@ export function SettingsModal({ prefs, setPrefs, version, onClose, updates }: {
       <div class="field"><label>Entrée envoie le message</label>
         <input type="checkbox" checked={prefs.enterSends} onChange={(e) => setPrefs({ ...prefs, enterSends: (e.target as HTMLInputElement).checked })} />
         <span class="muted small">{prefs.enterSends ? "Maj+Entrée pour aller à la ligne" : "Ctrl+Entrée pour envoyer"}</span></div>
+      <div class="field"><label>Dossier des nouvelles discussions</label>
+        <input class="text" value={dir} onInput={(e) => setDir((e.target as HTMLInputElement).value)} spellcheck={false} />
+        <button class="btn" onClick={async () => { const err = await onSaveDir(dir); setDirMsg(err ?? "Enregistré."); }}>Enregistrer</button></div>
+      {dirMsg && <p class="small muted">{dirMsg}</p>}
       {isDesktop && updates}
       <p class="muted small">Eclipse {version}. Aucune télémétrie : seules vos requêtes aux fournisseurs d'IA et, si elle est activée, la vérification des mises à jour sur GitHub sortent de votre ordinateur.</p>
     </Modal>

@@ -17,6 +17,7 @@ class Config(BaseModel):
     max_agent_steps: int = 25
     command_timeout_s: int = 120
     shell: str = "auto"  # shell de run_command : auto | bash | zsh | sh | pwsh | powershell | cmd | wsl
+    discussions_dir: str | None = None  # dossier des « nouvelles discussions » (défaut : ~/Projets/Eclipse)
     new_file_eol: str = "lf"  # fin de ligne des fichiers créés : lf | crlf | native (les fichiers existants gardent la leur)
     auto_accept_edits: bool = False
     sidebar_visible: bool = True

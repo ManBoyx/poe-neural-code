@@ -24,6 +24,7 @@ from .session import Session
 from .tools.base import Tool, ToolContext, ToolResult
 from .tools.permissions import AdminRefused
 from . import platform_compat as PC
+from .memory.guide import TOKEN_GUIDE
 
 log = get_logger()
 
@@ -36,6 +37,7 @@ Rules:
 - Distinguish facts, hypotheses and decisions. Record durable ones with memory_note (with sources). Use memory_search / memory_load
   to retrieve older material instead of guessing; the memory block below is only a selection.
 - Keep todo_write up to date on multi-step work. Be concise. Reply in the user's language."""
+SYSTEM = SYSTEM + "\n\n" + TOKEN_GUIDE
 
 
 # ---- événements (types distincts : messages / demandes d'outils / autorisations / résultats) -------------------
