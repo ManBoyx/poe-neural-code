@@ -2,7 +2,7 @@
 // Application desktop : port et jeton fournis par Tauri. Navigateur (`eclipse web`) : jeton dans l'adresse (#token=…).
 
 export interface SessionSummary { id: string; title: string; workspace: string; updated: number; mode: string }
-export interface Info { version: string; sessions: SessionSummary[]; recent_dirs: string[]; home: string; theme: string; current: string | null }
+export interface Info { version: string; sessions: SessionSummary[]; recent_dirs: string[]; home: string; theme: string; current: string | null; discussions_dir: string }
 export interface ModelEntry { id: string; free: boolean; context: number | null; tools: boolean; description: string }
 export interface Effort { name: string; choices: string[]; default: unknown; current: unknown }
 export interface Todo { id: number; content: string; status: string }
@@ -79,6 +79,8 @@ export const api = {
   usage: () => call<Usage>("GET", "/api/usage"),
   connections: () => call<Connections>("GET", "/api/connections"),
   open: (b: { workspace?: string; resume?: string }) => call<State>("POST", "/api/open", b),
+  newDiscussion: () => call<State>("POST", "/api/new_discussion", {}),
+  settings: (b: { discussions_dir?: string }) => call<{ discussions_dir: string }>("POST", "/api/settings", b),
   remove: (id: string) => call<{ deleted: boolean }>("DELETE", `/api/sessions/${encodeURIComponent(id)}`),
   prompt: (text: string) => call<{ ok: boolean }>("POST", "/api/prompt", { text }),
   interrupt: () => call<{ ok: boolean }>("POST", "/api/interrupt", {}),

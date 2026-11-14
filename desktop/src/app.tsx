@@ -158,6 +158,10 @@ export function App() {
       if (typeof dir === "string") openWorkspace(dir);
     }
   };
+  const newDiscussion = async () => {
+    try { await api.newDiscussion(); await loadConversation(); refreshInfo(); input.current?.focus(); }
+    catch (e: any) { say(e.message); }
+  };
   const newConversation = () => {
     if (state.open && state.session) openWorkspace(state.session.workspace);
   };
@@ -196,9 +200,17 @@ export function App() {
       {state.open ? (
         <p class="muted">Projet <b>{basename(state.session!.workspace)}</b> · {state.mode_label}{state.model ? ` · ${state.model}` : ""}.
           {!state.configured && <> <button class="link" onClick={() => setModal("connections")}>Configurer une connexion</button> pour commencer.</>}</p>
+      ) : null}
+      {state.open ? (
+        <div class="explain">
+          <div><span class="ico">{I.folder}</span><b>Dossier de travail</b><span>L'IA crée ses fichiers dans <code>{state.session!.workspace}</code>. Chaque écriture vous est montrée avant d'être faite.</span></div>
+          <div><span class="ico">{I.graph}</span><b>Économie de tokens</b><span>Quel que soit le fournisseur, l'IA reçoit le guide d'Eclipse : elle note l'essentiel dans la mémoire du dossier, recherche au lieu de tout relire, lit les fichiers par morceaux. Le fil ancien est résumé automatiquement.</span></div>
+          <div><span class="ico">{I.chat}</span><b>Conversations suivantes</b><span>Avec le bouton + en haut, une nouvelle conversation dans ce dossier repart de sa mémoire sans tout renvoyer.</span></div>
+        </div>
       ) : (
         <>
-          <p class="muted">Choisissez le dossier du projet sur lequel Eclipse va travailler.</p>
+          <p class="muted">Démarrez une discussion : Eclipse lui crée son propre dossier de travail. Ou ouvrez un projet existant.</p>
+          <button class="btn primary big" onClick={newDiscussion}><span class="ico">{I.plus}</span> Nouvelle discussion</button>
           <div class="dirs">
             {isDesktop && <button class="dir primary" onClick={pickFolder}><span class="ico">{I.folder}</span> Ouvrir un dossier…</button>}
             {(info?.recent_dirs ?? []).map((d) => (
@@ -223,8 +235,8 @@ export function App() {
           <span class="brand"><span class="ico">{I.eclipse}</span> Eclipse</span>
           <button class="icon-btn" title="Masquer la barre latérale" onClick={() => setSidebar(false)}><span class="ico">{I.sidebar}</span></button>
         </div>
-        <button class="new" onClick={state.open ? newConversation : pickFolder} disabled={!state.open && !isDesktop}><span class="ico">{I.plus}</span> Nouvelle conversation</button>
-        {state.open && <button class="new ghost" onClick={() => { setState({ ...state, open: false }); setItems([]); }}><span class="ico">{I.folder}</span> Autre projet…</button>}
+        <button class="new" onClick={newDiscussion} disabled={busy} title={`Crée un dossier de travail dans ${info?.discussions_dir ?? "~/Projets/Eclipse"}`}><span class="ico">{I.plus}</span> Nouvelle discussion</button>
+        <button class="new ghost" onClick={() => { setState({ ...state, open: false }); setItems([]); }} disabled={busy}><span class="ico">{I.folder}</span> Ouvrir un projet…</button>
         <div class="side-search"><span class="ico">{I.search}</span><input placeholder="Rechercher" value={filter} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} /></div>
         <div class="side-list">
           {groups.map(([g, list]) => (
@@ -256,6 +268,7 @@ export function App() {
             <>
               <button class="title" onClick={rename} title="Renommer">{state.session?.title || "Nouvelle conversation"}</button>
               <span class="chip" title={state.session?.workspace}><span class="ico">{I.folder}</span> {basename(state.session!.workspace)}</span>
+              <button class="icon-btn" title="Nouvelle conversation dans ce dossier (même mémoire)" disabled={busy} onClick={newConversation}><span class="ico">{I.plus}</span></button>
             </>
           ) : <span class="title muted">Eclipse</span>}
           <span class="spacer" />
@@ -323,7 +336,9 @@ export function App() {
 
       {modal === "connections" && <ConnectionsModal onClose={() => setModal("")}
         onConnected={(s, msg) => { setState(s); setModal(""); say(msg); if (!s.model && !s.is_cli) setPicker(true); }} />}
-      {modal === "settings" && <SettingsModal prefs={prefs} setPrefs={setPrefs} version={info?.version ?? ""} onClose={() => setModal("")} updates={<UpdateSettings />} />}
+      {modal === "settings" && <SettingsModal prefs={prefs} setPrefs={setPrefs} version={info?.version ?? ""} onClose={() => setModal("")} updates={<UpdateSettings />}
+        discussionsDir={info?.discussions_dir ?? ""}
+        onSaveDir={async (d) => { try { await api.settings({ discussions_dir: d }); refreshInfo(); return null; } catch (e: any) { return e.message; } }} />}
       {modal === "update" && <UpdateDialog onClose={() => setModal("")} />}
       {picker && <div class="click-away" onMouseDown={() => setPicker(false)} />}
       {toast && <div class="toast" role="status">{toast}</div>}

@@ -1,6 +1,7 @@
 """Serveur d'Eclipse Desktop : sécurité (jeton, hôte, CORS), conversation, autorisations, fil, consommation."""
 import json
 import time
+from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
@@ -128,3 +129,26 @@ def test_events_stream_requires_token_and_streams(setup):
         assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
         first = next(r.iter_lines())
         assert first == "event: hello"
+
+
+def test_new_discussion_creates_its_own_folder(setup, tmp_path):
+    c, hub, turns, proj = setup
+    root = tmp_path / "discussions"
+    assert c.post("/api/settings", headers=AUTH, json={"discussions_dir": "relatif/x"}).status_code == 400
+    assert c.post("/api/settings", headers=AUTH, json={"discussions_dir": str(root)}).json()["discussions_dir"] == str(root)
+    s1 = c.post("/api/new_discussion", headers=AUTH).json()
+    s2 = c.post("/api/new_discussion", headers=AUTH).json()
+    w1, w2 = Path(s1["session"]["workspace"]), Path(s2["session"]["workspace"])
+    assert w1.parent == root and w2.parent == root and w1 != w2 and w1.is_dir() and w2.is_dir()
+    assert w1.name.startswith("discussion-") and s1["session"]["id"] != s2["session"]["id"]
+    assert c.get("/api/info", headers=AUTH).json()["discussions_dir"] == str(root)
+
+
+def test_every_provider_gets_the_token_saving_guide():
+    from poe_neural_code.agent import SYSTEM
+    from poe_neural_code.claude_runner import SYSTEM_APPEND
+    from poe_neural_code.memory.guide import delegated_guide
+    assert "memory_note" in SYSTEM and "start/end" in SYSTEM and "working folder" in SYSTEM
+    assert "mcp__eclipse__memory_search" in SYSTEM_APPEND and "mcp__eclipse__mcp__" not in SYSTEM_APPEND
+    assert "mcp__eclipse__read_file with start/end" in SYSTEM_APPEND
+    assert "memory_note" not in delegated_guide(False) and "eclipse_memory_note" in delegated_guide(True)

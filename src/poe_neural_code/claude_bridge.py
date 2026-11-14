@@ -37,7 +37,8 @@ class _Auth:
 
 
 class EclipseBridge:
-    def __init__(self, get_agent: Callable[[], Any]):
+    def __init__(self, get_agent: Callable[[], Any], allowed: set[str] | None = None):
+        self.allowed = allowed  # None : tous les outils du mode ; sinon seulement ceux-ci (ex. mémoire pour un agent délégué)
         self._get_agent = get_agent  # l'Agent Poe sert uniquement d'exécuteur d'outils (sa boucle n'est pas utilisée)
         self.token = secrets.token_urlsafe(32)
         self.url: str | None = None
@@ -52,12 +53,14 @@ class EclipseBridge:
     async def _list(self, ctx, params) -> types.ListToolsResult:
         m = self._get_agent().mode
         return types.ListToolsResult(tools=[types.Tool(name=n, description=t.description, input_schema=t.schema)
-                                            for n, t in self._tools().items() if m.allows(n)])
+                                            for n, t in self._tools().items() if m.allows(n) and (self.allowed is None or n in self.allowed)])
 
     async def _call(self, ctx, params) -> types.CallToolResult:
         agent = self._get_agent()
         self._n += 1
         args = params.arguments or {}
+        if self.allowed is not None and params.name not in self.allowed:
+            return types.CallToolResult(content=[types.TextContent(type="text", text=f"outil non disponible : {params.name}")], is_error=True)
         # _run_tool : validation JSON Schema, aperçu + autorisation, exécution, archivage mémoire, événements UI
         out = await agent._run_tool(ToolCall(f"cc_{self._n}", params.name, json.dumps(args)))
         return types.CallToolResult(content=[types.TextContent(type="text", text=out)], is_error=False)
