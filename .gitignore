@@ -29,3 +29,6 @@ android/app/build/
 android/local.properties
 *.jks
 *.keystore
+
+# interface construite (copiée depuis desktop/dist au moment de l'empaquetage)
+src/poe_neural_code/web/static/

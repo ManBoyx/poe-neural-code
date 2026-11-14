@@ -8,7 +8,7 @@ from datetime import datetime
 
 from . import __version__
 
-SUBCOMMANDS = {"run", "models", "sessions", "export", "stats", "usage", "skills", "plugins", "modes", "agents", "providers", "login", "free", "doctor"}
+SUBCOMMANDS = {"run", "models", "sessions", "export", "stats", "usage", "skills", "plugins", "modes", "agents", "providers", "login", "free", "doctor", "serve", "web"}
 
 
 def _services(path: str = "."):
@@ -208,11 +208,18 @@ def main(argv: list[str] | None = None) -> int:
             ap.add_argument("--bypass", action="store_true", help="aucune confirmation (sudo refusé ; destructif/hors projet : toujours confirmé)")
         elif sub in ("export", "login"):
             ap.add_argument("id")
+        elif sub in ("serve", "web"):
+            ap.add_argument("path", nargs="?", help="projet à ouvrir directement")
+            ap.add_argument("--port", type=int, default=0, help="port local (défaut : choisi automatiquement)")
+            ap.add_argument("--watch-stdin", action="store_true", help=argparse.SUPPRESS)  # lancé par l'application desktop
         a = ap.parse_args(argv[1:])
         a.cmd = sub
+        if sub in ("serve", "web"):
+            from .web.server import serve
+            return serve(port=a.port, open_browser=(sub == "web"), workspace=a.path, watch_stdin=a.watch_stdin)
         return {"run": cmd_run, "models": cmd_models, "sessions": cmd_sessions, "export": cmd_export, "stats": cmd_stats, "usage": cmd_stats, "agents": cmd_agents, "providers": cmd_providers, "login": cmd_login, "free": cmd_free, "doctor": cmd_doctor}.get(sub, cmd_list)(a)
     ap = argparse.ArgumentParser(prog="eclipse", description="Eclipse (POE · Neural Code) — agent de programmation en terminal",
-                                 epilog="Sous-commandes : run, models, sessions, export, stats, usage, skills, plugins, modes, agents, providers, login, free, doctor")
+                                 epilog="Sous-commandes : run, models, sessions, export, stats, usage, skills, plugins, modes, agents, providers, login, free, doctor, web (interface graphique dans le navigateur), serve (moteur d'Eclipse Desktop)")
     ap.add_argument("path", nargs="?", help="projet à ouvrir")
     ap.add_argument("--resume", metavar="ID", help="reprendre une session")
     ap.add_argument("--version", action="version", version=f"eclipse {__version__}")

@@ -15,16 +15,16 @@
       {
         "label": "main",
         "title": "Eclipse",
-        "width": 1200,
-        "height": 780,
-        "minWidth": 640,
-        "minHeight": 400,
+        "width": 1280,
+        "height": 840,
+        "minWidth": 720,
+        "minHeight": 480,
         "backgroundColor": "#0e0e18",
         "dragDropEnabled": false
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*"
     }
   },
   "bundle": {
@@ -37,8 +37,8 @@
       "msi"
     ],
     "category": "DeveloperTool",
-    "shortDescription": "Terminal de programmation avec agents IA",
-    "longDescription": "Eclipse héberge le moteur Eclipse (agents IA, budgets, mémoire) et vos shells dans une même fenêtre.",
+    "shortDescription": "Eclipse Desktop : programmez avec Claude Code, Poe et d'autres IA",
+    "longDescription": "Interface graphique d'Eclipse : conversations, choix du modèle, autorisations avant chaque modification, consommation et budgets.",
     "publisher": "ManBoyx",
     "copyright": "© 2026 ManBoyx. Tous droits réservés.",
     "license": "LicenseRef-Proprietary",
