@@ -1,5 +1,19 @@
 # Journal des versions
 
+## Non publié
+### Applications
+- Application desktop (Tauri 2) : onglets de terminal pour le moteur Eclipse et les shells, avec PowerShell 7,
+  Windows PowerShell, cmd, WSL et Git Bash sous Windows. Police Nerd Font embarquée, copier-coller et raccourcis adaptés à chaque système.
+- Paquets Linux AppImage, .deb, .rpm ; Windows : installateur NSIS, MSI et version portable.
+- Mises à jour depuis GitHub, canaux stable et bêta. Avant d'installer : journal des changements affiché,
+  empreinte SHA-256 contrôlée et signature vérifiée (liée au numéro de version). Toute vérification qui échoue entraîne un refus.
+- Script d'installation Linux (`install.sh`) : vérifie la signature et l'empreinte avant d'installer.
+### Moteur
+- Commandes de l'IA sous Windows : PowerShell (commande encodée, accents et guillemets préservés), cmd en UTF-8 ou WSL ;
+  le modèle est informé de la syntaxe à utiliser.
+- Fins de ligne conservées : un fichier CRLF reste en CRLF, un fichier LF reste en LF (Linux comme Windows).
+- Claude Code, OpenCode et Codex installés par npm sous Windows : lancés directement par node (arguments intacts).
+
 ## 0.2.0 — 2026-11-13
 ### Interface (refonte)
 - Barre d'état en haut : projet, branche Git, fournisseur et modèle, mode, bypass, jauge de contexte, consommation de la session.

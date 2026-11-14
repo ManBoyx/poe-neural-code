@@ -23,6 +23,12 @@ remplace chaque icône par un symbole texte simple.
 | Groq, Google AI Studio, Mistral, Cerebras, GitHub Models | clé gratuite chez le fournisseur | complet | quotas et conditions propres à chacun ; adresses à confirmer pour certains |
 
 ## Installation
+**Utilisateurs** : applications Linux (AppImage, .deb, .rpm), Windows (installateur, MSI, portable, Scoop) et Android.
+Toutes les commandes sont sur https://github.com/ManBoyx/eclipse-releases. Linux, en une ligne :
+```sh
+curl -fsSL https://github.com/ManBoyx/eclipse-releases/releases/latest/download/install.sh | sh
+```
+**Depuis le code source** (développement, moteur seul dans votre terminal) :
 ```bash
 # Linux
 python3 -m venv .venv && . .venv/bin/activate && pip install -e .

@@ -24,6 +24,7 @@ def test_manifest_contents(tmp_path):
     w = make(tmp_path, "Eclipse_1.2.0_x64-setup.exe", b"nsis")
     make(tmp_path, "Eclipse_1.2.0_x64_portable.zip", b"zip", sig=False)
     make(tmp_path, "Eclipse-1.2.0.apk", b"apk", sig=False)
+    make(tmp_path, "Eclipse_amd64.AppImage", b"appimage", sig=False)  # copie à nom fixe : ignorée par le manifeste
     cl = tmp_path / "CHANGELOG.md"
     cl.write_text("# Journal\n\n## 1.2.0 — 2026-12-01\n- nouveauté A\n- correctif B\n\n## 1.1.0\n- ancien\n", encoding="utf-8")
     m, sums = mm.build("1.2.0", "ManBoyx/eclipse-releases", tmp_path, cl, pub_date="2026-12-01T00:00:00Z")
@@ -35,7 +36,7 @@ def test_manifest_contents(tmp_path):
     assert p["windows-x86_64-nsis"]["sha256"] == w and p["windows-x86_64-nsis"]["signature"] == "c2lnbmF0dXJl"
     assert "linux-x86_64-rpm" not in p
     lines = sums.splitlines()
-    assert len(lines) == 5 and not any(l.endswith(".sig") for l in lines)
+    assert len(lines) == 6 and not any(l.endswith(".sig") for l in lines)
     assert f"{a}  Eclipse_1.2.0_amd64.AppImage" in lines
     json.dumps(m)
 
