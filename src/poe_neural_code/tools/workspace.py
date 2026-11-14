@@ -9,16 +9,28 @@ from pathlib import Path
 
 
 class Workspace:
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, extra: list[str | Path] | None = None):
         self.root = Path(root).expanduser().resolve()
+        self.extra: list[Path] = [Path(e).expanduser().resolve() for e in (extra or [])]  # /add-dir : dossiers autorisés en plus
+
+    def roots(self) -> list[Path]:
+        return [self.root, *self.extra]
+
+    def add(self, p: str | Path) -> Path:
+        d = Path(p).expanduser().resolve()
+        if not d.is_dir():
+            raise NotADirectoryError(str(d))
+        if d not in self.roots():
+            self.extra.append(d)
+        return d
 
     def resolve(self, p: str | Path) -> tuple[Path, bool]:
-        """(chemin absolu réel, est_dans_le_projet)."""
+        """(chemin absolu réel, est_dans_un_dossier_autorisé)."""
         path = Path(p).expanduser()
         if not path.is_absolute():
             path = self.root / path
         real = Path(os.path.realpath(path))
-        return real, real == self.root or self.root in real.parents
+        return real, any(real == r or r in real.parents for r in self.roots())
 
     def rel(self, p: Path) -> str:
         try:

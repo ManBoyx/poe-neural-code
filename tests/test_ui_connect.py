@@ -73,7 +73,7 @@ def test_connect_flow_with_masked_key_verification_and_model_picker(tmp_path, mo
         mline = text_of(app.screen.query_one("#modeline", Static))
         assert "OpenAI" in mline and "gpt-x" in mline
         u = text_of(app.screen.query_one("#usage", Static))
-        assert "sans objet" in u and "Points" in u  # hors Poe : pas de points
+        assert "Coût" in u and "Points" not in u  # hors Poe : pas de points
 
     run_app(tmp_path, body)
 
@@ -117,14 +117,15 @@ def test_progress_bars_in_sidebar_for_budget_time_and_claude(tmp_path):
         sv.budget.add_manual(sv.session.id, 700)
         app.screen.refresh_panels()
         u = text_of(app.screen.query_one("#usage", Static))
-        assert "Points" in u and "█" in u and " 70 %" in u and "Tokens" in u and "Temps" in u
+        assert "Points" in u and "█" in u and " 70 %" in u and "Tokens" in u and "Période" in u
         await say(pilot, app, "/provider claude")
         now = time.time()
         sv.claude.info.rate = {"unifiedWindows": {"five_hour": {"utilization": 0.95, "resetsAt": now + 3600},
                                                   "seven_day": {"utilization": 0.84, "resetsAt": now + 3 * 86400}}}
         app.screen.refresh_panels()
         u = text_of(app.screen.query_one("#usage", Static))
-        assert "Usage   5 h" in u and "95 %" in u and "Temps   5 h" in u and "Usage   7 j" in u and "84 %" in u and "rythme élevé" in u
+        assert "Fenêtre 5 h" in u and "95 %" in u and "Écoulé" in u and "Fenêtre 7 j" in u and "84 %" in u and "plus vite que le temps" in u
+        assert "Budget « " not in u  # abonnement : pas de budget en points affiché
 
     run_app(tmp_path, body)
 

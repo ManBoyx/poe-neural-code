@@ -18,7 +18,7 @@ from .provider.base import ProviderError
 from .budget import Budget
 from .extensions import Extensions
 from .extensions.modes import cycle as cycle_mode
-from .extensions.refs import expand_refs
+from .extensions.refs import expand_refs, find_images
 from .extensions.skills import SkillTool
 from .undo import Snapshots
 from .config import Config, load_config
@@ -219,15 +219,19 @@ class Services:
         return n
 
     # ---------------------------------------------------------------- tour utilisateur (+ annuler / rétablir)
-    async def run_user_turn(self, text: str) -> None:
+    async def run_user_turn(self, text: str, attachments: list | None = None) -> None:
         full, _files = expand_refs(text, self.ctx.workspace.root)
+        images = list(attachments or []) + [p for p in find_images(text, self.ctx.workspace.root) if p not in (attachments or [])]
         conv = self.session.conversation_id
         entry = {"text": text, "tree_before": self.snap.snapshot(), "first": self.memory.last_archive_id(conv) + 1,
                  "msgs_before": len(self.agent.messages), "mode": self.mode}
         if self.fusion_tool is not None:
             self.fusion_tool.calls = 0  # plafond de consultations : par tour
         await self.ext.plugins.fire("turn_start", {"text": text, "session": self.session.id})
-        await self.runner.run_turn(full)
+        if images:
+            await self.runner.run_turn(full, attachments=images)
+        else:
+            await self.runner.run_turn(full)
         entry["last"] = self.memory.last_archive_id(conv)
         if entry["last"] >= entry["first"]:
             entry["tree_after"] = self.snap.snapshot()
@@ -279,6 +283,26 @@ class Services:
         self.claude.pending_context.append(note)  # idem pour Claude Code (préfixée au prochain tour)
         return res.ok, res.output
 
+    def add_dir(self, path: str) -> str:
+        d = self.ctx.workspace.add(path)
+        if str(d) not in self.session.extra_dirs:
+            self.session.extra_dirs.append(str(d))
+            self.session.save()
+        return str(d)
+
+    def fork_session(self) -> Session:
+        """Nouvelle session indépendante : mêmes messages récents, todo, réglages ; archives recopiées dans une nouvelle discussion."""
+        import copy
+        conv = self.memory.new_conversation(self.session.district_id, f"fork de {self.session.id}")
+        for r in self.memory.archive_rows(self.session.conversation_id):
+            self.memory.archive_message(conv, r["role"], r["content"], __import__("json").loads(r["meta"] or "{}"))
+        s = Session.new(self.session.workspace, self.session.district_id, conv, self.session.model)
+        for k in ("mode", "agent", "model_options", "messages", "todos", "extra_dirs", "provider_models"):
+            setattr(s, k, copy.deepcopy(getattr(self.session, k)))
+        s.title = (self.session.title or self.session.id) + " (fork)"
+        s.save()
+        return s
+
     def export_markdown(self) -> str:
         rows = self.memory.archive_rows(self.session.conversation_id)
         out = [f"# Session {self.session.id} — {self.ctx.workspace.root.name}", ""]
@@ -304,9 +328,13 @@ def create_services(workspace: str | Path, *, resume: str | None = None, provide
     bud = budget or Budget()
     prov = provider or PoeProvider()
     ws = Workspace(workspace)
+    if not resume and not ws.root.is_dir():
+        raise FileNotFoundError(f"dossier du projet introuvable : {ws.root}")
     if resume:
         sess = Session.load(resume)
-        ws = Workspace(sess.workspace)
+        ws = Workspace(sess.workspace, [d for d in sess.extra_dirs if Path(d).is_dir()])
+        if not ws.root.is_dir():
+            raise FileNotFoundError(f"le dossier de cette session n'existe plus : {ws.root}")
         # le fil sauvegardé ne doit jamais commencer par un résultat d'outil orphelin
         while sess.messages and sess.messages[0].get("role") == "tool":
             sess.messages.pop(0)

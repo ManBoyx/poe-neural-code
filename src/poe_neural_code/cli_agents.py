@@ -30,6 +30,7 @@ class CliAdapter:
     model_flag: str = ""
     plan_args: list[str] = field(default_factory=list)  # ajoutés en mode « plan » (lecture seule) quand l'agent le permet
     session_flag: str = ""
+    file_flag: str = ""  # option de l'agent pour joindre un fichier (OpenCode : --file)
     bypass_args: list[str] = field(default_factory=list)  # options de l'agent qui désactivent SES confirmations (mode bypass d'Eclipse)
     verified: str = "non vérifié"
     notes: str = ""
@@ -44,7 +45,7 @@ class CliAdapter:
 PRESETS: list[CliAdapter] = [
     CliAdapter("claude", "Claude Code", "claude", verified="testé en réel : outils d'Eclipse via pont MCP, tokens mesurés, fenêtres d'abonnement",
                integrated=True),
-    CliAdapter("opencode", "OpenCode", "opencode", ["run", "--format", "json"], "arg", output="opencode-json", model_flag="--model", session_flag="--session",
+    CliAdapter("opencode", "OpenCode", "opencode", ["run", "--format", "json"], "arg", output="opencode-json", model_flag="--model", session_flag="--session", file_flag="--file",
                plan_args=["--agent", "plan"], bypass_args=["--auto"], verified="format JSON testé en réel (texte reçu ; aucun compteur de tokens → estimé)",
                notes="sans --auto par défaut : les permissions de l'agent restent les siennes (--auto seulement en mode bypass d'Eclipse)"),
     CliAdapter("gemini", "Gemini CLI", "gemini", ["-o", "text"], "flag", "-p", model_flag="-m", plan_args=["--approval-mode", "plan"], bypass_args=["--approval-mode", "yolo"],
@@ -109,7 +110,8 @@ def detect(with_version: bool = False) -> list[Detected]:
     return out
 
 
-def build_command(a: CliAdapter, binary: str, prompt: str, *, model: str | None = None, plan: bool = False, session_id: str | None = None, bypass: bool = False) -> tuple[list[str], str | None]:
+def build_command(a: CliAdapter, binary: str, prompt: str, *, model: str | None = None, plan: bool = False, session_id: str | None = None, bypass: bool = False,
+                  files: list | None = None) -> tuple[list[str], str | None]:
     """(commande, texte pour stdin ou None)."""
     cmd = [binary, *a.args]
     if plan and a.plan_args:
@@ -120,6 +122,11 @@ def build_command(a: CliAdapter, binary: str, prompt: str, *, model: str | None 
         cmd += [a.model_flag, model]
     if session_id and a.session_flag:
         cmd += [a.session_flag, session_id]
+    for f in files or []:
+        if a.file_flag:
+            cmd += [a.file_flag, str(f)]
+        else:
+            prompt += f"\n[Fichier joint : {f}]"
     if a.prompt_via == "flag":
         cmd += [a.prompt_flag, prompt]
         return cmd, None

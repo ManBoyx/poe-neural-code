@@ -23,7 +23,10 @@ class Snapshots:
 
     def _git(self, *args: str, env: dict | None = None, check: bool = True, cwd: Path | None = None) -> subprocess.CompletedProcess:
         full_env = {**os.environ, **(env or {}), "GIT_OPTIONAL_LOCKS": "0"}
-        return subprocess.run(["git", *args], cwd=str(cwd or self.root), env=full_env, capture_output=True, text=True, check=False)
+        try:
+            return subprocess.run(["git", *args], cwd=str(cwd or self.root), env=full_env, capture_output=True, text=True, check=False)
+        except OSError as e:  # dossier disparu ou git absent : instantanés indisponibles, jamais de plantage
+            return subprocess.CompletedProcess(["git", *args], 127, "", str(e))
 
     def _tmp_env(self) -> tuple[dict, str]:
         fd, path = tempfile.mkstemp(prefix="eclipse-idx-")

@@ -8,7 +8,7 @@ from datetime import datetime
 
 from . import __version__
 
-SUBCOMMANDS = {"run", "models", "sessions", "export", "stats", "usage", "skills", "plugins", "modes", "agents", "providers", "login"}
+SUBCOMMANDS = {"run", "models", "sessions", "export", "stats", "usage", "skills", "plugins", "modes", "agents", "providers", "login", "free", "doctor"}
 
 
 def _services(path: str = "."):
@@ -82,7 +82,7 @@ def cmd_agents(args) -> int:
     from .cli_agents import detect
     for d in detect(with_version=True):
         a = d.adapter
-        print(f"{'✓' if d.installed else '✗'} {a.label:14} {d.path or 'non installé':40} {d.version:20} {a.verified}")
+        print(f"{'[ok]' if d.installed else '[--]'} {a.label:14} {d.path or 'non installé':40} {d.version:20} {a.verified}")
     return 0
 
 
@@ -90,7 +90,7 @@ def cmd_providers(args) -> int:
     from . import credentials
     from .providers import all_specs, has_credentials
     for s in all_specs():
-        st = "local" if not s.key_required else ("clé ✓" if has_credentials(s) else "sans clé")
+        st = "local" if not s.key_required else ("clé enregistrée" if has_credentials(s) else "sans clé")
         print(f"{s.id:12} {s.label:22} {st:9} {s.base_url}   [{s.verified}]")
     print(f"\nStockage des clés : {credentials.storage_kind()}")
     return 0
@@ -113,8 +113,30 @@ def cmd_login(args) -> int:
     asyncio.run(prov.aclose())
     if not ok and key:
         credentials.delete_key(spec.id)
-    print(("✓ " if ok else "✗ ") + msg + (f"  (stockée : {credentials.storage_kind()})" if ok and key else ""))
+    print(("[ok] " if ok else "[échec] ") + msg + (f"  (stockée : {credentials.storage_kind()})" if ok and key else ""))
     return 0 if ok else 1
+
+
+def cmd_free(args) -> int:
+    """Sources de modèles gratuits réellement disponibles sur cette machine."""
+    from .free import sources
+    for s in asyncio.run(sources()):
+        print(f"{'[ok]' if s.ready else '[  ]'} {s.label:30} {s.status}\n    → {s.how}\n    compromis : {s.tradeoff}")
+    return 0
+
+
+def cmd_doctor(args) -> int:
+    from .diagnostics import doctor
+
+    async def go():
+        sv = _services(".")
+        out = await doctor(sv)
+        await sv.close()
+        return out
+
+    for c in asyncio.run(go()):
+        print({"ok": "[ok]", "warn": "[! ]", "fail": "[xx]", "info": "[..]"}[c.status], f"{c.name:34} {c.detail}")
+    return 0
 
 
 def cmd_run(args) -> int:
@@ -137,14 +159,14 @@ def cmd_run(args) -> int:
             if not sys.stdin.isatty():
                 print(f"[refusé sans terminal] {req.summary}", file=sys.stderr)
                 return "deny"
-            print(f"\n⚠ {req.summary}\n{req.detail[:2000]}", file=sys.stderr)
+            print(f"\n[!] {req.summary}\n{req.detail[:2000]}", file=sys.stderr)
             r = input("Autoriser ? [o]ui / [n]on : ").strip().lower()
             return "once" if r.startswith("o") else "deny"
 
         sv.ctx.permissions.asker = ask
         if args.bypass:
             sv.ctx.permissions.set_mode("bypass")
-            print("⚠ BYPASS : aucune confirmation (hors destructif / hors projet).", file=sys.stderr)
+            print("[!] BYPASS : aucune confirmation (hors destructif / hors projet).", file=sys.stderr)
 
         def emit(e):
             if isinstance(e, AssistantDelta):
@@ -152,7 +174,7 @@ def cmd_run(args) -> int:
             elif isinstance(e, ToolRequested):
                 print(f"\n▸ {e.name} {e.args}", file=sys.stderr)
             elif isinstance(e, ToolFinished):
-                print(f"  {'✓' if e.ok else '✗'} {e.output[:200]}", file=sys.stderr)
+                print(f"  {'ok' if e.ok else 'échec'} : {e.output[:200]}", file=sys.stderr)
             elif isinstance(e, StatusEvent):
                 print(f"[{e.level}] {e.text}", file=sys.stderr)
 
@@ -184,9 +206,9 @@ def main(argv: list[str] | None = None) -> int:
             ap.add_argument("id")
         a = ap.parse_args(argv[1:])
         a.cmd = sub
-        return {"run": cmd_run, "models": cmd_models, "sessions": cmd_sessions, "export": cmd_export, "stats": cmd_stats, "usage": cmd_stats, "agents": cmd_agents, "providers": cmd_providers, "login": cmd_login}.get(sub, cmd_list)(a)
+        return {"run": cmd_run, "models": cmd_models, "sessions": cmd_sessions, "export": cmd_export, "stats": cmd_stats, "usage": cmd_stats, "agents": cmd_agents, "providers": cmd_providers, "login": cmd_login, "free": cmd_free, "doctor": cmd_doctor}.get(sub, cmd_list)(a)
     ap = argparse.ArgumentParser(prog="eclipse", description="Eclipse (POE · Neural Code) — agent de programmation en terminal",
-                                 epilog="Sous-commandes : run, models, sessions, export, stats, skills, plugins, modes, agents, providers, login")
+                                 epilog="Sous-commandes : run, models, sessions, export, stats, usage, skills, plugins, modes, agents, providers, login, free, doctor")
     ap.add_argument("path", nargs="?", help="projet à ouvrir")
     ap.add_argument("--resume", metavar="ID", help="reprendre une session")
     ap.add_argument("--version", action="version", version=f"eclipse {__version__}")

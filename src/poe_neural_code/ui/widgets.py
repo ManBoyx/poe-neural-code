@@ -4,10 +4,10 @@ from __future__ import annotations
 from rich.syntax import Syntax
 from rich.text import Text
 from textual import events
-from textual.widgets import Input, Markdown, Static
+from textual.message import Message
+from textual.widgets import Input, Markdown, Static, TextArea
 
-ICONS = {"read_file": "📄", "list_dir": "📂", "search_files": "🔎", "write_file": "✏️", "edit_file": "✏️", "delete_file": "🗑", "run_command": "▶",
-         "todo_write": "☑", "memory_search": "🧠", "memory_load": "🧠", "memory_note": "🧠", "skill": "🎓"}
+from . import icons as I
 
 
 class UserBubble(Static):
@@ -60,12 +60,17 @@ class ThinkingBlock(Static):
 
     def append(self, chunk: str) -> None:
         self.buffer += chunk
-        self.update(Text("💭 " + self.buffer[-1500:]))
+        self.update(Text(I.get("thinking") + " " + self.buffer[-1500:]))
+
+
+READ_ONLY = {"read_file", "list_dir", "search_files", "memory_search", "memory_load", "skill", "todo_write", "web_fetch"}
 
 
 class ToolBlock(Static):
+    """Bloc d'outil : en-tête (icône, outil, résumé, état) ; sortie repliable d'un clic (repliée par défaut pour les lectures)."""
     DEFAULT_CSS = """
     ToolBlock { margin: 0 0 0 2; padding: 0 1; border-left: tall $secondary 60%; color: $text-muted; }
+    ToolBlock:hover { background: $boost; }
     ToolBlock.ok { border-left: tall $success; }
     ToolBlock.fail { border-left: tall $error; }
     ToolBlock.pending { border-left: tall $warning; }
@@ -74,12 +79,14 @@ class ToolBlock(Static):
     def __init__(self, name: str, summary: str):
         super().__init__("")
         self.tool, self.summary = name, summary
-        self.state, self.output, self.details = "pending", "", True
+        self.state, self.output, self.details = "pending", "", name not in READ_ONLY
         self.add_class("pending")
         self._refresh_text()
 
     def finish(self, ok: bool, output: str) -> None:
         self.state, self.output = ("ok" if ok else "fail"), output
+        if not ok:
+            self.details = True  # une erreur se montre toujours
         self.remove_class("pending")
         self.add_class(self.state)
         self._refresh_text()
@@ -89,11 +96,14 @@ class ToolBlock(Static):
         self._refresh_text()
 
     def _refresh_text(self) -> None:
-        mark = {"pending": "…", "ok": "✓", "fail": "✗"}[self.state]
+        mark = {"pending": I.get("clock"), "ok": I.get("ok"), "fail": I.get("error")}[self.state]
         t = Text()
-        t.append(f"{ICONS.get(self.tool, '⚙')} {self.tool}", style="bold")
+        t.append(f"{I.tool(self.tool)} {self.tool}", style="bold")
         t.append(f"  {self.summary[:160]}  ", style="dim")
         t.append(mark, style={"pending": "yellow", "ok": "green", "fail": "red"}[self.state])
+        if self.output and not self.details:
+            n = len(self.output.splitlines())
+            t.append(f"  {I.get('chevron')} {n} ligne{'s' if n > 1 else ''} (clic pour voir)", style="dim italic")
         if self.output and self.details:
             lines = self.output.splitlines()
             shown = lines[:10]
@@ -101,6 +111,110 @@ class ToolBlock(Static):
             if len(lines) > 10:
                 t.append(f"\n… {len(lines) - 10} lignes de plus", style="dim italic")
         self.update(t)
+
+
+    def on_click(self) -> None:
+        self.details = not self.details
+        self._refresh_text()
+
+
+class TurnFooter(Static):
+    """Pied de tour : durée, tokens, coût — avec la nature de chaque valeur."""
+    DEFAULT_CSS = "TurnFooter { margin: 0 0 0 2; color: $text-muted; text-style: italic; }"
+
+
+class WelcomeCard(Static):
+    DEFAULT_CSS = """
+    WelcomeCard { margin: 1 2; padding: 1 2; border: round $primary 50%; background: $surface; height: auto; }
+    """
+
+
+class PromptArea(TextArea):
+    """Saisie multiligne : Entrée envoie · Maj+Entrée / Ctrl+J / Alt+Entrée = nouvelle ligne · ↑/↓ en bord = historique.
+    Compatible avec l'ancien champ (propriété `value`, `action_submit`, `cursor_position`)."""
+    DEFAULT_CSS = """
+    PromptArea { height: auto; min-height: 3; max-height: 12; border: round $primary 60%; background: $surface; padding: 0 1; }
+    PromptArea:focus { border: round $primary; }
+    PromptArea .text-area--cursor-line { background: transparent; }
+    """
+
+    class Submitted(Message):
+        def __init__(self, area: "PromptArea", value: str):
+            super().__init__()
+            self.input, self.value = area, value
+
+        @property
+        def control(self):
+            return self.input
+
+    def __init__(self, placeholder: str = "", id: str | None = None):
+        super().__init__("", id=id, soft_wrap=True, tab_behavior="focus", show_line_numbers=False, highlight_cursor_line=False, placeholder=placeholder)
+        self.prompt_history: list[str] = []
+        self._hpos: int | None = None
+
+    @property
+    def value(self) -> str:
+        return self.text
+
+    @value.setter
+    def value(self, v: str) -> None:
+        self.text = v
+        self.move_cursor((self.document.line_count - 1, len(self.document.get_line(self.document.line_count - 1))))
+
+    @property
+    def cursor_position(self) -> int:
+        return len(self.text)
+
+    @cursor_position.setter
+    def cursor_position(self, _v: int) -> None:
+        self.move_cursor((self.document.line_count - 1, len(self.document.get_line(self.document.line_count - 1))))
+
+    async def action_submit(self) -> None:
+        self.post_message(self.Submitted(self, self.text))
+
+    def remember(self, text: str) -> None:
+        if text.strip() and (not self.prompt_history or self.prompt_history[-1] != text):
+            self.prompt_history.append(text)
+        self._hpos = None
+
+    async def _on_key(self, event: events.Key) -> None:
+        scr = self.screen
+        if getattr(scr, "leader_active", False):
+            event.stop()
+            event.prevent_default()
+            if event.key in getattr(scr, "leader_keys", {}):
+                scr.action_leader_do(event.key)
+            else:
+                scr._leader_off()
+            return
+        if event.key == "enter":
+            event.stop()
+            event.prevent_default()
+            await self.action_submit()
+            return
+        if event.key in ("shift+enter", "ctrl+j", "alt+enter"):
+            event.stop()
+            event.prevent_default()
+            self.insert("\n")
+            return
+        row = self.cursor_location[0]
+        if event.key == "up" and row == 0 and self.prompt_history:
+            event.stop()
+            event.prevent_default()
+            self._hpos = len(self.prompt_history) - 1 if self._hpos is None else max(0, self._hpos - 1)
+            self.value = self.prompt_history[self._hpos]
+            return
+        if event.key == "down" and self._hpos is not None and row == self.document.line_count - 1:
+            event.stop()
+            event.prevent_default()
+            self._hpos += 1
+            if self._hpos >= len(self.prompt_history):
+                self._hpos = None
+                self.value = ""
+            else:
+                self.value = self.prompt_history[self._hpos]
+            return
+        await super()._on_key(event)
 
 
 class DiffBlock(Static):

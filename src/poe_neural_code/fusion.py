@@ -73,7 +73,7 @@ def status(h: Helper, cfg=None) -> tuple[bool, str]:
         return (True, "installé") if a and shutil.which(a.binary) else (False, f"« {a.binary if a else h.ref} » non installé")
     spec = get_spec(h.ref.partition("/")[0])
     from .providers import has_credentials
-    return (True, "clé ✓") if spec and has_credentials(spec) else (False, "clé absente (/connect)")
+    return (True, "clé enregistrée") if spec and has_credentials(spec) else (False, "clé absente (/connect)")
 
 
 def prompt_text(config) -> str:

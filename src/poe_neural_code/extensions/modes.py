@@ -12,7 +12,7 @@ from pathlib import Path
 
 from .frontmatter import parse
 
-READONLY_TOOLS = {"list_dir", "read_file", "search_files", "todo_write", "memory_search", "memory_load", "memory_note", "skill", "ask_helper"}
+READONLY_TOOLS = {"list_dir", "read_file", "search_files", "todo_write", "memory_search", "memory_load", "memory_note", "skill", "ask_helper", "web_fetch"}
 PROJECT_DIRS = (".eclipse/modes", ".opencode/agents", ".claude/agents")
 GLOBAL_DIRS = ("~/.config/eclipse/modes", "~/.config/opencode/agents", "~/.claude/agents")
 

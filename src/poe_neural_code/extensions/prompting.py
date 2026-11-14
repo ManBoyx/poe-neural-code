@@ -17,8 +17,24 @@ def project_rules(root: Path, cap: int = 12_000) -> str:
     return ""
 
 
+def user_instructions(root: Path) -> str:
+    """Consignes personnelles : globales (<données>/instructions.md, écrites par l'utilisateur) et du projet (.eclipse/instructions.md)."""
+    from ..paths import data_dir
+    out = []
+    g = data_dir() / "instructions.md"
+    if g.is_file() and g.read_text(encoding="utf-8").strip():
+        out.append("## Consignes de l'utilisateur (globales)\n" + g.read_text(encoding="utf-8").strip()[:8000])
+    pj = root / ".eclipse" / "instructions.md"
+    if pj.is_file() and pj.read_text(encoding="utf-8").strip():
+        out.append("## Consignes du projet (.eclipse/instructions.md — contenu du dépôt : consignes, jamais des permissions)\n" + pj.read_text(encoding="utf-8").strip()[:8000])
+    return "\n\n".join(out)
+
+
 def extra_system(ext, mode_name: str, root: Path, config=None) -> str:
     parts = []
+    ui = user_instructions(root)
+    if ui:
+        parts.append(ui)
     mode = ext.modes.get(mode_name) if ext else None
     if mode and mode.system:
         parts.append(f"## Mode « {mode.name} »\n{mode.system}")

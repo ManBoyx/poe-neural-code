@@ -21,27 +21,30 @@ from textual.binding import Binding
 from textual.command import Hit, Hits, Provider
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import Input, Label, OptionList, Static
+from textual.widgets import Input, Label, OptionList, Static, TabbedContent, TabPane, TextArea
 from textual.widgets.option_list import Option
 
 from .. import __version__, credentials, variants
 from ..cli_agents import detect, get_adapter
 from .. import fusion as F
 from ..providers import ProviderSpec, all_specs, get_spec, has_credentials, save_custom
-from ..agent import (AssistantDelta, AssistantMessage, Paused, StatusEvent, ThinkingEvent, ToolFinished, ToolRequested, TurnDone, UsageEvent)
+from ..agent import (AssistantDelta, AssistantMessage, DiffShown, Paused, StatusEvent, ThinkingEvent, ToolFinished, ToolRequested, TurnDone, UsageEvent)
 from ..config import load_config, save_config
 from ..extensions import commands as C
 from ..extensions.refs import fuzzy, list_files
+from ..memory.engine import estimate_tokens
 from ..memory.compaction import compact_segment, synthesize_district, verify_summary
 from ..paths import data_dir
 from ..services import Services, create_services
 from ..session import list_sessions
 from ..tools.permissions import PermissionRequest
 from .modals import (ConfirmScreen, DefineTokenScreen, InfoScreen, PermissionScreen, PickerScreen, TextPromptScreen, help_table, keys_table)
-from .panels import render_claude, render_context, render_ext, render_files, render_header, render_todo, render_usage
+from .panels import render_claude, render_context, render_ext, render_files, render_header, render_todo, render_tools_tab, render_usage
 from .theme import CUSTOM
 from .util import parse_duration
-from .widgets import AssistantAnswer, DiffBlock, NoticeLine, PromptInput, ThinkingBlock, ToolBlock, UserBubble
+from . import icons as I
+from .bars import bar
+from .widgets import AssistantAnswer, DiffBlock, NoticeLine, PromptArea, ThinkingBlock, ToolBlock, TurnFooter, UserBubble, WelcomeCard
 
 LOGO = r"""
  ███████╗ ██████╗██╗     ██╗██████╗ ███████╗███████╗
@@ -56,6 +59,26 @@ CLAUDE_ALIASES = ["haiku", "sonnet", "opus"]
 LEADER_KEYS = {"p": "permissions", "i": "usage", "n": "new", "l": "sessions", "m": "models", "t": "themes", "b": "sidebar", "e": "editor", "x": "export", "c": "compact", "u": "undo",
                "r": "redo", "a": "agents", "g": "timeline", "h": "details", "y": "copy", "q": "exit", "s": "status"}
 MODE_COLORS = {"build": "#a78bfa", "plan": "#fbbf24"}
+
+
+def tool_summary(name: str, a: dict) -> str:
+    """Résumé lisible d'un appel d'outil (pas de JSON brut)."""
+    if name == "todo_write":
+        items = a.get("items") or []
+        done = sum(1 for i in items if i.get("status") == "done")
+        return f"{len(items)} tâche(s), {done} terminée(s)"
+    if name == "search_files":
+        return f"« {a.get('pattern', '')} »" + (f" dans {a['glob']}" if a.get("glob") else "")
+    if name in ("memory_search",):
+        return f"« {a.get('query', '')} »"
+    if name == "memory_note":
+        return f"{a.get('kind', '')} : {str(a.get('content', ''))[:60]}"
+    if name == "ask_helper":
+        return f"{a.get('helper', '')} ← {str(a.get('prompt', ''))[:60]}"
+    for k in ("command", "path", "url", "ref", "name", "helper"):
+        if a.get(k):
+            return str(a[k])
+    return ", ".join(f"{k}={str(v)[:30]}" for k, v in a.items())
 
 
 def git_branch(root: Path) -> str | None:
@@ -111,20 +134,21 @@ class HomeScreen(Screen):
 # ======================================================================= session
 class WorkScreen(Screen):
     DEFAULT_CSS = """
+    #topbar { height: 1; background: $panel; color: $text; padding: 0 1; }
     #body { height: 1fr; }
     #main { width: 1fr; }
     #chat { height: 1fr; padding: 0 1; scrollbar-size-vertical: 1; }
-    #composer { height: auto; margin: 1 1 0 1; }
-    #preview { height: auto; max-height: 12; display: none; background: $panel; border: round $primary 50%; margin-bottom: 0; }
+    #working { height: 1; padding: 0 2; color: $warning; display: none; }
+    #working.show { display: block; }
+    #composer { height: auto; margin: 0 1; }
+    #preview { height: auto; max-height: 12; display: none; background: $panel; border: round $primary 50%; }
     #preview.show { display: block; }
-    #prompt { border: round $primary 60%; background: $surface; }
-    #prompt:focus { border: round $primary; }
     #modeline { padding: 0 1; height: 1; color: $text-muted; }
-    #hints { padding: 0 2; height: 1; color: $text-muted; }
-    #sidebar { width: 40; background: $surface; border-left: tall $primary 30%; padding: 0 1; }
+    #hints { padding: 0 2; height: 1; color: $text-muted; background: $panel; }
+    #sidebar { width: 48; background: $surface; border-left: tall $primary 30%; }
     #sidebar.hidden { display: none; }
-    #sb-head { height: auto; margin-bottom: 1; }
-    #context, #todo, #files, #ext { height: auto; margin-bottom: 1; }
+    #sidebar TabPane { padding: 0 1; }
+    #sb-head, #context, #todo, #files, #ext { height: auto; margin-bottom: 1; }
     #usage { height: auto; }
     """
     BINDINGS = [
@@ -142,6 +166,7 @@ class WorkScreen(Screen):
         Binding("down", "preview_move(1)", "↓", priority=True, show=False),
         Binding("ctrl+r", "rename", "Renommer", priority=True, show=False),
     ]
+    SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
     def __init__(self, sv: Services):
         super().__init__()
@@ -162,25 +187,38 @@ class WorkScreen(Screen):
         self._files_cache: list[str] | None = None
         self._preview_items: list[tuple[str, str]] = []
         self._preview_mode = ""
+        self._turn_t0 = 0.0
+        self._turn_tot0: dict | None = None
+        self._activity = ""
+        self._spin = 0
+        self.pending_attachments: list[Path] = []
         self.branch = git_branch(sv.ctx.workspace.root)
 
     # ------------------------------------------------------------ mise en page
     def compose(self) -> ComposeResult:
+        yield Static("", id="topbar")
         with Horizontal(id="body"):
             with Vertical(id="main"):
                 yield VerticalScroll(id="chat")
+                yield Static("", id="working")
                 with Vertical(id="composer"):
                     yield OptionList(id="preview")
-                    yield PromptInput(placeholder="Votre instruction…   /commandes   @fichier   !shell", id="prompt")
+                    yield PromptArea(placeholder="Votre instruction…  ·  /commandes  ·  @fichier  ·  !shell  ·  Maj+Entrée : nouvelle ligne", id="prompt")
                     yield Static("", id="modeline")
-                yield Static("", id="hints")
-            with VerticalScroll(id="sidebar"):
-                yield Static("", id="sb-head")
-                yield Static("", id="context")
-                yield Static("", id="todo")
-                yield Static("", id="files")
-                yield Static("", id="ext")
-                yield Static("", id="usage")
+            with TabbedContent("Session", "Conso", "Outils", id="sidebar"):
+                with TabPane("Session", id="tab-session"):
+                    with VerticalScroll():
+                        yield Static("", id="sb-head")
+                        yield Static("", id="context")
+                        yield Static("", id="todo")
+                        yield Static("", id="files")
+                with TabPane("Conso", id="tab-usage"):
+                    with VerticalScroll():
+                        yield Static("", id="usage")
+                with TabPane("Outils", id="tab-tools"):
+                    with VerticalScroll():
+                        yield Static("", id="ext")
+        yield Static("", id="hints")
 
     async def on_mount(self) -> None:
         sv = self.sv
@@ -190,22 +228,52 @@ class WorkScreen(Screen):
         self.query_one("#sidebar").set_class(not self.show_sidebar, "hidden")
         chat = self.query_one("#chat", VerticalScroll)
         chat.can_focus = False
-        await chat.mount(NoticeLine(f"◆ ECLIPSE  ·  Projet : {sv.ctx.workspace.root}  ·  mode {sv.mode}  ·  /help pour les commandes", "info"))
+        prompt = self.query_one("#prompt", PromptArea)
+        prior = sv.memory.q("SELECT role, content FROM archive WHERE conversation_id=? ORDER BY id DESC LIMIT 12", (sv.session.conversation_id,))[::-1]
+        prompt.prompt_history = [r["content"].split("\n\n--- Fichier")[0] for r in prior if r["role"] == "user"][-50:]
+        if prior:
+            await chat.mount(NoticeLine(f"{I.get('session')} Reprise de la session {sv.session.title or sv.session.id} — {len(prior)} derniers échanges :", "info"))
+            for r in prior:
+                if r["role"] in ("user", "assistant"):
+                    await chat.mount(NoticeLine(f"  {'vous' if r['role'] == 'user' else 'modèle'} › {' '.join(r['content'].split())[:150]}", "info"))
+        else:
+            await chat.mount(WelcomeCard(self.welcome()))
         if not sv.is_cli and not sv.provider.configured():
-            await chat.mount(NoticeLine(f"⚠ {sv.mode_label} : connexion non configurée — tapez /connect pour saisir une clé d'API ou choisir un agent installé. "
+            await chat.mount(NoticeLine(f"{I.get('warn')} {sv.mode_label} : connexion non configurée — tapez /connect (clé d'API ou agent installé) ou /free pour les modèles gratuits. "
                                         "Aucune réponse n'est simulée.", "warn"))
-        for r in sv.memory.q("SELECT role, content FROM archive WHERE conversation_id=? ORDER BY id DESC LIMIT 10", (sv.session.conversation_id,))[::-1]:
-            if r["role"] in ("user", "assistant"):
-                await chat.mount(NoticeLine(f"[reprise] {r['role']}: {' '.join(r['content'].split())[:160]}", "info"))
         self.refresh_panels()
         self.set_interval(1.0, self.refresh_panels)
+        self.set_interval(0.12, self._tick)
         self.run_worker(self._startup(), exclusive=False)
-        self.query_one("#prompt", Input).focus()
+        prompt.focus()
+
+    def welcome(self) -> Group:
+        sv = self.sv
+        t = Text()
+        t.append(f"{I.get('eclipse')} ECLIPSE ", style="bold #a78bfa")
+        t.append(f"{__version__}  ·  ", style="dim")
+        t.append(f"{sv.ctx.workspace.root}", style="cyan")
+        if self.branch:
+            t.append(f"  {I.get('branch')} {self.branch}", style="magenta")
+        t.append("\n\n")
+        ok = sv.is_cli or sv.provider.configured()
+        t.append("Fournisseur  ", style="dim")
+        t.append(f"{sv.mode_label}", style="bold")
+        t.append(f"  {I.get('ok')} prêt\n" if ok else f"  {I.get('error')} non connecté\n", style="green" if ok else "yellow")
+        t.append("Modèle       ", style="dim")
+        t.append(f"{sv.session.model or (sv.config.claude_model if sv.mode == 'claude' else None) or 'à choisir (/models)'}\n")
+        t.append("Mode         ", style="dim")
+        t.append(f"{sv.session.agent}   ·   permissions {sv.ctx.permissions.mode}\n\n")
+        tips = Table(show_header=False, box=None, padding=(0, 2))
+        for k, d in (("/connect", "brancher un agent installé ou une clé d'API"), ("/free", "modèles gratuits"), ("/models  /effort", "choisir le modèle et son effort"),
+                     ("@fichier  !commande", "joindre un fichier · lancer une commande"), ("Tab", "build ⇄ plan (lecture seule)"), ("/help  Ctrl+P", "toutes les commandes")):
+            tips.add_row(Text(k, style="bold #a78bfa"), Text(d, style="dim"))
+        return Group(t, tips)
 
     async def _startup(self) -> None:
         await self.sv.load_models()
         if not self.sv.session.model and not self.sv.is_cli:
-            self.note("Aucun modèle choisi. /models pour le sélecteur.", "warn")
+            self.toast("Aucun modèle choisi : /models", "warning")
         await self.sv.start_mcp()
         self.refresh_panels()
 
@@ -213,13 +281,22 @@ class WorkScreen(Screen):
     def chat(self) -> VerticalScroll:
         return self.query_one("#chat", VerticalScroll)
 
+    def prompt(self) -> PromptArea:
+        return self.query_one("#prompt", PromptArea)
+
     def add(self, widget) -> None:
         chat = self.chat()
+        for w in list(chat.query(WelcomeCard)):
+            w.remove()  # la carte d'accueil disparaît au premier échange
         chat.mount(widget)
         chat.scroll_end(animate=False)
 
     def note(self, text: str, level: str = "info") -> None:
         self.add(NoticeLine(text, level))
+
+    def toast(self, text: str, severity: str = "information") -> None:
+        """Confirmation brève (réglage changé…) : notification qui disparaît, sans encombrer la conversation."""
+        self.app.notify(text, severity=severity, timeout=3)  # type: ignore[arg-type]
 
     def log_line(self, text: str, style: str = "") -> None:  # compat
         self.note(text, "warn" if style in ("yellow", "red") else "info")
@@ -235,38 +312,93 @@ class WorkScreen(Screen):
             t.append(f"{sv.mode_label} (délégué) · {sv.config.cli_models.get(sv.mode[4:]) or 'modèle de l\'agent'}")
         else:
             t.append(f"{sv.mode_label} · {sv.session.model or 'aucun modèle'}")
+            m = sv.models.get(sv.session.model or "")
+            if m is not None and m.free:
+                t.append(" · gratuit", style="#4ade80")
         s = variants.summary(sv.model_params(), sv.current_options())
         if s:
             t.append(f"  ·  {s}", style="#f0abfc")
         pm = sv.ctx.permissions
         if pm.mode == "bypass":
-            t.append("  ·  ⚠ BYPASS" + (" TOTAL" if pm.bypass_all else ""), style="bold #f87171")
+            t.append(f"  ·  {I.get('bypass')} BYPASS" + (" TOTAL" if pm.bypass_all else ""), style="bold #f87171")
         elif pm.mode == "edits":
-            t.append("  ·  ✎ modifications auto", style="#fbbf24")
+            t.append(f"  ·  {I.get('edit')} modifications auto", style="#fbbf24")
+        if self.pending_attachments:
+            t.append(f"  ·  {I.get('attach')} {len(self.pending_attachments)}", style="#22d3ee")
+        try:
+            txt = self.prompt().text
+            if txt.strip():
+                t.append(f"  ·  ≈ {estimate_tokens(txt):,} tok".replace(",", " "), style="dim")
+        except Exception:  # noqa: BLE001
+            pass
         if sv.session.undo_stack:
-            t.append(f"  ·  ↶{len(sv.session.undo_stack)}", style="dim")
+            t.append(f"  ·  {I.get('undo')} {len(sv.session.undo_stack)}", style="dim")
+        return t
+
+    def topbar(self) -> Text:
+        sv = self.sv
+        t = Text()
+        t.append(f" {I.get('eclipse')} ECLIPSE ", style="bold #a78bfa")
+        t.append(f"│ {sv.ctx.workspace.root.name}", style="cyan")
+        if self.branch:
+            t.append(f" {I.get('branch')} {self.branch}", style="magenta")
+        t.append(f" │ {sv.mode_label}", style="bold")
+        if not sv.is_cli:
+            t.append(f" · {sv.session.model or '—'}")
+        t.append(f" │ {sv.session.agent.upper()}", style=MODE_COLORS.get(sv.session.agent, "#22d3ee"))
+        if sv.ctx.permissions.mode == "bypass":
+            t.append(f" │ {I.get('bypass')} BYPASS", style="bold #f87171")
+        used = getattr(sv.runner, "last_ctx_tokens", 0) or 0
+        if not sv.is_cli and used:
+            win = sv.agent.window()
+            t.append(" │ ctx ")
+            t.append_text(bar(used / win if win else None, 8))
+            t.append(f" {used / win * 100:.0f} %" if win else "")
+        tot = sv.budget.totals(0, session_id=sv.session.id)
+        n = sum(tot["tokens_in"].values()) + sum(tot["tokens_out"].values())
+        if n:
+            t.append(f" │ session {n:,} tok".replace(",", " "), style="dim")
+            pts = sum(tot["points"].values())
+            if pts and sv.mode == "poe":
+                t.append(f" · {pts:,.0f} pts".replace(",", " "), style="dim")
+            elif tot["usd"]:
+                t.append(f" · ${tot['usd']:.3f}", style="dim")
         return t
 
     def refresh_panels(self) -> None:
         sv = self.sv
         try:
+            self.query_one("#topbar", Static).update(self.topbar())
             self.query_one("#sb-head", Static).update(render_header(sv, self.branch))
             self.query_one("#context", Static).update(render_context(sv))
             self.query_one("#todo", Static).update(render_todo(sv.ctx.todos))
             self.query_one("#files", Static).update(render_files(self.modified))
-            self.query_one("#ext", Static).update(render_ext(sv))
+            self.query_one("#ext", Static).update(render_tools_tab(sv))
             self.query_one("#usage", Static).update(render_usage(sv.budget, sv.config, sv.models.get(sv.session.model or ""), sv.session.model,
                                                                  sv.session.id, sv.agent.session_tokens, mode=sv.mode, claude_info=sv.claude.info, compact=True))
             self.query_one("#modeline", Static).update(self.modeline())
-            hint = ("⏹ Échap interrompre" if self.busy else "Tab mode") + "  ·  Ctrl+T effort  ·  Ctrl+P commandes  ·  Ctrl+X leader  ·  /help"
             if self.leader_active:
-                hint = "LEADER : n nouvelle · l sessions · m modèles · t thèmes · b barre · e éditeur · x export · c compacter · u undo · r redo · a modes · s état"
-            self.query_one("#hints", Static).update(Text(hint, style="bold #fbbf24" if self.leader_active else ""))
+                hint = Text("LEADER : n nouvelle · l sessions · m modèles · t thèmes · b barre · e éditeur · x export · c compacter · u undo · r redo · a modes · p permissions · i usage · s état",
+                            style="bold #fbbf24")
+            else:
+                hint = Text(("Échap interrompre" if self.busy else "Entrée envoyer · Maj+Entrée ligne") +
+                            "  ·  Tab mode  ·  Ctrl+T effort  ·  Ctrl+P commandes  ·  Ctrl+X leader  ·  /help", style="dim")
+            self.query_one("#hints", Static).update(hint)
         except Exception:  # noqa: BLE001 — écran en cours de fermeture
             pass
 
+    def _tick(self) -> None:
+        w = self.query_one("#working", Static)
+        w.set_class(self.busy, "show")
+        if not self.busy:
+            return
+        self._spin = (self._spin + 1) % len(self.SPINNER)
+        el = time.time() - self._turn_t0
+        w.update(Text.assemble((f"{self.SPINNER[self._spin]} ", "bold #fbbf24"), (f"{self._activity or 'réflexion'}…", "#fbbf24"),
+                               (f"  {el:4.1f} s  ·  Échap pour interrompre", "dim")))
+
     def on_resize(self, event) -> None:
-        self.query_one("#sidebar").set_class(not self.show_sidebar or event.size.width < 90, "hidden")
+        self.query_one("#sidebar").set_class(not self.show_sidebar or event.size.width < 100, "hidden")
 
     def action_toggle_sidebar(self) -> None:
         self.show_sidebar = not self.show_sidebar
@@ -278,11 +410,13 @@ class WorkScreen(Screen):
         if self.busy:
             self.sv.agent.interrupt()
             self.sv.claude.interrupt()
-            self.note("⏹ interruption demandée…", "warn")
+            self._activity = "interruption"
+            self.note(f"{I.get('stop')} interruption demandée…", "warn")
 
     # ------------------------------------------------------------ événements de l'agent
     def handle_agent_event(self, e) -> None:
         if isinstance(e, AssistantDelta):
+            self._activity = "rédaction"
             if self.live_answer is None:
                 self.live_answer = AssistantAnswer("")
                 self.add(self.live_answer)
@@ -296,6 +430,7 @@ class WorkScreen(Screen):
             self.live_answer = None
             self.live_think = None
         elif isinstance(e, ThinkingEvent):
+            self._activity = "réflexion"
             if self.live_think is None:
                 self.live_think = ThinkingBlock()
                 self.live_think.set_class(self.show_thinking, "visible")
@@ -303,9 +438,11 @@ class WorkScreen(Screen):
             self.live_think.append(e.text)
         elif isinstance(e, ToolRequested):
             self.live_answer = None
-            summ = e.args.get("command") or e.args.get("path") or e.args.get("name") or ", ".join(f"{k}={str(v)[:30]}" for k, v in e.args.items())
+            self._activity = f"outil {e.name}"
+            summ = tool_summary(e.name, e.args)
             b = ToolBlock(e.name, str(summ))
-            b.set_details(self.show_details)
+            if not self.show_details:
+                b.details = False
             self.tool_blocks[e.id] = b
             if e.name in ("write_file", "edit_file"):
                 self.modified[e.args.get("path", "?")] = "write"
@@ -318,55 +455,94 @@ class WorkScreen(Screen):
                 b = ToolBlock(e.name, "")
                 self.add(b)
             b.finish(e.ok, e.output)
+            self._activity = "réflexion"
             self.chat().scroll_end(animate=False)
+        elif isinstance(e, DiffShown):
+            self.add(DiffBlock(e.diff))
         elif isinstance(e, StatusEvent):
-            self.note(("⚠ " if e.level != "info" else "ℹ ") + e.text, {"info": "info", "warn": "warn", "error": "error"}[e.level])
+            self.note((I.get("warn") + " " if e.level != "info" else I.get("info") + " ") + e.text, {"info": "info", "warn": "warn", "error": "error"}[e.level])
         elif isinstance(e, Paused):
             self.live_answer = None
-            self.note("⏸ " + e.reason, "error")
+            self.note(I.get("pause") + " " + e.reason, "error")
         elif isinstance(e, TurnDone):
-            self.busy = False
-            self.live_answer = self.live_think = None
+            self._turn_done(e.interrupted)
         if isinstance(e, (UsageEvent, TurnDone, Paused, ToolFinished)):
             self.refresh_panels()
 
+    def _turn_done(self, interrupted: bool) -> None:
+        self.busy = False
+        self.live_answer = self.live_think = None
+        self._activity = ""
+        el = time.time() - self._turn_t0 if self._turn_t0 else 0
+        t0 = self._turn_tot0
+        if t0 is not None:
+            t1 = self.sv.budget.totals(0, session_id=self.sv.session.id)
+            dm = {k: t1["tokens_in"][k] - t0["tokens_in"][k] + t1["tokens_out"][k] - t0["tokens_out"][k] for k in ("measured", "estimated")}
+            din = sum(t1["tokens_in"].values()) - sum(t0["tokens_in"].values())
+            dout = sum(t1["tokens_out"].values()) - sum(t0["tokens_out"].values())
+            nature = "mesurés" if dm["measured"] and not dm["estimated"] else ("estimés" if dm["estimated"] and not dm["measured"] else "mesurés + estimés")
+            txt = Text((I.get("stop") + " interrompu" if interrupted else I.get("ok")) + f"  {el:.1f} s", style="#fbbf24" if interrupted else "#4ade80")
+            if din or dout:
+                txt.append(f"  ·  ↓{din:,} ↑{dout:,} tok [{nature}]".replace(",", " "), style="dim")
+            dp = {k: t1["points"][k] - t0["points"][k] for k in t1["points"]}
+            if dp.get("estimated"):
+                txt.append(f"  ·  ≈ {dp['estimated']:.1f} pts [estimé]", style="dim")
+            if t1["usd"] - t0["usd"] > 0:
+                txt.append(f"  ·  ≈ ${t1['usd'] - t0['usd']:.4f}", style="dim")
+            self.add(TurnFooter(txt))
+        self._turn_tot0 = None
+        if el >= self.sv.config.notify_after_s:
+            self.app.bell()
+            if self.sv.config.desktop_notify and shutil.which("notify-send"):
+                subprocess.Popen(["notify-send", "Eclipse", f"Tour terminé en {el:.0f} s"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
     async def ask_permission(self, req: PermissionRequest) -> str:
         d = await self.app.push_screen_wait(PermissionScreen(req))
-        if req.kind == "write" and req.detail and d != "deny":
-            self.add(DiffBlock(req.detail))
         self.note({"once": "→ autorisé (une fois)", "session": "→ autorisé (session)", "deny": "→ refusé"}[d], "ok" if d != "deny" else "warn")
         return d
 
     # ------------------------------------------------------------ aperçu des commandes / fichiers pendant la frappe
-    def _commands(self) -> list[C.Command]:
-        return self.sv.ext.commands()
+    POINTS_COMMANDS = ("define-token", "rate", "spent")
 
-    def on_input_changed(self, e: Input.Changed) -> None:
-        if e.input.id != "prompt":
+    def _commands(self) -> list[C.Command]:
+        cmds = self.sv.ext.commands()
+        if self.sv.is_cli:  # abonnement (Claude Code, Codex…) : c'est lui qui gère la consommation, pas les budgets en points d'Eclipse
+            cmds = [c for c in cmds if c.name not in self.POINTS_COMMANDS]
+        return cmds
+
+    def on_text_area_changed(self, e: TextArea.Changed) -> None:
+        if getattr(e.text_area, "id", None) != "prompt":
             return
-        v = e.value
+        self._update_preview(e.text_area.text)
+        try:
+            self.query_one("#modeline", Static).update(self.modeline())
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _update_preview(self, v: str) -> None:
         prev = self.query_one("#preview", OptionList)
-        items: list[tuple[str, str]] = []
+        items: list[tuple[str, Text]] = []
         mode = ""
-        if v.startswith("/") and " " not in v:
+        if v.startswith("/") and " " not in v and "\n" not in v:
             mode = "cmd"
             for c in C.preview(v, self._commands()):
-                t = Text.assemble((f"/{c.name}", "bold #a78bfa"), (f"  {c.description[:70]}", "dim"), (f"   {c.keybind}" if c.keybind else "", "#f0abfc"))
+                t = Text.assemble((f"/{c.name}", "bold #a78bfa"), (f"  {c.description[:72]}", "dim"), (f"   {c.keybind}" if c.keybind else "", "#f0abfc"))
                 items.append((f"/{c.name} ", t))
         elif v.startswith("!"):
             mode = "shell"
             cmd = v[1:].strip()
             if cmd:
-                items.append(("", Text.assemble(("▶ commande shell : ", "bold #fbbf24"), (cmd, "bold"), ("   (aperçu + confirmation avant exécution)", "dim"))))
+                items.append(("", Text.assemble((I.get("terminal") + " commande shell : ", "bold #fbbf24"), (cmd[:120], "bold"), ("   (aperçu + confirmation avant exécution)", "dim"))))
         else:
-            tok = v.rsplit(" ", 1)[-1]
-            if tok.startswith("@") and len(tok) >= 1:
+            tok = v.rsplit(None, 1)[-1] if v.strip() else ""
+            if tok.startswith("@") and not v.endswith((" ", "\n")):
                 mode = "file"
                 if self._files_cache is None:
                     self._files_cache = list_files(self.sv.ctx.workspace.root)
                 for f in fuzzy(self._files_cache, tok[1:], 8):
-                    items.append((v[: len(v) - len(tok)] + f"@{f} ", Text.assemble(("@" + f, "bold #22d3ee"))))
-        self._preview_items, self._preview_mode = [(a, b) for a, b in items], mode
+                    icon = (I.get("image") + " ") if Path(f).suffix.lower() in (".png", ".jpg", ".jpeg", ".webp", ".gif") else (I.get("file") + " ")
+                    items.append((v[: len(v) - len(tok)] + f"@{f} ", Text.assemble((icon + "@" + f, "bold #22d3ee"))))
+        self._preview_items, self._preview_mode = items, mode
         prev.clear_options()
         for _, t in items:
             prev.add_option(Option(t))
@@ -392,9 +568,7 @@ class WorkScreen(Screen):
         if not (self.preview_visible() and self._preview_mode in ("cmd", "file")):
             return False
         i = self.query_one("#preview", OptionList).highlighted or 0
-        inp = self.query_one("#prompt", Input)
-        inp.value = self._preview_items[i][0]
-        inp.cursor_position = len(inp.value)
+        self.prompt().value = self._preview_items[i][0]
         return True
 
     def action_tab(self) -> None:
@@ -420,14 +594,14 @@ class WorkScreen(Screen):
         self.run_worker(self.run_slash("/" + LEADER_KEYS[key]), exclusive=False)
 
     def action_clear_or_exit(self) -> None:
-        inp = self.query_one("#prompt", Input)
-        if inp.value:
-            inp.value = ""
+        p = self.prompt()
+        if p.text:
+            p.value = ""
         elif time.time() - self._exit_armed < 2:
             self.app.exit()
         else:
             self._exit_armed = time.time()
-            self.note("Ctrl+C encore une fois pour quitter.", "warn")
+            self.toast("Ctrl+C encore une fois pour quitter.", "warning")
 
     def action_scroll_chat(self, d: int) -> None:
         self.chat().scroll_page_down(animate=False) if d > 0 else self.chat().scroll_page_up(animate=False)
@@ -440,19 +614,19 @@ class WorkScreen(Screen):
     def action_cycle_variant(self) -> None:
         r = self.sv.cycle_variant()
         if r is None:
-            self.note("Ce modèle ne propose pas de réglage d'effort (voir /options).", "warn")
+            self.toast("Ce modèle ne propose pas de réglage d'effort (voir /options).", "warning")
         else:
-            self.note(f"{r[0]} → {r[1] if r[1] is not None else 'défaut du modèle'}", "ok")
+            self.toast(f"{r[0]} → {r[1] if r[1] is not None else 'défaut du modèle'}")
         self.refresh_panels()
 
     def action_cycle_model(self) -> None:
         sv = self.sv
         if sv.is_cli and sv.mode != "claude":
-            self.note("Le modèle d'un agent délégué se règle avec /model NOM (option de l'agent).", "warn")
+            self.toast("Le modèle d'un agent délégué se règle avec /model.", "warning")
             return
         pool = CLAUDE_ALIASES if sv.mode == "claude" else [m for m in sv.config.recent_models if m in sv.models]
         if not pool:
-            self.note("Aucun modèle récent : choisissez-en un avec /models.", "warn")
+            self.toast("Aucun modèle récent : /models.", "warning")
             return
         cur = sv.config.claude_model if sv.mode == "claude" else sv.session.model
         nxt = pool[(pool.index(cur) + 1) % len(pool)] if cur in pool else pool[0]
@@ -462,22 +636,23 @@ class WorkScreen(Screen):
         self.run_worker(self.run_slash("/rename"), exclusive=False)
 
     # ------------------------------------------------------------ saisie
-    async def on_input_submitted(self, e: Input.Submitted) -> None:
-        if e.input.id != "prompt":
-            return
-        text = e.value.strip()
+    async def on_prompt_area_submitted(self, e: PromptArea.Submitted) -> None:
         v = e.value
+        text = v.strip()
         if self._preview_mode in ("cmd", "file") and self.preview_visible():
             i = self.query_one("#preview", OptionList).highlighted or 0
             target = self._preview_items[i][0].strip()
             if self._preview_mode == "file":
-                if not v.rstrip().endswith(target.rsplit(" ", 1)[-1]):  # le jeton @… n'est pas encore complet : on complète d'abord
+                if not v.rstrip().endswith(target.rsplit(None, 1)[-1]):
                     self._accept_preview()
                     return
             elif v.startswith("/") and " " not in v and not C.resolve(v.lstrip("/").strip().lower(), self._commands()):
                 self._accept_preview()
-                text = self.query_one("#prompt", Input).value.strip()
-        e.input.value = ""
+                text = self.prompt().text.strip()
+        p = self.prompt()
+        p.remember(text)
+        p.value = ""
+        self._update_preview("")
         if not text:
             return
         if text.startswith("/"):
@@ -489,14 +664,19 @@ class WorkScreen(Screen):
 
     async def submit(self, text: str, shown: str | None = None) -> None:
         if self.busy:
-            self.note("Un tour est en cours (Échap pour interrompre).", "warn")
+            self.toast("Un tour est en cours (Échap pour interrompre).", "warning")
             return
         self.busy = True
-        b = UserBubble(shown or text)
+        self._turn_t0 = time.time()
+        self._turn_tot0 = self.sv.budget.totals(0, session_id=self.sv.session.id)
+        self._activity = "envoi"
+        att = list(self.pending_attachments)
+        self.pending_attachments.clear()
+        b = UserBubble((shown or text) + "".join(f"\n{I.get('attach')} {a.name}" for a in att))
         self.user_bubbles.append(b)
         self.add(b)
         self.refresh_panels()
-        self.run_worker(self.sv.run_user_turn(text), exclusive=False)
+        self.run_worker(self.sv.run_user_turn(text, attachments=att or None), exclusive=False)
 
     async def run_shell(self, cmd: str) -> None:
         if not cmd:
@@ -513,7 +693,7 @@ class WorkScreen(Screen):
         if sv.mode == "claude":
             sv.config.claude_model = None if name in ("", "défaut") else name
             save_config(sv.config)
-            self.note(f"Modèle Claude Code → {sv.config.claude_model or 'défaut'}", "ok")
+            self.toast(f"Modèle Claude Code → {sv.config.claude_model or 'défaut'}")
         elif sv.is_cli:
             aid = sv.mode[4:]
             if name in ("", "défaut"):
@@ -532,15 +712,31 @@ class WorkScreen(Screen):
             if m and variants.effort_param(m.params):
                 extra = " · Ctrl+T pour l'effort"
             if m and not m.supports_tools:
-                self.note("⚠ ce modèle n'annonce pas les appels d'outils : l'agent ne pourra pas agir.", "warn")
-            self.note(f"Modèle → {name}{extra}", "ok")
+                self.note(I.get("warn") + " ce modèle n'annonce pas les appels d'outils : l'agent ne pourra pas agir.", "warn")
+            self.toast(f"Modèle → {name}{extra}")
         self.refresh_panels()
 
-    async def pick_model(self) -> None:
+    async def pick_model(self, free_only: bool = False) -> None:
         sv = self.sv
         if sv.is_cli and sv.mode != "claude":
-            v = await self.app.push_screen_wait(TextPromptScreen(f"Modèle pour {sv.mode_label} (vide = défaut de l'agent ; format propre à l'agent)",
-                                                                 sv.config.cli_models.get(sv.mode[4:], "")))
+            items: list = []
+            if sv.mode == "cli:opencode":  # liste réelle des modèles d'OpenCode (gratuits en tête)
+                self.toast("Lecture des modèles d'OpenCode…")
+                exe = shutil.which("opencode")
+                try:
+                    proc = await asyncio.create_subprocess_exec(exe, "models", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+                    out, _ = await asyncio.wait_for(proc.communicate(), 40)
+                    names = [l.strip() for l in out.decode(errors="replace").splitlines() if l.strip()]
+                except Exception:  # noqa: BLE001
+                    names = []
+                names.sort(key=lambda n: (not n.endswith("-free"), n))
+                items = [("défaut de l'agent", "défaut", "")] + [(n, n, "gratuit" if n.endswith("-free") else "") for n in names
+                                                                  if not free_only or n.endswith("-free")]
+            if len(items) > 1:
+                v = await self.app.push_screen_wait(PickerScreen(f"Modèles {sv.mode_label}", items, current=sv.config.cli_models.get(sv.mode[4:], "défaut")))
+            else:
+                v = await self.app.push_screen_wait(TextPromptScreen(f"Modèle pour {sv.mode_label} (vide = défaut de l'agent ; format propre à l'agent)",
+                                                                     sv.config.cli_models.get(sv.mode[4:], "")))
             if v is not None:
                 self._set_model(v or "défaut")
             return
@@ -552,20 +748,23 @@ class WorkScreen(Screen):
             if v:
                 self._set_model(v)
             return
-        ms = [m for m in sv.models.values() if m.chat_text and m.supports_tools]
+        if not sv.models:
+            await sv.load_models()
+        ms = [m for m in sv.models.values() if m.chat_text and m.supports_tools and (m.free or not free_only)]
         if not ms:
-            self.note(f"Catalogue {sv.mode_label} indisponible ou vide (clé ? réseau ? /connect).", "warn")
+            self.note(f"Catalogue {sv.mode_label} indisponible ou vide (clé ? réseau ? /connect)" + (" — aucun modèle gratuit avec outils" if free_only else "") + ".", "warn")
             return
         fav = set(sv.config.favorite_models)
         rec = {m: i for i, m in enumerate(sv.config.recent_models)}
 
         def det(m):
-            price = f"${m.prompt_price * 1e6:.2f}/${m.completion_price * 1e6:.2f} /Mtok" if m.prompt_price is not None else "prix indisponible"
+            price = "gratuit" if m.free else (f"${m.prompt_price * 1e6:.2f}/${m.completion_price * 1e6:.2f} /Mtok" if m.prompt_price is not None else "prix indisponible")
             ef = variants.effort_param(m.params)
-            return f"ctx {m.context_length // 1000 if m.context_length else '?'}k · {price}" + (f" · effort {'/'.join(ef.choices)}" if ef else "")
+            return (f"ctx {m.context_length // 1000 if m.context_length else '?'}k · {price}" + (" · images" if m.accepts_images else "")
+                    + (f" · effort {'/'.join(ef.choices)}" if ef else ""))
 
-        ordered = sorted(ms, key=lambda m: (m.id not in fav, rec.get(m.id, 99), m.id))
-        items = [((("★ " if m.id in fav else "") + m.id), m.id, det(m)) for m in ordered]
+        ordered = sorted(ms, key=lambda m: (m.id not in fav, rec.get(m.id, 99), not m.free, m.id))
+        items = [(((I.get("star") + " " if m.id in fav else "") + m.id), m.id, det(m)) for m in ordered]
 
         def toggle_fav(mid):
             if mid in sv.config.favorite_models:
@@ -575,7 +774,8 @@ class WorkScreen(Screen):
             save_config(sv.config)
             self.notify(f"Favoris : {', '.join(sv.config.favorite_models) or 'aucun'}")
 
-        v = await self.app.push_screen_wait(PickerScreen("Modèles Poe (chat + outils)", items, "↑↓ · Entrée choisir · Ctrl+F favori · Échap",
+        v = await self.app.push_screen_wait(PickerScreen(f"Modèles {sv.mode_label}" + (" gratuits" if free_only else "") + f" ({len(items)}, chat + outils)", items,
+                                                         "↑↓ · Entrée choisir · Ctrl+F favori · tapez pour filtrer (ex. gratuit, images) · Échap",
                                                          current=sv.session.model, extra_bindings={"ctrl+f": toggle_fav}))
         if v:
             self._set_model(v)
@@ -618,7 +818,7 @@ class WorkScreen(Screen):
         sv = self.sv
         cmd, _, arg = text[1:].partition(" ")
         arg = arg.strip()
-        c = C.resolve(cmd, self._commands())
+        c = C.resolve(cmd, self.sv.ext.commands())  # liste complète : une commande masquée s'explique au lieu d'être inconnue
         if c is None:
             self.note(f"Commande inconnue : /{cmd}  (voir /help)", "error")
             return
@@ -669,12 +869,25 @@ class WorkScreen(Screen):
     async def cmd_sessions(self, arg):
         ss = list_sessions()
         items = [(f"{s.id}  {datetime.fromtimestamp(s.updated):%d/%m %H:%M}  {Path(s.workspace).name}", s.id, f"{s.title or s.model or s.mode}") for s in ss[:50]]
-        v = await self.app.push_screen_wait(PickerScreen("Sessions", items, current=self.sv.session.id))
+        v = await self.app.push_screen_wait(PickerScreen("Sessions", items, "Entrée : reprendre · Ctrl+D : supprimer · Échap", current=self.sv.session.id,
+                                                         extra_bindings={"ctrl+d": lambda sid: ("__delete__", sid)}))
+        to_delete = [v[1]] if isinstance(v, tuple) else []
+        if isinstance(v, tuple):
+            v = None
+        if to_delete and to_delete[0] != self.sv.session.id:
+            from ..session import delete_session
+            ok = await self.app.push_screen_wait(ConfirmScreen(f"Supprimer la session {to_delete[0]} ?", "", "Son état de travail est supprimé ; les archives de la mémoire du projet sont conservées."))
+            if ok and delete_session(to_delete[0]):
+                self.toast(f"Session {to_delete[0]} supprimée.")
+            return
+        elif to_delete:
+            self.toast("Impossible de supprimer la session en cours.", "warning")
+            return
         if v and v != self.sv.session.id:
             await self.app.switch(None, v)
 
     async def cmd_models(self, arg):
-        await self.pick_model()
+        await self.pick_model(free_only=arg.strip() in ("free", "gratuit", "gratuits"))
 
     async def cmd_model(self, arg):
         sv = self.sv
@@ -721,8 +934,8 @@ class WorkScreen(Screen):
             self.note("Rien à annuler.", "warn")
             return
         files = f" — {len(r['files'])} fichier(s) restauré(s)/supprimé(s)" if r["git"] else " — fichiers NON restaurés (le projet n'est pas un dépôt Git)"
-        self.note(f"↶ Message annulé{files}. /redo pour rétablir.", "ok" if r["git"] else "warn")
-        inp = self.query_one("#prompt", Input)
+        self.note(f"{I.get('undo')} Message annulé{files}. /redo pour rétablir.", "ok" if r["git"] else "warn")
+        inp = self.prompt()
         inp.value = r["text"]
         inp.cursor_position = len(inp.value)
         self.refresh_panels()
@@ -732,8 +945,8 @@ class WorkScreen(Screen):
         if r is None:
             self.note("Rien à rétablir (disponible seulement après /undo).", "warn")
             return
-        self.note(f"↷ Message rétabli — {len(r['files'])} fichier(s) restauré(s)." if r["git"] else "↷ Message rétabli (fichiers non gérés hors Git).", "ok")
-        self.query_one("#prompt", Input).value = ""
+        self.note(f"{I.get('redo')} Message rétabli — {len(r['files'])} fichier(s) restauré(s)." if r["git"] else f"{I.get('redo')} Message rétabli (fichiers non gérés hors Git).", "ok")
+        self.prompt().value = ""
         self.refresh_panels()
 
     async def cmd_editor(self, arg):
@@ -741,14 +954,14 @@ class WorkScreen(Screen):
         if not editor:
             self.note("Aucun éditeur : définissez la variable EDITOR.", "error")
             return
-        inp = self.query_one("#prompt", Input)
+        inp = self.prompt()
         with tempfile.NamedTemporaryFile("w+", suffix=".md", delete=False, encoding="utf-8") as f:
             f.write(inp.value)
             path = f.name
         try:
             with self.app.suspend():
                 subprocess.run([*shlex.split(editor), path])
-            inp.value = " ".join(Path(path).read_text(encoding="utf-8").split("\n")).strip()
+            inp.value = Path(path).read_text(encoding="utf-8").rstrip("\n")
             inp.focus()
         finally:
             Path(path).unlink(missing_ok=True)
@@ -783,12 +996,12 @@ class WorkScreen(Screen):
         found = detect()
         for d in sorted(found, key=lambda d: not d.installed):
             a = d.adapter
-            st = f"détecté ✓ {d.path}" if d.installed else "non installé"
-            items.append((("◆ " if d.installed else "◇ ") + a.label + ("  (agent installé)" if d.installed else ""), f"cli:{a.id}", f"{st} · {a.verified}"))
+            st = f"détecté {I.get('ok')} {d.path}" if d.installed else "non installé"
+            items.append(((I.get("agent") + " " if d.installed else I.get("circle_open") + " ") + a.label + ("  (agent installé)" if d.installed else ""), f"cli:{a.id}", f"{st} · {a.verified}"))
         for s in all_specs():
-            st = ("clé enregistrée ✓" if has_credentials(s) else "clé à saisir") if s.key_required else "local, sans clé"
+            st = (f"clé enregistrée {I.get('ok')}" if has_credentials(s) else "clé à saisir") if s.key_required else "local, sans clé"
             items.append((s.label + "  (API)", f"api:{s.id}", f"{st} · {s.verified}"))
-        items.append(("＋ Autre fournisseur (URL compatible OpenAI)…", "__custom__", "nom + adresse + clé"))
+        items.append((I.get("provider") + " Autre fournisseur (URL compatible OpenAI)…", "__custom__", "nom + adresse + clé"))
         v = await self.app.push_screen_wait(PickerScreen("Connexions — agents installés et fournisseurs API", items, current=("api:" + sv.mode) if not sv.is_cli else sv.mode,
                                                          hint="Entrée : se connecter · les clés sont stockées dans " + credentials.storage_kind()))
         if not v:
@@ -813,7 +1026,7 @@ class WorkScreen(Screen):
                 return
         self.note(f"Connexion à {spec.label}…", "info")
         ok, msg = await sv.connect_provider(spec.id, key)
-        self.note(("✓ " if ok else "✗ ") + msg, "ok" if ok else "error")
+        self.note((I.get("ok") + " " if ok else I.get("error") + " ") + msg, "ok" if ok else "error")
         if ok:
             self.refresh_panels()
             if not sv.session.model:
@@ -876,7 +1089,7 @@ class WorkScreen(Screen):
         except KeyError:
             self.note(f"Mode inconnu : {arg} (disponibles : {', '.join(self.sv.ext.modes)})", "error")
             return
-        self.note(f"Mode → {arg}" + (f" ⚠ {w}" if w else ""), "ok")
+        self.note(f"Mode → {arg}" + (f" {I.get('warn')} {w}" if w else ""), "ok")
         self.refresh_panels()
 
     async def cmd_agents(self, arg):
@@ -902,7 +1115,7 @@ class WorkScreen(Screen):
             arg = "défaut" if v == "__default__" else v
         try:
             sv.set_option(p.name, None if arg in ("défaut", "default") else variants.coerce(p, arg))
-            self.note(f"Effort ({p.name}) → {arg}", "ok")
+            self.toast(f"Effort ({p.name}) → {arg}")
         except ValueError as ex:
             self.note(f"Valeur invalide : {ex}", "error")
         self.refresh_panels()
@@ -960,7 +1173,7 @@ class WorkScreen(Screen):
             cfg.fusion_max_calls = max(1, int(rest))
             return commit(f"Maximum {cfg.fusion_max_calls} consultation(s) par tour.")
         if sub == "list":
-            lines = [f"{'✓' if F.status(h)[0] else '✗'} {h.id}  {h.label}  ({F.status(h)[1]})" for h in (F.parse_helper(x) for x in cfg.fusion_helpers) if h]
+            lines = [f"{I.get('ok') if F.status(h)[0] else I.get('error')} {h.id}  {h.label}  ({F.status(h)[1]})" for h in (F.parse_helper(x) for x in cfg.fusion_helpers) if h]
             self.note(f"Fusion {'ACTIVÉE' if cfg.fusion_enabled else 'désactivée'} · max {cfg.fusion_max_calls}/tour\n" + ("\n".join(lines) or "aucun assistant"))
             return
         # sélecteur interactif
@@ -970,8 +1183,8 @@ class WorkScreen(Screen):
                 h = F.parse_helper(hid)
                 if h:
                     ok, why = F.status(h)
-                    items.append((("✓ " if ok else "✗ ") + h.label, f"rm:{hid}", f"{hid} · {why} · Entrée : retirer"))
-            items += [("＋ Ajouter un agent installé…", "__cli__", ""), ("＋ Ajouter un modèle d'une API connectée…", "__api__", "")]
+                    items.append(((I.get("ok") + " " if ok else I.get("error") + " ") + h.label, f"rm:{hid}", f"{hid} · {why} · Entrée : retirer"))
+            items += [(I.get("agent") + " Ajouter un agent installé…", "__cli__", ""), (I.get("provider") + " Ajouter un modèle d'une API connectée…", "__api__", "")]
             v = await self.app.push_screen_wait(PickerScreen(f"Fusion — assistants consultables par {sv.mode_label}", items,
                                                              hint=f"max {cfg.fusion_max_calls} consultations/tour · le texte envoyé est montré et confirmé · Échap pour fermer"))
             if v is None:
@@ -984,14 +1197,14 @@ class WorkScreen(Screen):
                 commit(f"Assistant retiré : {v[3:]}")
             elif v == "__cli__":
                 cands = [(d.adapter.label, ("claude" if d.adapter.integrated else f"cli:{d.adapter.id}"),
-                          ("détecté ✓" if d.installed else "non installé") + " · " + d.adapter.verified) for d in detect()]
+                          (f"détecté {I.get('ok')}" if d.installed else "non installé") + " · " + d.adapter.verified) for d in detect()]
                 pick = await self.app.push_screen_wait(PickerScreen("Ajouter un agent", [c for c in cands if c[1] not in cfg.fusion_helpers]))
                 if pick:
                     await self.cmd_fusion(f"add {pick}")
                     cfg.fusion_enabled = True
                     commit("Mode fusion activé.")
             elif v == "__api__":
-                specs = [(sp.label, sp.id, "clé ✓" if has_credentials(sp) else "clé absente") for sp in all_specs() if has_credentials(sp)]
+                specs = [(sp.label, sp.id, f"clé {I.get('ok')}" if has_credentials(sp) else "clé absente") for sp in all_specs() if has_credentials(sp)]
                 if not specs:
                     self.note("Aucune API connectée : /connect d'abord.", "warn")
                     continue
@@ -1035,7 +1248,7 @@ class WorkScreen(Screen):
             self.note("Bypass non activé.", "info")
             return
         pm.set_mode("bypass", bypass_all=total)
-        self.note("⚠ BYPASS " + ("TOTAL " if total else "") + "activé — /bypass off pour revenir.", "warn")
+        self.note(I.get("bypass") + " BYPASS " + ("TOTAL " if total else "") + "activé — /bypass off pour revenir.", "warn")
         self.refresh_panels()
 
     async def cmd_options(self, arg):
@@ -1069,15 +1282,15 @@ class WorkScreen(Screen):
         t = Table(show_header=False, box=None)
         have = bool(os.environ.get("POE_API_KEY"))
         t.add_row("Fournisseur", f"{sv.mode_label}" + ("" if sv.is_cli else f"  (clé : {'présente' if sv.provider.configured() else 'ABSENTE → /connect'})"))
-        t.add_row("Agents détectés", ", ".join(f"{d.adapter.label}{' ✓' if d.installed else ''}" for d in detect() if d.installed) or "aucun")
+        t.add_row("Agents détectés", ", ".join(f"{d.adapter.label}{' ' + I.get('ok') if d.installed else ''}" for d in detect() if d.installed) or "aucun")
         t.add_row("Mode / agent", sv.session.agent)
         t.add_row("Modèle", (sv.config.claude_model or "défaut") if sv.mode == "claude" else (sv.config.cli_models.get(sv.mode[4:], "défaut de l'agent") if sv.is_cli else (sv.session.model or "—")))
         t.add_row("Réglages", variants.summary(sv.model_params(), sv.current_options()) or "(défauts du modèle)")
-        t.add_row("Projet", str(sv.ctx.workspace.root) + (f"  ⎇ {self.branch}" if self.branch else ""))
+        t.add_row("Projet", str(sv.ctx.workspace.root) + (f"  {I.get('branch')} {self.branch}" if self.branch else ""))
         t.add_row("Annuler Git", "disponible" if sv.snap.available else "indisponible (pas un dépôt Git)")
         t.add_row("MCP", "; ".join(f"{m['name']}: {m['state']} ({m['tools']})" for m in sv.mcp.status()) or "aucun")
         t.add_row("Skills", ", ".join(sv.ext.skills) or "aucun")
-        t.add_row("Plugins", ", ".join(f"{p.name}{'✓' if p.loaded else ('⚠' + (p.error or '') if p.trusted else ' (non approuvé)')}" for p in sv.ext.plugins.plugins.values()) or "aucun")
+        t.add_row("Plugins", ", ".join(f"{p.name}{' ' + I.get('ok') if p.loaded else (' ' + I.get('warn') + ' ' + (p.error or '') if p.trusted else ' (non approuvé)')}" for p in sv.ext.plugins.plugins.values()) or "aucun")
         t.add_row("Modes", ", ".join(sv.ext.modes))
         await self.app.push_screen_wait(InfoScreen("État", Group(t, Text(""), render_usage(sv.budget, sv.config, sv.models.get(sv.session.model or ""), sv.session.model,
                                                                                          sv.session.id, mode=sv.mode, claude_info=sv.claude.info))))
@@ -1151,7 +1364,7 @@ class WorkScreen(Screen):
             self.note("Aucun plugin. Placez un .py dans .eclipse/plugins/ (API : voir README).", "info")
             return
         for p in sv.ext.plugins.plugins.values():
-            st = "chargé ✓" if p.loaded else (f"erreur : {p.error}" if p.error else ("approuvé" if p.trusted else "NON approuvé → /plugins trust " + p.name))
+            st = f"chargé {I.get('ok')}" if p.loaded else (f"erreur : {p.error}" if p.error else ("approuvé" if p.trusted else "NON approuvé → /plugins trust " + p.name))
             self.note(f"{p.name} ({p.scope}) — {st}" + (f" — outils : {', '.join(p.tools)}" if p.tools else ""), "info" if p.trusted else "warn")
 
     async def cmd_reload(self, arg):
@@ -1190,7 +1403,16 @@ class WorkScreen(Screen):
         else:
             self.note("Usage : /todo add TEXTE | doing N | done N | clear", "error")
 
+    def _subscription_guard(self) -> bool:
+        if not self.sv.is_cli:
+            return False
+        self.note(f"{I.get('subscription')} La consommation est gérée par l'abonnement {self.sv.mode_label} : les budgets en points ne s'appliquent pas. "
+                  "Pour une limite de tokens propre à Eclipse : /limit N [période].", "info")
+        return True
+
     async def cmd_define_token(self, arg):
+        if self._subscription_guard():
+            return
         sv = self.sv
         res = await self.app.push_screen_wait(DefineTokenScreen(sv.budget))
         if res is None:
@@ -1228,15 +1450,19 @@ class WorkScreen(Screen):
         self.refresh_panels()
 
     async def cmd_rate(self, arg):
+        if self._subscription_guard():
+            return
         try:
             self.sv.config.points_per_usd = float(arg.replace(",", "."))
             save_config(self.sv.config)
-            self.note(f"Taux saisi manuellement : {self.sv.config.points_per_usd:g} points/USD (les estimations en dépendent).", "ok")
+            self.toast(f"Taux saisi : {self.sv.config.points_per_usd:g} points/USD")
         except ValueError:
             self.note("Usage : /rate 30000", "error")
         self.refresh_panels()
 
     async def cmd_spent(self, arg):
+        if self._subscription_guard():
+            return
         try:
             self.sv.budget.add_manual(self.sv.session.id, float(arg.replace(",", ".")))
             self.note("Dépense saisie à la main enregistrée [saisi].", "ok")
@@ -1246,6 +1472,251 @@ class WorkScreen(Screen):
 
 
 # ======================================================================= palette de commandes (Ctrl+P)
+    # ================================================================ 0.2.0
+    async def cmd_free(self, arg):
+        """Modèles gratuits : sources réelles, état, mise en place guidée (rien n'est contourné)."""
+        from .. import free as FR
+        self.toast("Recherche des sources gratuites…")
+        srcs = await FR.sources()
+        items = [((I.get("ok") + " " if s.ready else I.get("circle_open") + " ") + s.label, s.id, f"{s.status} — {s.tradeoff}") for s in srcs]
+        v = await self.app.push_screen_wait(PickerScreen("Modèles gratuits", items, hint="Entrée : mettre en place · détails dans /help et le README"))
+        if not v:
+            return
+        sv = self.sv
+        if v == "opencode":
+            models = await FR.opencode_free_models()
+            if not models:
+                self.note("OpenCode n'est pas installé ou ne liste pas de modèle gratuit (https://opencode.ai).", "warn")
+                return
+            m = await self.app.push_screen_wait(PickerScreen("Modèles gratuits d'OpenCode (sans compte)", [(x, x, "gratuit") for x in models]))
+            if m:
+                sv.config.cli_models["opencode"] = m
+                save_config(sv.config)
+                await self.cmd_provider("opencode")
+                self.toast(f"OpenCode · {m}")
+        elif v == "openrouter":
+            spec = get_spec("openrouter")
+            if not has_credentials(spec):
+                self.note("OpenRouter : créez un compte gratuit sur https://openrouter.ai puis une clé (Keys). Saisissez-la ci-dessous.", "info")
+                await self._connect_api("openrouter")
+            else:
+                await sv.connect_provider("openrouter")
+            if sv.mode == "openrouter":
+                await self.pick_model(free_only=True)
+        elif v == "ollama":
+            await self._setup_ollama()
+        else:
+            await self._connect_api(v)
+
+    async def _setup_ollama(self) -> None:
+        from .. import free as FR
+        if not shutil.which("ollama"):
+            self.note("Ollama n'est pas installé : https://ollama.com (puis /free).", "warn")
+            return
+        up, models = await FR.ollama_status()
+        if not up:
+            ok = await self.app.push_screen_wait(ConfirmScreen("Démarrer le serveur Ollama (ollama serve) ?", "", "Il tournera en arrière-plan tant qu'Eclipse est ouvert."))
+            if not ok:
+                return
+            self._ollama_proc = subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            for _ in range(30):
+                await asyncio.sleep(0.5)
+                up, models = await FR.ollama_status()
+                if up:
+                    break
+            if not up:
+                self.note("Le serveur Ollama n'a pas démarré.", "error")
+                return
+        if not models:
+            pick = await self.app.push_screen_wait(PickerScreen("Télécharger un modèle local (une fois)", [(n, n, d) for n, d in FR.OLLAMA_SUGGESTED]))
+            if not pick:
+                return
+            ok = await self.app.push_screen_wait(ConfirmScreen(f"Télécharger {pick} ?", "", "Téléchargement de plusieurs Go ; sans carte graphique, les réponses seront lentes."))
+            if not ok:
+                return
+            b = ToolBlock("run_command", f"ollama pull {pick}")
+            self.add(b)
+            proc = await asyncio.create_subprocess_exec("ollama", "pull", pick, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            out, _ = await proc.communicate()
+            b.finish(proc.returncode == 0, out.decode(errors="replace")[-600:])
+            if proc.returncode != 0:
+                return
+        await self.cmd_provider("ollama")
+        await self.pick_model()
+
+    async def cmd_retry(self, arg):
+        if self.busy:
+            self.toast("Interrompez d'abord (Échap).", "warning")
+            return
+        r = self.sv.undo()
+        if r is None:
+            self.toast("Rien à relancer.", "warning")
+            return
+        self.note(I.get("retry") + " Relance du dernier message" + ("" if r["git"] else " (fichiers non restaurés : pas de dépôt Git)"), "info")
+        await self.submit(r["text"])
+
+    async def cmd_edit(self, arg):
+        await self.cmd_undo(arg)
+
+    async def cmd_fork(self, arg):
+        s = self.sv.fork_session()
+        self.toast(f"Session dupliquée : {s.id}")
+        await self.app.switch(None, s.id)
+
+    async def cmd_add_dir(self, arg):
+        if not arg:
+            self.note("Usage : /add-dir CHEMIN — autorise lecture/écriture dans ce dossier (confirmations habituelles).", "info")
+            return
+        try:
+            d = self.sv.add_dir(arg)
+        except NotADirectoryError as ex:
+            self.note(f"Dossier introuvable : {ex}", "error")
+            return
+        self._files_cache = None
+        self.note(f"Dossier autorisé en plus du projet : {d}", "ok")
+        self.refresh_panels()
+
+    async def cmd_system(self, arg):
+        g = data_dir() / "instructions.md"
+        pj = self.sv.ctx.workspace.root / ".eclipse" / "instructions.md"
+        sub, _, rest = arg.partition(" ")
+        if sub == "set" and rest:
+            g.write_text(rest.strip() + "\n", encoding="utf-8")
+            self.toast("Consignes globales enregistrées.")
+        elif sub == "project" and rest:
+            pj.parent.mkdir(exist_ok=True)
+            pj.write_text(rest.strip() + "\n", encoding="utf-8")
+            self.toast("Consignes du projet enregistrées (.eclipse/instructions.md).")
+        elif sub == "clear":
+            f = pj if rest.strip() == "project" else g
+            f.unlink(missing_ok=True)
+            self.toast("Consignes effacées.")
+        else:
+            cur = Text()
+            for label, f in (("Globales", g), ("Projet", pj)):
+                cur.append(f"{label} ({f}) :\n", style="bold")
+                cur.append((f.read_text(encoding="utf-8").strip() if f.is_file() else "(aucune)") + "\n\n")
+            cur.append("/system set TEXTE · /system project TEXTE · /system clear [project] · /editor pour un texte long", style="dim")
+            await self.app.push_screen_wait(InfoScreen("Consignes personnelles", cur))
+
+    async def cmd_config(self, arg):
+        from ..config import Config
+        sv = self.sv
+        while True:
+            data = sv.config.model_dump()
+            skip = {"recent_models", "favorite_models", "cli_models", "fusion_helpers", "last_alert_level"}
+            items = [(f"{k} = {json_short(v)}", k, (Config.model_fields[k].description or "")) for k, v in data.items() if k not in skip]
+            key = await self.app.push_screen_wait(PickerScreen("Réglages (Entrée : modifier)", items))
+            if not key:
+                return
+            cur = data[key]
+            if isinstance(cur, bool):
+                data[key] = not cur
+            else:
+                raw = await self.app.push_screen_wait(TextPromptScreen(f"{key} (vide = aucune valeur)", "" if cur is None else str(cur)))
+                if raw is None:
+                    continue
+                data[key] = None if raw.strip() == "" and cur is None else raw.strip()
+            try:
+                new = Config.model_validate(data)
+            except Exception as ex:  # noqa: BLE001
+                self.note(f"Valeur refusée pour {key} : {str(ex).splitlines()[-1] if str(ex) else ex}", "error")
+                continue
+            for k in data:
+                setattr(sv.config, k, getattr(new, k))
+            save_config(sv.config)
+            self.toast(f"{key} = {getattr(sv.config, key)}")
+            self.refresh_panels()
+
+    async def cmd_doctor(self, arg):
+        from ..diagnostics import doctor
+        self.toast("Diagnostic en cours…")
+        checks = await doctor(self.sv)
+        t = Table(show_header=False, box=None, padding=(0, 1), expand=True)
+        icon = {"ok": (I.get("ok"), "green"), "warn": (I.get("warn"), "yellow"), "fail": (I.get("error"), "red"), "info": (I.get("info"), "cyan")}
+        for c in checks:
+            i, col = icon[c.status]
+            t.add_row(Text(i, style=f"bold {col}"), Text(c.name, style="bold"), Text(c.detail))
+        await self.app.push_screen_wait(InfoScreen("Diagnostic (/doctor)", t))
+
+    async def cmd_context(self, arg):
+        from ..diagnostics import context_breakdown
+        d = context_breakdown(self.sv)
+        t = Table(show_header=True, header_style="bold", box=None, expand=True)
+        t.add_column("Élément")
+        t.add_column("≈ tokens", justify="right")
+        t.add_column("part", justify="right")
+        for name, n in d["parts"]:
+            t.add_row(name, f"{n:,}".replace(",", " "), f"{n / d['total'] * 100:.0f} %" if d["total"] else "")
+        t.add_row(Text("Total estimé", style="bold"), Text(f"{d['total']:,}".replace(",", " "), style="bold"), "")
+        info = Text()
+        if d["window"]:
+            info.append("\nFenêtre du modèle : ")
+            info.append_text(bar(d["total"] / d["window"], 24))
+            info.append(f"  {d['total']:,} / {d['window']:,} tokens".replace(",", " "))
+            info.append(f"\nRéservé aux réponses et résultats d'outils : {d['reserve_ratio'] * 100:.0f} % · utilisable ≈ {d['usable']:,}".replace(",", " "), style="dim")
+        info.append("\nEstimation ≈ 4 caractères/token. /compact pour résumer l'ancien historique (archives conservées).", style="dim")
+        await self.app.push_screen_wait(InfoScreen("Contexte (/context)", Group(t, info)))
+
+    async def cmd_diff(self, arg):
+        from rich.syntax import Syntax
+        root = self.sv.ctx.workspace.root
+        try:
+            st = subprocess.run(["git", "-C", str(root), "status", "--short"], capture_output=True, text=True, timeout=10)
+            df = subprocess.run(["git", "-C", str(root), "diff", "HEAD", "--", *([arg] if arg else [])], capture_output=True, text=True, timeout=20)
+        except Exception as ex:  # noqa: BLE001
+            self.note(f"git indisponible : {ex}", "error")
+            return
+        if st.returncode != 0:
+            self.note("Ce projet n'est pas un dépôt Git.", "warn")
+            return
+        body = df.stdout[:60_000] or "(aucune différence avec HEAD)"
+        await self.app.push_screen_wait(InfoScreen("Modifications (git diff HEAD)", Group(Text(st.stdout or "(arbre propre)", style="bold"), Syntax(body, "diff", word_wrap=True, background_color="default"))))
+
+    async def cmd_login(self, arg):
+        if arg:
+            await self._connect_api(arg)
+        else:
+            await self.cmd_connect("")
+
+    async def cmd_logout(self, arg):
+        await self.cmd_disconnect(arg)
+
+    async def cmd_attach(self, arg):
+        if not arg:
+            if self.pending_attachments:
+                self.pending_attachments.clear()
+                self.toast("Pièces jointes retirées.")
+            else:
+                self.note("Usage : /attach CHEMIN (image png/jpg/webp/gif ; un fichier texte se joint avec @chemin).", "info")
+            self.refresh_panels()
+            return
+        p = Path(arg).expanduser()
+        if not p.is_absolute():
+            p = self.sv.ctx.workspace.root / p
+        from ..extensions.refs import IMAGE_EXT, MAX_IMAGE
+        if not p.is_file():
+            self.note(f"Fichier introuvable : {p}", "error")
+            return
+        if p.suffix.lower() in IMAGE_EXT:
+            if p.stat().st_size > MAX_IMAGE:
+                self.note("Image trop lourde (> 5 Mo).", "error")
+                return
+            self.pending_attachments.append(p.resolve())
+            self.toast(f"{I.get('attach')} {p.name} sera joint au prochain message")
+        else:
+            pr = self.prompt()
+            pr.value = (pr.text + " " if pr.text else "") + f"@{p}"
+            self.toast("Fichier texte ajouté au message (@chemin).")
+        self.refresh_panels()
+
+
+def json_short(v) -> str:
+    import json as _j
+    t = _j.dumps(v, ensure_ascii=False)
+    return t if len(t) <= 40 else t[:39] + "…"
+
+
 def sv_modes(sv) -> list[str]:
     return list(sv.ext.modes)
 
@@ -1279,6 +1750,7 @@ class EclipseApp(App):
 
     def on_mount(self) -> None:
         cfg = load_config()
+        I.configure(cfg.icons)
         self.theme = cfg.theme if cfg.theme in self.available_themes else "eclipse"
         if self._path or self._resume:
             self.open_project(self._path, self._resume)

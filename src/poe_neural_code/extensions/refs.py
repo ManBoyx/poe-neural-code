@@ -9,6 +9,8 @@ from ..tools.fs_tools import SKIP_DIRS
 
 REF_RX = re.compile(r"(?<![\w@])@([\w./\\-]+)")
 MAX_FILE = 40_000
+IMAGE_EXT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif"}
+MAX_IMAGE = 5_000_000
 
 
 def list_files(root: Path, limit: int = 4000) -> list[str]:
@@ -53,11 +55,27 @@ def expand_refs(text: str, root: Path) -> tuple[str, list[str]]:
             data = p.read_bytes()
         except OSError:
             continue
-        if b"\0" in data[:4096]:
-            continue
+        if b"\0" in data[:4096] or p.suffix.lower() in IMAGE_EXT:
+            continue  # binaire / image : géré par find_images
         body = data.decode("utf-8", errors="replace")
         if len(body) > MAX_FILE:
             body = body[:MAX_FILE] + "\n[… tronqué]"
         included.append(rel)
         blocks.append(f"--- Fichier @{rel} ---\n{body}\n--- fin ---")
     return (text + "\n\n" + "\n\n".join(blocks) if blocks else text), included
+
+
+def find_images(text: str, root: Path) -> list[Path]:
+    """Images citées avec @chemin (png, jpg, webp, gif) DANS le projet, ≤ 5 Mo."""
+    root = root.resolve()
+    out: list[Path] = []
+    for m in REF_RX.finditer(text):
+        p = (root / m.group(1).rstrip(".")).resolve()
+        if p.suffix.lower() in IMAGE_EXT and (root in p.parents) and p.is_file() and p.stat().st_size <= MAX_IMAGE and p not in out:
+            out.append(p)
+    return out
+
+
+def image_part(p: Path) -> dict:
+    import base64
+    return {"type": "image_url", "image_url": {"url": f"data:{IMAGE_EXT[p.suffix.lower()]};base64,{base64.b64encode(p.read_bytes()).decode()}"}}

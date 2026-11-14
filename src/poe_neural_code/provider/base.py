@@ -81,6 +81,15 @@ class ModelInfo:
     reasoning: bool = False
     description: str = ""
     owner: str = ""
+    input_modalities: list[str] = field(default_factory=list)
+
+    @property
+    def free(self) -> bool:
+        return self.prompt_price == 0 and self.completion_price == 0
+
+    @property
+    def accepts_images(self) -> bool:
+        return "image" in self.input_modalities
 
 
 @dataclass

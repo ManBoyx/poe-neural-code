@@ -26,6 +26,10 @@ def test_claude_block_has_usage_and_time_bars_with_pace():
     now = time.time()
     info = ClaudeInfo(rate={"unifiedWindows": {"five_hour": {"utilization": 0.92, "resetsAt": now + 3600},
                                               "seven_day": {"utilization": 0.84, "resetsAt": now + 86400 * 3}}})
-    out = render_claude(info, now).plain
-    assert "Usage   5 h" in out and "92 %" in out and "Temps   5 h" in out and "Usage   7 j" in out and "84 %" in out
-    assert "rythme élevé" in out  # 92 % d'usage pour 80 % du temps écoulé → rythme élevé
+    from rich.console import Console
+    con = Console(width=100, record=True, color_system=None)
+    con.print(render_claude(info, now, bar_w=14, label_w=16))
+    out = con.export_text()
+    assert "Abonnement Claude Code" in out and "Fenêtre 5 h" in out and "Fenêtre 7 j" in out and "92 %" in out and "84 %" in out
+    assert out.index("Fenêtre 5 h") < out.index("Fenêtre 7 j") and "Utilisé" in out and "Écoulé" in out and "Renouvelée" in out
+    assert "plus vite que le temps" in out  # 92 % d'usage pour 80 % du temps écoulé → rythme élevé

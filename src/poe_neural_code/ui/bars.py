@@ -55,7 +55,7 @@ def pace(usage: float | None, elapsed: float | None) -> Text:
         return Text("")
     r = usage / elapsed
     if r <= 0.9:
-        return Text(" ▼ rythme bas", style="#4ade80")
+        return Text(" v rythme bas", style="#4ade80")
     if r <= 1.15:
-        return Text(" ◆ rythme normal", style="#fbbf24")
-    return Text(" ▲ rythme élevé", style="#f87171")
+        return Text(" = rythme normal", style="#fbbf24")
+    return Text(" ^ rythme élevé", style="#f87171")
