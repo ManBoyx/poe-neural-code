@@ -152,3 +152,59 @@ def test_every_provider_gets_the_token_saving_guide():
     assert "mcp__eclipse__memory_search" in SYSTEM_APPEND and "mcp__eclipse__mcp__" not in SYSTEM_APPEND
     assert "mcp__eclipse__read_file with start/end" in SYSTEM_APPEND
     assert "memory_note" not in delegated_guide(False) and "eclipse_memory_note" in delegated_guide(True)
+
+
+def test_files_preview_stays_inside_workspace(setup, tmp_path):
+    c, hub, turns, proj = setup
+    (proj / "src").mkdir()
+    (proj / "src" / "a.py").write_text("print('é')\n", encoding="utf-8")
+    (proj / "node_modules").mkdir()
+    (proj / "node_modules" / "lourd.js").write_text("x")
+    (tmp_path / "secret.txt").write_text("hors projet")
+    c.post("/api/open", headers=AUTH, json={"workspace": str(proj)})
+    (proj / "nouveau.md").write_text("créé pendant la conversation")
+    files = {f["path"]: f for f in c.get("/api/files", headers=AUTH).json()["files"]}
+    assert set(files) == {"src/a.py", "nouveau.md"}  # node_modules ignoré
+    assert files["nouveau.md"]["recent"] and not files["src/a.py"]["recent"]
+    assert c.get("/api/file", headers=AUTH, params={"path": "src/a.py"}).json()["text"] == "print('é')\n"
+    assert c.get("/api/file", headers=AUTH, params={"path": "../secret.txt"}).status_code == 404
+    assert c.get("/api/file", headers=AUTH, params={"path": str(tmp_path / "secret.txt")}).status_code == 404
+
+
+def test_upload_and_attachments_are_confined(setup, tmp_path):
+    import base64
+    c, hub, turns, proj = setup
+    c.post("/api/open", headers=AUTH, json={"workspace": str(proj)})
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 50).decode()
+    up = c.post("/api/upload", headers=AUTH, json={"name": "../../capture.png", "data": png}).json()
+    assert up["kind"] == "image" and Path(up["path"]).name.endswith("capture.png") and "attachments" in up["path"]
+    txt = c.post("/api/upload", headers=AUTH, json={"name": "notes.md", "data": base64.b64encode("# Titre".encode()).decode()}).json()
+    assert txt == {"kind": "text", "name": "notes.md", "text": "# Titre", "size": 7}
+    assert c.post("/api/upload", headers=AUTH, json={"name": "x.bin", "data": base64.b64encode(b"\x00\x01" * 10).decode()}).status_code == 400
+    (tmp_path / "ailleurs.png").write_bytes(b"x")
+    r = c.post("/api/prompt", headers=AUTH, json={"text": "regarde", "attachments": [str(tmp_path / "ailleurs.png")]})
+    assert r.status_code == 400 and "pièce jointe" in r.json()["error"]
+
+
+def test_memory_panel_and_forget(setup):
+    c, hub, turns, proj = setup
+    c.post("/api/open", headers=AUTH, json={"workspace": str(proj)})
+    sv = hub.sv
+    iid, _ = sv.memory.add_item(sv.session.district_id, "decision", "Utiliser SQLite pour le stockage", key="stockage")
+    other = sv.memory.ensure_district("autre", "/autre")
+    jid, _ = sv.memory.add_item(other, "fact", "ne doit pas apparaître")
+    m = c.get("/api/memory", headers=AUTH).json()
+    assert [i["content"] for i in m["items"]] == ["Utiliser SQLite pour le stockage"] and m["stats"]["items"] == 1
+    assert any("SQLite" in h["text"] for h in c.get("/api/memory", headers=AUTH, params={"q": "sqlite"}).json()["hits"])
+    assert c.delete(f"/api/memory/{jid}", headers=AUTH).status_code == 404  # note d'un autre dossier : refusé
+    assert c.delete(f"/api/memory/{iid}", headers=AUTH).json()["ok"]
+    assert c.get("/api/memory", headers=AUTH).json()["items"] == []
+
+
+def test_auto_edits_toggle_and_context_in_state(setup):
+    c, hub, turns, proj = setup
+    s = c.post("/api/open", headers=AUTH, json={"workspace": str(proj)}).json()
+    assert s["auto_edits"] is False and s["context"]["window"] > 0
+    assert c.post("/api/auto_edits", headers=AUTH, json={"on": True}).json()["auto_edits"] is True
+    assert hub.sv.ctx.permissions.mode == "edits"
+    assert c.post("/api/retry", headers=AUTH).status_code == 400  # rien à relancer
