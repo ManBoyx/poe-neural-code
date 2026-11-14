@@ -1,0 +1,20 @@
+{
+    "version": "@VERSION@",
+    "description": "Eclipse : terminal de programmation avec agents IA (version portable)",
+    "homepage": "https://github.com/ManBoyx/eclipse-releases",
+    "license": {
+        "identifier": "Proprietary",
+        "url": "https://github.com/ManBoyx/eclipse-releases/blob/main/LICENSE"
+    },
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/ManBoyx/eclipse-releases/releases/download/v@VERSION@/Eclipse_@VERSION@_x64_portable.zip",
+            "hash": "@HASH@",
+            "extract_dir": "Eclipse_@VERSION@_x64_portable"
+        }
+    },
+    "bin": [["eclipse-terminal.exe", "eclipse-terminal"]],
+    "shortcuts": [["eclipse-terminal.exe", "Eclipse"]],
+    "persist": "data",
+    "notes": "Les mises à jour passent par « scoop update eclipse » (l'application ne s'installe pas elle-même en version portable)."
+}

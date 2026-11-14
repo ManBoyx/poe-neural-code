@@ -59,7 +59,9 @@ def build(version: str, repo: str, folder: Path, changelog: Path | None, pub_dat
     platforms: dict[str, dict] = {}
     for pattern, keys in UPDATABLE:
         for f in files:
-            if not re.search(pattern, f.name) or f.name.endswith(".sig"):
+            # Seuls les noms versionnés entrent dans le manifeste ; les copies à nom fixe (liens « dernière version »)
+            # ne servent qu'aux téléchargements manuels et figurent seulement dans SHA256SUMS.
+            if not re.search(pattern, f.name) or f.name.endswith(".sig") or version not in f.name:
                 continue
             sig = f.with_name(f.name + ".sig")
             if not sig.is_file():
