@@ -16,7 +16,16 @@ export interface State {
   mode?: string; mode_label?: string; is_cli?: boolean; configured?: boolean;
   model?: string | null; models?: ModelEntry[]; effort?: Effort | null; agents?: string[];
   permissions?: string; todos?: Todo[]; pending_permissions?: PermissionEvent[];
+  auto_edits?: boolean; context?: { used: number; window: number | null };
 }
+export interface MemoryItem { id: number; kind: string; key: string | null; content: string; created: number; sources: Record<string, unknown>[] }
+export interface MemoryView {
+  items: MemoryItem[]; hits: { ref: string; layer: string; text: string }[];
+  stats: { items: number; summaries: number; archives: number; conversations: number; cache_hits: number; cache_misses: number };
+}
+export interface FileEntry { path: string; size: number; mtime: number; recent: boolean }
+export interface FilePreview { path: string; size: number; text?: string; image?: string; binary?: boolean; truncated?: boolean }
+export type Upload = { kind: "image"; path: string; name: string; size: number } | { kind: "text"; name: string; text: string; size: number };
 export type TranscriptItem =
   | { kind: "user" | "assistant"; text: string }
   | { kind: "tool"; id: string; name: string; args: Record<string, unknown>; output: string | null; ok: boolean | null };
@@ -82,7 +91,14 @@ export const api = {
   newDiscussion: () => call<State>("POST", "/api/new_discussion", {}),
   settings: (b: { discussions_dir?: string }) => call<{ discussions_dir: string }>("POST", "/api/settings", b),
   remove: (id: string) => call<{ deleted: boolean }>("DELETE", `/api/sessions/${encodeURIComponent(id)}`),
-  prompt: (text: string) => call<{ ok: boolean }>("POST", "/api/prompt", { text }),
+  prompt: (text: string, attachments: string[] = []) => call<{ ok: boolean }>("POST", "/api/prompt", { text, attachments }),
+  memory: (q = "") => call<MemoryView>("GET", `/api/memory${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  forget: (id: number) => call<{ ok: boolean }>("DELETE", `/api/memory/${id}`),
+  files: () => call<{ root: string; files: FileEntry[] }>("GET", "/api/files"),
+  file: (path: string) => call<FilePreview>("GET", `/api/file?path=${encodeURIComponent(path)}`),
+  upload: (name: string, data: string) => call<Upload>("POST", "/api/upload", { name, data }),
+  autoEdits: (on: boolean) => call<State>("POST", "/api/auto_edits", { on }),
+  retry: () => call<{ ok: boolean; text: string; items: TranscriptItem[] }>("POST", "/api/retry", {}),
   interrupt: () => call<{ ok: boolean }>("POST", "/api/interrupt", {}),
   permission: (id: string, decision: "once" | "session" | "deny") => call("POST", "/api/permission", { id, decision }),
   model: (model: string) => call<State>("POST", "/api/model", { model }),

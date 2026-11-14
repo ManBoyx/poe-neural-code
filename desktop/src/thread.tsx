@@ -92,9 +92,11 @@ export function PermissionCard({ p, onDecide }: { p: PermissionEvent; onDecide: 
   );
 }
 
-export function Thread({ items, pending, busy, onDecide, empty }: {
+export function Thread({ items, pending, busy, onDecide, empty, onRetry }: {
   items: Item[]; pending: PermissionEvent[]; busy: boolean; onDecide: (id: string, d: "once" | "session" | "deny") => void; empty: preact.ComponentChildren;
+  onRetry?: () => void;
 }) {
+  const lastAssistant = items.reduce((acc, it, i) => (it.kind === "assistant" ? i : acc), -1);
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   useEffect(() => {
@@ -128,7 +130,16 @@ export function Thread({ items, pending, busy, onDecide, empty }: {
         {items.map((it, i) => {
           switch (it.kind) {
             case "user": return <div key={i} class="msg user"><div class="bubble">{it.text}</div></div>;
-            case "assistant": return <div key={i} class={`msg assistant ${it.live ? "live" : ""}`}><Markdown text={it.text} /></div>;
+            case "assistant": return (
+              <div key={i} class={`msg assistant ${it.live ? "live" : ""}`}>
+                <Markdown text={it.text} />
+                {!it.live && (
+                  <div class="msg-actions">
+                    <button class="mini" title="Copier la réponse" onClick={() => navigator.clipboard.writeText(it.text)}><span class="ico">{I.copy}</span> Copier</button>
+                    {i === lastAssistant && !busy && onRetry && <button class="mini" title="Annuler ce tour et renvoyer le même message" onClick={onRetry}><span class="ico">{I.retry}</span> Relancer</button>}
+                  </div>
+                )}
+              </div>);
             case "thinking": return <Thinking key={i} it={it} />;
             case "tool": return <ToolCard key={it.id || i} it={it} />;
             case "note": return <div key={i} class={`note ${it.level}`}><span class="ico">{it.level === "error" ? I.error : it.level === "warn" ? I.warn : I.info}</span>{it.text}</div>;

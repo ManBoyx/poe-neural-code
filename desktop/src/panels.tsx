@@ -44,7 +44,7 @@ export function UsagePanel({ usage, onClose }: { usage: Usage | null; onClose: (
   );
 }
 
-function UsageBody({ u }: { u: Usage }) {
+export function UsageBody({ u }: { u: Usage }) {
   const t = u.totals;
   const tin = (t.tokens_in.measured ?? 0) + (t.tokens_in.estimated ?? 0);
   const tout = (t.tokens_out.measured ?? 0) + (t.tokens_out.estimated ?? 0);

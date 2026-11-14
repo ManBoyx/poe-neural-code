@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import base64
 import json
+import os
 import re
 import secrets
 import time
@@ -115,6 +117,35 @@ def transcript(sv: Services, limit: int = 200) -> list[dict]:
     return items
 
 
+SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", "dist", "build", "target", ".gradle", ".idea", ".mypy_cache"}
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
+MAX_UPLOAD = 15 * 1024 * 1024
+
+
+def list_files(root: Path, since: float, limit: int = 600) -> list[dict]:
+    """Fichiers du dossier de travail (dossiers lourds ignorés) ; `recent` = modifié depuis le début de la conversation."""
+    out: list[dict] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".eclipse-"))
+        for f in sorted(filenames):
+            p = Path(dirpath) / f
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            out.append({"path": p.relative_to(root).as_posix(), "size": st.st_size, "mtime": st.st_mtime, "recent": st.st_mtime >= since})
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def attachments_dir(session_id: str) -> Path:
+    from ..paths import data_dir
+    d = data_dir() / "attachments" / session_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def discussions_root() -> Path:
     cfg = load_config()
     return Path(cfg.discussions_dir).expanduser() if cfg.discussions_dir else Path.home() / "Projets" / "Eclipse"
@@ -198,10 +229,10 @@ class Hub:
     def todos(self) -> list[dict]:
         return [dataclasses.asdict(t) for t in self.sv.ctx.todos.items] if self.sv else []
 
-    async def run_turn(self, text: str) -> None:
+    async def run_turn(self, text: str, attachments: list[str] | None = None) -> None:
         sv = self.sv
         try:
-            await sv.run_user_turn(text)
+            await sv.run_user_turn(text, attachments=[Path(a) for a in attachments] if attachments else None)
         except Exception as e:  # noqa: BLE001
             self.publish({"type": "status", "text": f"Erreur : {e}", "level": "error"})
         finally:
@@ -250,7 +281,8 @@ class Hub:
             "effort": None if not effort else {"name": effort.name, "choices": list(effort.choices), "default": effort.default,
                                                "current": sv.current_options().get(effort.name)},
             "agents": sorted(sv.ext.modes.keys()) if getattr(sv.ext, "modes", None) else ["build", "plan"],
-            "permissions": sv.ctx.permissions.mode, "todos": self.todos(),
+            "permissions": sv.ctx.permissions.mode, "auto_edits": sv.ctx.permissions.mode == "edits", "todos": self.todos(),
+            "context": {"used": getattr(sv.runner, "last_ctx_tokens", 0) or 0, "window": None if sv.is_cli else sv.agent.window()},
             "pending_permissions": [p for _, p in self.pending.values()],
         }
 
@@ -387,6 +419,95 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
             hub.sv.config.discussions_dir = cfg.discussions_dir
         return JSONResponse({"discussions_dir": str(discussions_root())})
 
+    async def memory(request):
+        if (r := need_open()):
+            return r
+        sv = hub.sv
+        did = sv.session.district_id
+        q = request.query_params.get("q", "").strip()
+        rows = sv.memory.items(did)
+        items = [{"id": r["id"], "kind": r["kind"], "key": r["key"], "content": r["content"], "created": r["created"],
+                  "sources": [dict(x) for x in sv.memory.item_sources(r["id"])][:3]} for r in rows]
+        stats = {
+            "items": len(items),
+            "summaries": sv.memory.one("SELECT COUNT(*) n FROM summaries WHERE district_id=?", (did,))["n"],
+            "archives": sv.memory.one("SELECT COUNT(*) n FROM archive a JOIN conversations c ON c.id=a.conversation_id WHERE c.district_id=?", (did,))["n"],
+            "conversations": sv.memory.one("SELECT COUNT(*) n FROM conversations WHERE district_id=?", (did,))["n"],
+            "cache_hits": getattr(sv.ctx.cache, "hits", 0), "cache_misses": getattr(sv.ctx.cache, "misses", 0),
+        }
+        hits = [{"ref": h.ref, "layer": h.layer, "text": h.text} for h in sv.memory.search(q, district_id=did, limit=20)] if q else []
+        return JSONResponse({"items": items, "stats": stats, "hits": hits})
+
+    async def forget(request):
+        if (r := need_open()):
+            return r
+        iid = int(request.path_params["iid"])
+        row = hub.sv.memory.one("SELECT district_id FROM items WHERE id=?", (iid,))
+        if row is None or row["district_id"] != hub.sv.session.district_id:
+            return bad("note inconnue", 404)
+        hub.sv.memory.set_item_status(iid, "retracted")  # retirée du contexte ; la ligne reste (historique)
+        return JSONResponse({"ok": True})
+
+    async def files(_request):
+        if (r := need_open()):
+            return r
+        root = hub.sv.ctx.workspace.root
+        return JSONResponse({"root": str(root), "files": list_files(root, hub.sv.session.created)})
+
+    async def file(request):
+        if (r := need_open()):
+            return r
+        p, inside = hub.sv.ctx.workspace.resolve(request.query_params.get("path", ""))
+        if not inside or not p.is_file():
+            return bad("fichier introuvable dans le dossier de travail", 404)
+        size = p.stat().st_size
+        ext = p.suffix.lower()
+        if ext in IMAGE_TYPES and size <= 5 * 1024 * 1024:
+            return JSONResponse({"path": request.query_params["path"], "size": size,
+                                 "image": f"data:{IMAGE_TYPES[ext]};base64,{base64.b64encode(p.read_bytes()).decode()}"})
+        head = p.open("rb").read(300_000)
+        if b"\x00" in head[:8000]:
+            return JSONResponse({"path": request.query_params["path"], "size": size, "binary": True})
+        return JSONResponse({"path": request.query_params["path"], "size": size, "text": head.decode("utf-8", errors="replace"),
+                             "truncated": size > 300_000})
+
+    async def upload(request):
+        if (r := need_open()):
+            return r
+        d = await body(request)
+        name = Path(str(d.get("name") or "piece-jointe")).name
+        ext = Path(name).suffix.lower()
+        try:
+            raw = base64.b64decode(d.get("data") or "", validate=True)
+        except Exception:  # noqa: BLE001
+            return bad("contenu invalide")
+        if not raw or len(raw) > MAX_UPLOAD:
+            return bad("fichier vide ou trop gros (15 Mo au maximum)")
+        if ext in IMAGE_TYPES:
+            dest = attachments_dir(hub.sv.session.id) / f"{int(time.time() * 1000)}-{name}"
+            dest.write_bytes(raw)
+            return JSONResponse({"kind": "image", "path": str(dest), "name": name, "size": len(raw)})
+        if b"\x00" in raw[:8000] or len(raw) > 400_000:
+            return bad("seules les images et les fichiers texte (400 Ko max) peuvent être joints")
+        return JSONResponse({"kind": "text", "name": name, "text": raw.decode("utf-8", errors="replace"), "size": len(raw)})
+
+    async def auto_edits(request):
+        if (r := need_open()):
+            return r
+        hub.sv.ctx.permissions.auto_accept_edits = bool((await body(request)).get("on"))
+        return JSONResponse(hub.state())
+
+    async def retry(_request):
+        if (r := need_open()):
+            return r
+        if hub.busy:
+            return bad("une réponse est en cours", 409)
+        e = hub.sv.undo()
+        if e is None:
+            return bad("rien à relancer")
+        hub.turn = asyncio.get_running_loop().create_task(hub.run_turn(e["text"]))
+        return JSONResponse({"ok": True, "text": e["text"], "items": transcript(hub.sv)})
+
     async def remove(request):
         sid = request.path_params["sid"]
         if hub.sv is not None and hub.sv.session.id == sid:
@@ -396,12 +517,20 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
     async def prompt(request):
         if (r := need_open()):
             return r
-        text = (await body(request)).get("text", "").strip()
+        d = await body(request)
+        text = (d.get("text") or "").strip()
         if not text:
             return bad("message vide")
         if hub.busy:
             return bad("une réponse est déjà en cours", 409)
-        hub.turn = asyncio.get_running_loop().create_task(hub.run_turn(text))
+        allowed = attachments_dir(hub.sv.session.id).resolve()
+        atts = []
+        for a in d.get("attachments") or []:
+            ap = Path(str(a)).resolve()
+            if allowed not in ap.parents or not ap.is_file():
+                return bad("pièce jointe invalide")
+            atts.append(str(ap))
+        hub.turn = asyncio.get_running_loop().create_task(hub.run_turn(text, atts))
         return JSONResponse({"ok": True})
 
     async def interrupt(_request):
@@ -506,7 +635,10 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         Route("/api/info", info), Route("/api/state", state), Route("/api/transcript", get_transcript), Route("/api/usage", usage),
         Route("/api/connections", connections), Route("/api/open", open_, methods=["POST"]),
         Route("/api/sessions/{sid}", remove, methods=["DELETE"]), Route("/api/new_discussion", new_discussion, methods=["POST"]),
-        Route("/api/settings", settings, methods=["POST"]), Route("/api/prompt", prompt, methods=["POST"]),
+        Route("/api/settings", settings, methods=["POST"]), Route("/api/memory", memory),
+        Route("/api/memory/{iid:int}", forget, methods=["DELETE"]), Route("/api/files", files), Route("/api/file", file),
+        Route("/api/upload", upload, methods=["POST"]), Route("/api/auto_edits", auto_edits, methods=["POST"]),
+        Route("/api/retry", retry, methods=["POST"]), Route("/api/prompt", prompt, methods=["POST"]),
         Route("/api/interrupt", interrupt, methods=["POST"]), Route("/api/permission", permission, methods=["POST"]),
         Route("/api/model", model, methods=["POST"]), Route("/api/effort", effort, methods=["POST"]),
         Route("/api/agent", agent, methods=["POST"]), Route("/api/connect", connect, methods=["POST"]),

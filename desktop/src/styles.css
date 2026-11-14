@@ -102,7 +102,7 @@ button:disabled { cursor: default; opacity: .5; }
 .code-bar .copy { border: 0; background: none; color: #b8b8d0; font-size: .78rem; }
 .code-bar .copy:hover { color: #fff; }
 .code pre { margin: 0; padding: 12px 14px; overflow-x: auto; }
-.code code, .diff, .tool-out, .perm-detail { font-family: "JetBrainsMono NF", monospace; font-size: .84rem; line-height: 1.5; }
+.code code, .diff, .tool-out, .perm-detail { font-variant-ligatures: none; font-family: "JetBrainsMono NF", monospace; font-size: .84rem; line-height: 1.5; }
 .code code.hljs { background: none; padding: 0; color: #e6e6f0; }
 
 .thinking button { border: 0; background: none; color: var(--muted); padding: 2px 0; font-size: .9rem; display: inline-flex; gap: 6px; align-items: center; }
@@ -249,3 +249,71 @@ progress { width: 100%; accent-color: var(--accent); }
 .explain span { color: var(--muted); font-size: .88rem; }
 .explain code { font-family: "JetBrainsMono NF", monospace; font-size: .82rem; overflow-wrap: anywhere; }
 .field input.text { padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--raised); min-width: 0; font-family: "JetBrainsMono NF", monospace; font-size: .85rem; }
+
+/* --- Panneau à onglets ---------------------------------------------------------------------------------------------- */
+.drawer header.tabs { gap: 4px; padding: 8px 10px; }
+.tabs > button:not(.icon-btn) { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: .86rem; }
+.tabs > button:not(.icon-btn):hover { background: var(--hover); color: var(--text); }
+.tabs > button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.memory, .files { padding: 12px 14px; display: grid; gap: 10px; align-content: start; }
+.memory section h3, .files h3 { margin: 6px 0 6px; font-size: .74rem; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
+.explain-small { margin: 0; color: var(--muted); font-size: .84rem; }
+.explain-small code { font-family: "JetBrainsMono NF", monospace; font-size: .78rem; overflow-wrap: anywhere; }
+.stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.stats span { font-size: .78rem; padding: 2px 8px; border-radius: 999px; background: var(--raised); border: 1px solid var(--line); color: var(--muted); }
+.stats b { color: var(--text); }
+.side-search.inline { margin: 0; }
+.note-item { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); margin-bottom: 6px; }
+.ni-text { font-size: .88rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ni-meta { display: flex; gap: 8px; align-items: center; margin-top: 4px; font-size: .74rem; color: var(--faint); }
+.ni-meta .link { margin-left: auto; }
+.hit { font-size: .82rem; padding: 6px 8px; border-bottom: 1px solid var(--line); color: var(--muted); overflow-wrap: anywhere; }
+.pad0 { margin: 4px 0; }
+.file-list { display: grid; gap: 2px; }
+.file { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 0; border-radius: 7px; background: none; text-align: left; font-size: .86rem; }
+.file:hover { background: var(--hover); }
+.file .ico { color: var(--accent); }
+.f-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.f-dir { color: var(--faint); margin-left: 6px; font-size: .78rem; }
+.f-size { color: var(--faint); font-size: .76rem; font-variant-numeric: tabular-nums; }
+.code.preview pre { max-height: 62vh; overflow: auto; }
+.preview-img { max-width: 100%; max-height: 66vh; display: block; margin: 0 auto; border-radius: 8px; }
+
+/* --- Saisie : pièces jointes, modifications auto, contexte ---------------------------------------------------------- */
+.atts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.att { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); font-size: .82rem; max-width: 260px; }
+.att .ico { color: var(--accent); }
+.att .x { border: 0; background: none; color: var(--muted); padding: 2px 4px; border-radius: 5px; }
+.att .x:hover { background: var(--hover); color: var(--text); }
+label.icon-btn { cursor: pointer; }
+.toggle { display: inline-flex; align-items: center; gap: 7px; border: 0; background: none; color: var(--muted); font-size: .84rem; padding: 4px 6px; border-radius: 8px; }
+.toggle:hover { background: var(--hover); }
+.toggle .knob { width: 26px; height: 15px; border-radius: 999px; background: var(--line); position: relative; transition: background .15s; }
+.toggle .knob::after { content: ""; position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--text); transition: left .15s; }
+.toggle.on { color: var(--accent); }
+.toggle.on .knob { background: var(--accent); }
+.toggle.on .knob::after { left: 13px; background: var(--on-accent); }
+.ctx { display: inline-flex; align-items: center; gap: 6px; font-size: .76rem; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ctx-bar { width: 46px; height: 5px; border-radius: 999px; background: var(--line); overflow: hidden; }
+.ctx-bar > span { display: block; height: 100%; background: var(--accent); }
+
+/* --- Messages : actions ---------------------------------------------------------------------------------------------- */
+.msg-actions { display: flex; gap: 4px; margin-top: 6px; opacity: 0; transition: opacity .15s; }
+.msg.assistant:hover .msg-actions, .msg.assistant:last-of-type .msg-actions { opacity: 1; }
+.mini { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; color: var(--faint); font-size: .78rem; padding: 3px 7px; border-radius: 6px; }
+.mini:hover { background: var(--hover); color: var(--text); }
+
+/* --- Palette, dialogues, dépôt -------------------------------------------------------------------------------------- */
+.overlay.top { align-items: flex-start; padding-top: 14vh; }
+.palette { width: min(620px, 100%); border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); overflow: hidden; }
+.palette input { width: 100%; padding: 14px 16px; border: 0; border-bottom: 1px solid var(--line); background: none; outline: none; font-size: 1rem; }
+.pal-list { max-height: 50vh; overflow-y: auto; padding: 6px; }
+.pal-item { display: flex; width: 100%; align-items: center; gap: 12px; padding: 8px 10px; border: 0; border-radius: 8px; background: none; text-align: left; }
+.pal-item .ico { color: var(--accent); width: 18px; text-align: center; }
+.pal-item.on { background: var(--accent-soft); }
+.pal-label { flex: 1; }
+kbd { font-family: "JetBrainsMono NF", monospace; font-size: .74rem; padding: 1px 6px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); }
+input.text.wide { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); }
+.btn.primary.danger { background: var(--red); border-color: var(--red); color: #fff; }
+.main.drag { outline: 2px dashed var(--accent); outline-offset: -8px; }
+.drop-hint { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 14px 22px; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-weight: 600; pointer-events: none; box-shadow: var(--shadow); }
