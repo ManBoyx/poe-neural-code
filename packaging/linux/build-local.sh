@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Construit AppImage, .deb et .rpm dans un conteneur (podman ou docker), sans rien installer sur la machine.
+# Construction locale : sans artefacts de mise à jour signés (la clé privée n'existe que dans les secrets GitHub).
 # 1) moteur Python (PyInstaller) construit dans le conteneur ; 2) application Tauri et paquets.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -12,5 +13,5 @@ mkdir -p build/cache/cargo build/cache/target
     uv venv -q --python 3.12 /tmp/venv && . /tmp/venv/bin/activate
     uv pip install -q /src pyinstaller
     pyinstaller --noconfirm --log-level WARN --distpath build/engine/dist --workpath /tmp/pyi packaging/engine/eclipse-engine.spec
-    cd desktop && npm ci --no-fund --no-audit && npx tauri build --bundles appimage,deb,rpm "$@"' _ "$@"
+    cd desktop && npm ci --no-fund --no-audit && npx tauri build --bundles appimage,deb,rpm --config src-tauri/local-build.json "$@"' _ "$@"
 echo "Paquets : build/cache/target/release/bundle/"
