@@ -36,6 +36,9 @@ PRESETS: list[ProviderSpec] = [
     ProviderSpec("deepseek", "DeepSeek", "https://api.deepseek.com/v1", "DEEPSEEK_API_KEY", verified="adresse vérifiée ; chat non testé"),
     ProviderSpec("xai", "xAI (Grok)", "https://api.x.ai/v1", "XAI_API_KEY", verified="adresse vérifiée ; chat non testé"),
     ProviderSpec("together", "Together AI", "https://api.together.xyz/v1", "TOGETHER_API_KEY", verified="adresse vérifiée ; chat non testé"),
+    ProviderSpec("cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY", verified="adresse NON vérifiée ; offre gratuite avec clé"),
+    ProviderSpec("github", "GitHub Models", "https://models.github.ai/inference", "GITHUB_MODELS_TOKEN",
+                 verified="adresse NON vérifiée ; jeton GitHub avec la permission « models »", notes="gratuit avec quotas pour les comptes GitHub"),
     ProviderSpec("ollama", "Ollama (local)", "http://localhost:11434/v1", None, key_required=False, verified="local : nécessite `ollama serve`"),
     ProviderSpec("lmstudio", "LM Studio (local)", "http://localhost:1234/v1", None, key_required=False, verified="local : serveur LM Studio actif requis"),
 ]

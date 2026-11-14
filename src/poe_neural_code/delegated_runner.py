@@ -50,7 +50,8 @@ class DelegatedRunner:
                 rem = r if rem is None else min(rem, r)
         return rem
 
-    async def run_turn(self, user_text: str) -> None:
+    async def run_turn(self, user_text: str, attachments: list | None = None) -> None:
+        self._files = list(attachments or [])
         if self._busy:
             self.emit(StatusEvent("Un tour est déjà en cours.", "warn"))
             return
@@ -98,7 +99,7 @@ class DelegatedRunner:
         if plan and not a.plan_args:
             self.emit(StatusEvent(f"Mode plan : {a.label} n'a pas d'option lecture seule connue — il pourrait modifier des fichiers.", "warn"))
         cmd, stdin_text = build_command(a, self.binary, prompt, model=self.config.cli_models.get(a.id), plan=plan, session_id=sess_id,
-                                     bypass=self.ctx.permissions.mode == "bypass")
+                                     bypass=self.ctx.permissions.mode == "bypass", files=getattr(self, "_files", None))
         if self.ctx.permissions.mode == "bypass" and not plan:
             self.emit(StatusEvent(f"BYPASS : {'les confirmations de ' + a.label + ' sont désactivées (' + ' '.join(a.bypass_args) + ')' if a.bypass_args else a.label + ' n’a pas d’option bypass connue : ses propres confirmations restent actives'}.", "warn"))
         env = {k: v for k, v in os.environ.items() if k not in ("POE_API_KEY",)}

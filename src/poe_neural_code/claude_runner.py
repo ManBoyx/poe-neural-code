@@ -79,9 +79,10 @@ class ClaudeCodeRunner:
         extra = extra_system(self.ext, self.session.agent, self.ctx.workspace.root, self.config)
         return f"{SYSTEM_APPEND}\n\nProject root: {self.ctx.workspace.root}\n\n{extra}\n\n{pack.text}\n\n## Todo list\n{todo}"
 
-    def _command(self, cfg_path: str, resume: bool) -> list[str]:
+    def _command(self, cfg_path: str, resume: bool, stream_input: bool = False) -> list[str]:
         c = self.config
         cmd = [*self.claude_cmd, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+               *(["--input-format", "stream-json"] if stream_input else []),
                "--tools", "", "--strict-mcp-config", "--mcp-config", cfg_path,
                "--allowedTools", f"mcp__{SERVER_NAME}", "--permission-mode", "default", "--permission-prompts", "none",
                "--append-system-prompt", self._system(), "--max-turns", str(c.max_agent_steps)]
@@ -106,7 +107,7 @@ class ClaudeCodeRunner:
                 rem = r if rem is None else min(rem, r)
         return rem
 
-    async def run_turn(self, user_text: str) -> None:
+    async def run_turn(self, user_text: str, attachments: list | None = None) -> None:
         if self._busy:
             self.emit(StatusEvent("Un tour est déjà en cours.", "warn"))
             return
@@ -114,7 +115,7 @@ class ClaudeCodeRunner:
         self.ctx.cancel.clear()
         interrupted = False
         try:
-            interrupted = await self._turn(user_text)
+            interrupted = await self._turn(user_text, attachments=attachments)
         except Exception as e:  # noqa: BLE001
             log.exception("claude runner")
             self.emit(StatusEvent(redact(f"Erreur Claude Code : {e.__class__.__name__}: {e}"), "error"))
@@ -124,7 +125,7 @@ class ClaudeCodeRunner:
             self.session.save()
             self.emit(TurnDone(interrupted))
 
-    async def _turn(self, user_text: str, retry: bool = True) -> bool:
+    async def _turn(self, user_text: str, retry: bool = True, attachments: list | None = None) -> bool:
         try:
             res = self.budget.reserve(self.session.id, MODEL_ID, None, None, bounded=False)
         except B.BudgetExhausted as e:
@@ -154,7 +155,7 @@ class ClaudeCodeRunner:
         guard_failed = False
         try:
             proc = await asyncio.create_subprocess_exec(
-                *self._command(str(cfg_file), resume), cwd=str(self.ctx.workspace.root), env=env, stdin=asyncio.subprocess.PIPE,
+                *self._command(str(cfg_file), resume, stream_input=bool(attachments)), cwd=str(self.ctx.workspace.root), env=env, stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=32 * 1024 * 1024,
                 **({"start_new_session": True} if os.name != "nt" else {}))
         except FileNotFoundError:
@@ -166,7 +167,15 @@ class ClaudeCodeRunner:
         assert proc.stdin and proc.stdout and proc.stderr
         prefix = "".join(n + "\n\n" for n in self.pending_context)
         self.pending_context.clear()
-        proc.stdin.write((prefix + user_text).encode())
+        if attachments:  # images : message stream-json au format Anthropic (blocs texte + image base64)
+            import base64
+            from .extensions.refs import IMAGE_EXT
+            blocks = [{"type": "text", "text": prefix + user_text}] + [
+                {"type": "image", "source": {"type": "base64", "media_type": IMAGE_EXT[p.suffix.lower()], "data": base64.b64encode(p.read_bytes()).decode()}}
+                for p in attachments]
+            proc.stdin.write((json.dumps({"type": "user", "message": {"role": "user", "content": blocks}}) + "\n").encode())
+        else:
+            proc.stdin.write((prefix + user_text).encode())
         await proc.stdin.drain()
         proc.stdin.close()
         err_task = asyncio.create_task(proc.stderr.read())
@@ -275,7 +284,7 @@ class ClaudeCodeRunner:
             if retry and resume and "conversation" in msg.lower() and "found" in msg.lower():
                 self.session.claude_session_id = None  # session Claude perdue : on repart sur une nouvelle, avec la mémoire Eclipse
                 self.emit(StatusEvent("Session Claude introuvable : nouvelle session (le contexte revient de la mémoire Eclipse).", "warn"))
-                return await self._turn(user_text, retry=False)
+                return await self._turn(user_text, retry=False, attachments=attachments)
             self.emit(StatusEvent(redact(f"Claude Code : {msg[:300]}"), "error"))
         denials = result.get("permission_denials") or []
         if denials:

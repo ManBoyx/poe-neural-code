@@ -156,7 +156,7 @@ def test_bypass_command_requires_confirmation_and_shows_badge(tmp_path):
         assert await until(pilot, lambda: type(app.screen).__name__ == "ConfirmScreen")
         await pilot.press("o")
         assert await until(pilot, lambda: pm.mode == "bypass")
-        assert "⚠ BYPASS" in text_of(app.screen.query_one("#modeline", __import__("textual.widgets", fromlist=["Static"]).Static)) and not pm.bypass_all
+        assert "BYPASS" in text_of(app.screen.query_one("#modeline", __import__("textual.widgets", fromlist=["Static"]).Static)) and not pm.bypass_all
         await say(pilot, app, "/bypass all")
         assert await until(pilot, lambda: type(app.screen).__name__ == "ConfirmScreen") and "TOTAL" in app.screen.t
         await pilot.press("o")

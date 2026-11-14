@@ -1,6 +1,6 @@
 # Limites connues et état des fonctionnalités
 
-## Opérationnel et testé (160+ tests automatisés)
+## Opérationnel et testé (218 tests automatisés)
 - Connecteur Poe (streaming, appels d'outils natifs, usage tokens, erreurs HTTP) — **contre un faux serveur HTTP uniquement**.
 - Boucle d'agent de bout en bout (outils, autorisations, diff, interruption, reprise de session) — avec un fournisseur de **test scripté**.
 - Neural Memory Engine : persistance, archives immuables, recherche FTS5 filtrée, cache de travail, contradictions, compactage
@@ -48,6 +48,16 @@
 - **Fusion** : testée avec un faux agent, un faux serveur API, un faux `claude`, et **en réel avec OpenCode** (consultation seule, sans modèle principal). Non testé en réel : Claude Code comme assistant ou comme demandeur de bout en bout,
   Kiro/Codex/Gemini (non installés ou inutilisables), API par clé. Tokens des assistants CLI sans compteur = **estimés**. Les agents délégués ne peuvent pas initier de consultation. Le texte envoyé à un assistant quitte
   l'application : relisez l'aperçu.
+
+## Version 0.2.0
+- **Testé** (tests automatisés + captures vérifiées) : saisie multiligne et historique, barre d'état, pied de tour, onglets, blocs repliables, diffs appliqués, `/free` (sources réelles détectées), `/models free`,
+  images (faux serveurs et faux `claude`), `web_fetch` (faux serveur), paramètres standard, `/add-dir`, `/system`, `/fork`, suppression de session, `/config`, `/doctor`, `/context`.
+- **Non testé en réel** : images avec un vrai modèle (Poe/OpenRouter sans clé ici ; Claude Code non relancé pour préserver votre fenêtre d'usage), `web_fetch` sur Internet, téléchargement Ollama,
+  offres gratuites Groq/Google/Mistral/Cerebras/GitHub (pas de clés ; adresses Cerebras/GitHub/Google non confirmées).
+- **OpenCode gratuit** : seulement via l'agent OpenCode (mode délégué) ; leur API refuse les modèles gratuits hors d'OpenCode et Eclipse ne contourne pas cette règle.
+- **Paramètres d'échantillonnage** : pour les fournisseurs sans liste (OpenAI…), temperature/top_p/seed sont proposés comme « standard OpenAI, prise en charge non vérifiée ».
+- **web_fetch** : pas de moteur de recherche intégré (utilisez le réglage `web_search` du modèle quand il existe) ; pages lourdes tronquées ; HTML converti en texte simplement.
+- La touche Maj+Entrée dépend du terminal (sinon Ctrl+J ou Alt+Entrée). Windows toujours non testé.
 
 ## Non vérifié ou non réalisé
 - **Aucun appel réel à Poe n'a été fait** (pas de clé de test). `stream_options.include_usage` n'est pas documenté pour Poe : repli sans

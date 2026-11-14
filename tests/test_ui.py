@@ -10,11 +10,23 @@ from tests.conftest import FakeProvider, tc
 
 
 def text_of(w):
+    """Texte affiché par un widget (rend les groupes/cadres Rich en texte brut)."""
+    from rich.console import Console
+    from rich.text import Text as _T
+    v = None
     for attr in ("content", "renderable", "visual"):
         v = getattr(w, attr, None)
         if v is not None:
-            return str(v)
-    return str(w.render())
+            break
+    if v is None:
+        v = w.render()
+    if isinstance(v, str):
+        return v
+    if isinstance(v, _T):
+        return v.plain
+    con = Console(width=120, record=True, color_system=None)
+    con.print(v)
+    return con.export_text()
 
 
 def run(coro):
@@ -82,13 +94,14 @@ def test_todo_commands_update_sidebar_without_model_call(tmp_path):
         app = EclipseApp(str(tmp_path), provider=prov)
         async with app.run_test(size=(120, 40)) as pilot:
             await settle(pilot)
-            p = app.screen.query_one("#prompt", Input)
+            p = app.screen.query_one("#prompt")
             for cmd in ("/todo add écrire les tests", "/todo add publier", "/todo done 1"):
                 p.value = cmd
                 await p.action_submit()
                 await settle(pilot, 3)
             t = text_of(app.screen.query_one("#todo", Static))
-            assert "écrire les tests" in t and "1/2" in t and "☑" in t
+            from poe_neural_code.ui import icons as I
+            assert "écrire les tests" in t and "1/2" in t and I.get("todo") in t
         assert prov.calls == []  # aucun appel modèle pour afficher/modifier la todo
 
     run(go())
@@ -99,7 +112,7 @@ def test_define_token_modal_creates_example_budget(tmp_path):
         app = EclipseApp(str(tmp_path), provider=FakeProvider([]))
         async with app.run_test(size=(120, 50)) as pilot:
             await settle(pilot)
-            p = app.screen.query_one("#prompt", Input)
+            p = app.screen.query_one("#prompt")
             p.value = "/define-token"
             await p.action_submit()
             await settle(pilot)
@@ -113,7 +126,7 @@ def test_define_token_modal_creates_example_budget(tmp_path):
             env = app.sv.budget.envelopes()[0]
             assert (env.amount_points, env.period_s, env.scope, env.on_exhaust, env.carry_over) == (600, 1800, ["*"], "pause", False)
             u = text_of(app.screen.query_one("#usage", Static))
-            assert "reste 600" in u and "↻" in u and "sans report" in u and "pause des requêtes" in u
+            assert "600 / 600 pts" in u and "Renouvelée" in u and "non reporté" in u and "pause des requêtes" in u and "Budget « temporaire »" in u
             assert "indisponible" in u  # pas de taux saisi → l'estimation n'est pas inventée
 
     run(go())
@@ -124,7 +137,7 @@ def test_define_token_invalid_input_stays_open(tmp_path):
         app = EclipseApp(str(tmp_path), provider=FakeProvider([]))
         async with app.run_test(size=(120, 50)) as pilot:
             await settle(pilot)
-            p = app.screen.query_one("#prompt", Input)
+            p = app.screen.query_one("#prompt")
             p.value = "/define-token"
             await p.action_submit()
             await settle(pilot)
@@ -146,7 +159,7 @@ def test_chat_turn_with_permission_modal_and_labels(tmp_path):
         app = EclipseApp(str(tmp_path), provider=prov)
         async with app.run_test(size=(130, 45)) as pilot:
             await settle(pilot)
-            p = app.screen.query_one("#prompt", Input)
+            p = app.screen.query_one("#prompt")
             for cmd in ("/model m1", "/rate 30000"):
                 p.value = cmd
                 await p.action_submit()
@@ -167,8 +180,8 @@ def test_chat_turn_with_permission_modal_and_labels(tmp_path):
             await settle(pilot)
             assert (tmp_path / "a.txt").read_text() == "salut\n"
             u = text_of(app.screen.query_one("#usage", Static))
-            pts_line = next(l for l in u.splitlines() if l.strip().startswith("Points"))
-            assert "[estimé]" in pts_line and "[mesuré]" not in pts_line  # points estimés, jamais « mesurés »
+            pts_line = next(l for l in u.splitlines() if "Points" in l and "pts" in l)
+            assert "estimé" in pts_line and "mesuré" not in pts_line  # points estimés, jamais « mesurés »
             assert "mesurés" in u  # tokens renvoyés par le fournisseur
 
     run(go())
@@ -182,7 +195,7 @@ def test_escape_interrupts_running_turn(tmp_path):
         app = EclipseApp(str(tmp_path), provider=prov)
         async with app.run_test(size=(120, 40)) as pilot:
             await settle(pilot)
-            p = app.screen.query_one("#prompt", Input)
+            p = app.screen.query_one("#prompt")
             p.value = "/model m1"
             await p.action_submit()
             await settle(pilot, 3)
@@ -219,7 +232,7 @@ def test_claude_mode_commands_and_panel(tmp_path):
         app = EclipseApp(str(tmp_path), provider=FakeProvider([]))
         async with app.run_test(size=(130, 50)) as pilot:
             await settle(pilot)
-            p = app.screen.query_one("#prompt", Input)
+            p = app.screen.query_one("#prompt")
             for cmd in ("/mode claude", "/claude-limit 200000 5h", "/model haiku"):
                 p.value = cmd
                 await p.action_submit()
@@ -231,9 +244,9 @@ def test_claude_mode_commands_and_panel(tmp_path):
             sv.claude.info.rate = {"rateLimitType": "five_hour", "utilization": 0.92, "resetsAt": 4102444800}
             app.screen.refresh_panels()
             u = text_of(app.screen.query_one("#usage", Static))
-            assert "Claude Code" in u and "Usage   5 h" in u and "92 %" in u and "█" in u and "[mesuré]" in u and "sans objet" in u
+            assert "Claude Code" in u and "Fenêtre 5 h" in u and "92 %" in u and "█" in u and "mesuré par Claude Code" in u and "Points" not in u
             assert "Taux points/USD" not in u  # pas de bruit « points » en mode Claude
-            assert "Tokens" in u and "/ 200 000" in u and "Temps" in u
+            assert "Limite Eclipse" in u and "Tokens" in u and "/ 200 000" in u and "Période" in u
             p.value = "/mode poe"
             await p.action_submit()
             await settle(pilot, 4)

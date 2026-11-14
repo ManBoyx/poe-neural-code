@@ -32,15 +32,25 @@ def parse_generic_model(d: dict[str, Any]) -> ModelInfo:
     params: list[ParamSpec] = []
     if sp and "reasoning_effort" in sp:
         params.append(ParamSpec("reasoning_effort", "enum", ["low", "medium", "high"], None, "Effort de raisonnement (valeurs standard OpenRouter)"))
+    # paramètres d'échantillonnage standard : ceux que le catalogue déclare, sinon les standards OpenAI (prise en charge non vérifiée)
+    std = [("temperature", "number", "Température (0 = déterministe, 2 = très créatif)"), ("top_p", "number", "Échantillonnage nucleus (0–1)"),
+           ("seed", "integer", "Graine pour des réponses reproductibles"), ("frequency_penalty", "number", "Pénalité de répétition (-2–2)"),
+           ("presence_penalty", "number", "Pénalité de présence (-2–2)"), ("top_k", "integer", "Top-k")]
+    for name, kind, desc in std:
+        if sp is not None and name in sp:
+            params.append(ParamSpec(name, kind, [], None, desc))
+        elif sp is None and name in ("temperature", "top_p", "seed"):
+            params.append(ParamSpec(name, kind, [], None, desc + " — paramètre OpenAI standard, prise en charge non vérifiée pour ce modèle"))
     arch = d.get("architecture") or {}
-    outs = arch.get("output_modalities")
+    mods = d.get("modalities") or {}
+    outs = arch.get("output_modalities") or mods.get("output")
     chat = (outs == ["text"] if outs else not NON_CHAT.search(d["id"]))
     return ModelInfo(id=d["id"], context_length=d.get("context_length") or d.get("context_window") or (d.get("top_provider") or {}).get("context_length"),
                      max_output=(d.get("top_provider") or {}).get("max_completion_tokens"),
                      prompt_price=_f(price.get("prompt")), completion_price=_f(price.get("completion")),
                      supports_tools=("tools" in sp) if sp is not None else True,  # liste absente : non vérifié, on tente (l'API refusera sinon)
                      chat_text=chat, params=params, reasoning=bool(sp and "reasoning" in sp), description=(d.get("description") or "")[:300],
-                     owner=d.get("owned_by") or "")
+                     owner=d.get("owned_by") or "", input_modalities=arch.get("input_modalities") or mods.get("input") or [])
 
 
 class OpenAICompatProvider:

@@ -32,6 +32,9 @@ class Config(BaseModel):
     fusion_max_calls: int = 3  # consultations max par tour
     fusion_max_output: int = 2000  # tokens de sortie max demandés à un assistant API
     fusion_timeout_s: int = 300
+    notify_after_s: int = 30  # signal sonore quand un tour dépasse cette durée
+    desktop_notify: bool = False  # notification bureau (notify-send) en plus
+    icons: str = "auto"  # auto | nerd | text — icônes Nerd Font ou symboles texte (jamais d'emoji)
     theme: str = "eclipse"
     favorite_models: list[str] = Field(default_factory=list)
     recent_models: list[str] = Field(default_factory=list)

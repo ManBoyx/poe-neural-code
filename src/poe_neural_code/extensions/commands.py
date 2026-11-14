@@ -72,6 +72,37 @@ BUILTINS: list[Command] = [
     B("rate", "Taux points/USD saisi à la main", usage="/rate N"),
     B("spent", "Dépense saisie à la main (points)", usage="/spent N"),
     B("reload", "Recharger skills, modes, plugins et commandes personnalisées"),
+    # --- 0.2.0 ---
+    B("free", "Modèles GRATUITS : OpenCode (sans compte), OpenRouter :free, Ollama local, offres gratuites par clé"),
+    B("retry", "Relancer le dernier message (annule la réponse et les fichiers, puis renvoie)", ("regenerate",)),
+    B("edit", "Modifier le dernier message (l'annule et le remet dans la saisie)"),
+    B("fork", "Dupliquer la session (branche de conversation indépendante)"),
+    B("add-dir", "Autoriser un dossier en plus du projet : /add-dir CHEMIN", usage="/add-dir CHEMIN"),
+    B("system", "Consignes personnelles : /system (voir) · /system set TEXTE · /system project TEXTE · /system clear [project]", ("instructions",)),
+    B("config", "Tous les réglages d'Eclipse", ("settings",)),
+    B("doctor", "Diagnostic : installation, clés, réseau, agents, MCP"),
+    B("context", "Ce qui occupe le contexte du modèle (prompt système, mémoire, historique, outils)"),
+    B("diff", "Modifications en cours du dépôt Git (git diff)"),
+    B("login", "Se connecter à un fournisseur (= /connect)"),
+    B("logout", "Oublier la clé d'un fournisseur (= /disconnect)", usage="/logout ID"),
+    B("attach", "Joindre une image ou un fichier : /attach CHEMIN (ou @chemin dans le message)", usage="/attach CHEMIN"),
+]
+
+# Commandes « prompt » intégrées (remplaçables par une commande personnalisée du même nom)
+PROMPTS: list[Command] = [
+    Command("review", "Relecture des modifications en cours (bugs, régressions, tests manquants)", kind="custom",
+            template="Relis les modifications en cours du dépôt (git status, git diff). Signale les bugs, régressions et tests manquants par ordre de gravité, "
+                     "avec fichier et ligne. Ne modifie rien. $ARGUMENTS", agent="plan"),
+    Command("explain", "Expliquer un fichier, une fonction ou un concept", kind="custom",
+            template="Explique $ARGUMENTS : rôle, fonctionnement, dépendances et points d'attention. Lis les fichiers concernés avant de répondre."),
+    Command("tests", "Écrire ou compléter des tests puis les exécuter", kind="custom",
+            template="Écris ou complète les tests pour $ARGUMENTS en suivant les conventions du projet, puis exécute-les et corrige ce qui échoue."),
+    Command("fix", "Diagnostiquer et corriger une erreur", kind="custom",
+            template="Voici une erreur ou un symptôme : $ARGUMENTS\nTrouve la cause (lis le code, reproduis si possible), corrige-la, puis vérifie avec les tests."),
+    Command("commit", "Préparer un commit (message proposé, commit après accord)", kind="custom",
+            template="Examine git status et git diff, propose un message de commit clair (style conventionnel), puis crée le commit avec run_command. $ARGUMENTS"),
+    Command("plan", "Planifier une tâche sans rien modifier", kind="custom", agent="plan",
+            template="Établis un plan détaillé, étape par étape, pour : $ARGUMENTS\nLis le code nécessaire, note les risques, et alimente la todo list. Ne modifie rien."),
 ]
 
 
@@ -113,6 +144,10 @@ def expand_template(template: str, args: str) -> str:
 def all_commands(custom: dict[str, Command] | None = None, skills=None, plugin_commands=None) -> list[Command]:
     cmds = list(BUILTINS)
     taken = {c.name for c in cmds} | {a for c in cmds for a in c.aliases}
+    for c in PROMPTS:  # une commande personnalisée du même nom remplace le prompt intégré
+        if c.name not in (custom or {}) and c.name not in taken:
+            cmds.append(c)
+            taken.add(c.name)
     for name, c in (custom or {}).items():
         if name not in taken:
             cmds.append(c)

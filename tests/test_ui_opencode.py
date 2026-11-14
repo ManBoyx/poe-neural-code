@@ -19,11 +19,23 @@ class P(FakeProvider):
 
 
 def text_of(w):
+    """Texte affiché par un widget (rend les groupes/cadres Rich en texte brut)."""
+    from rich.console import Console
+    from rich.text import Text as _T
+    v = None
     for attr in ("content", "renderable", "visual"):
         v = getattr(w, attr, None)
         if v is not None:
-            return str(v)
-    return str(w.render())
+            break
+    if v is None:
+        v = w.render()
+    if isinstance(v, str):
+        return v
+    if isinstance(v, _T):
+        return v.plain
+    con = Console(width=120, record=True, color_system=None)
+    con.print(v)
+    return con.export_text()
 
 
 async def until(pilot, cond, n=80):
@@ -35,7 +47,7 @@ async def until(pilot, cond, n=80):
 
 
 async def say(pilot, app, text):
-    p = app.screen.query_one("#prompt", Input)
+    p = app.screen.query_one("#prompt")
     p.value = text
     await p.action_submit()
     await pilot.pause(0.25)
@@ -55,7 +67,7 @@ def run_app(tmp_path, turns, body, size=(140, 44), **kw):
 
 def test_command_preview_while_typing_and_tab_completion(tmp_path):
     async def body(app, pilot, prov):
-        p = app.screen.query_one("#prompt", Input)
+        p = app.screen.query_one("#prompt")
         prev = app.screen.query_one("#preview", OptionList)
         p.value = "/"
         await pilot.pause(0.2)
@@ -78,7 +90,7 @@ def test_command_preview_while_typing_and_tab_completion(tmp_path):
 
 def test_enter_on_partial_command_runs_highlighted_command(tmp_path):
     async def body(app, pilot, prov):
-        p = app.screen.query_one("#prompt", Input)
+        p = app.screen.query_one("#prompt")
         p.value = "/sidebar"
         await pilot.pause(0.2)
         before = app.screen.show_sidebar
@@ -94,7 +106,7 @@ def test_at_file_preview_and_completion_then_submit(tmp_path):
 
     async def body(app, pilot, prov):
         await say(pilot, app, "/model m1")
-        p = app.screen.query_one("#prompt", Input)
+        p = app.screen.query_one("#prompt")
         p.value = "lis @not"
         await pilot.pause(0.3)
         prev = app.screen.query_one("#preview", OptionList)
@@ -111,7 +123,7 @@ def test_at_file_preview_and_completion_then_submit(tmp_path):
 
 def test_shell_bang_preview_confirmation_and_context(tmp_path):
     async def body(app, pilot, prov):
-        p = app.screen.query_one("#prompt", Input)
+        p = app.screen.query_one("#prompt")
         p.value = "!echo bonjour-shell"
         await pilot.pause(0.2)
         prev = app.screen.query_one("#preview", OptionList)
@@ -177,7 +189,7 @@ def test_leader_key_chords_open_pickers(tmp_path):
         await pilot.pause(0.2)
         assert isinstance(app.screen, WorkScreen) and not app.screen.leader_active
         await pilot.press("m")  # sans leader : la lettre est simplement saisie
-        assert app.screen.query_one("#prompt", Input).value == "m"
+        assert app.screen.query_one("#prompt").value == "m"
 
     run_app(tmp_path, [], body)
 
@@ -233,7 +245,7 @@ def test_undo_command_restores_text_and_files(tmp_path):
         await pilot.pause(0.5)
         await say(pilot, app, "/undo")
         assert await until(pilot, lambda: (tmp_path / "a.txt").read_text() == "avant")
-        assert app.screen.query_one("#prompt", Input).value == "modifie a.txt"  # le message revient dans la saisie
+        assert app.screen.query_one("#prompt").value == "modifie a.txt"  # le message revient dans la saisie
         await say(pilot, app, "/redo")
         assert await until(pilot, lambda: (tmp_path / "a.txt").read_text() == "après")
 

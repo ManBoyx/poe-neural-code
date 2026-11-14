@@ -15,6 +15,7 @@ from textual.widgets.option_list import Option
 
 from ..budget import Budget
 from ..tools.permissions import PermissionRequest
+from . import icons as I
 from .util import parse_duration
 
 KIND_TITLE = {"fusion": "Consulter un autre assistant", "exec": "Commande à exécuter", "write": "Modification de fichier", "delete": "Suppression", "mcp": "Outil MCP",
@@ -42,9 +43,9 @@ class PermissionScreen(ModalScreen[str]):
     def compose(self) -> ComposeResult:
         r = self.req
         with Vertical(id="perm", classes="danger" if (r.destructive or r.outside) else ""):
-            yield Label(Text(f"🔒 {KIND_TITLE.get(r.kind, r.kind)} — {r.summary}"), id="perm-title")
+            yield Label(Text(f"{I.get('lock')} {KIND_TITLE.get(r.kind, r.kind)} — {r.summary}"), id="perm-title")
             if r.warnings:
-                yield Static(Text("⚠ " + " · ".join(r.warnings), style="bold red" if r.destructive or r.outside else "yellow"))
+                yield Static(Text(I.get("warn") + " " + " · ".join(r.warnings), style="bold red" if r.destructive or r.outside else "yellow"))
             if r.detail:
                 body: Any = (Syntax(r.detail, "diff", word_wrap=True, background_color="default") if r.kind == "write" else
                              Syntax(r.detail, "bash", word_wrap=True, background_color="default") if r.kind == "exec" else Text(r.detail))
@@ -121,7 +122,10 @@ class PickerScreen(ModalScreen[Any]):
         elif e.key == "up":
             ol.action_cursor_up(); e.stop()
         elif e.key in self.extra and ol.highlighted is not None and self._shown:
-            self.extra[e.key](self._shown[ol.highlighted][1]); e.stop()
+            e.stop()
+            r = self.extra[e.key](self._shown[ol.highlighted][1])
+            if r is not None:  # un raccourci peut fermer le sélecteur avec un résultat
+                self.dismiss(r)
 
     def on_input_submitted(self, e: Input.Submitted) -> None:
         ol = self.query_one("#picker-list", OptionList)
@@ -181,7 +185,7 @@ class ConfirmScreen(ModalScreen[bool]):
         with Vertical(id="cf"):
             yield Label(Text(self.t, style="bold"))
             if self.w:
-                yield Static(Text("⚠ " + self.w, style="yellow"))
+                yield Static(Text(I.get("warn") + " " + self.w, style="yellow"))
             if self.b:
                 yield VerticalScroll(Static(Syntax(self.b, "python", word_wrap=True, background_color="default")), id="cf-body")
             yield Label("[o] Oui, approuver   [n] Non")

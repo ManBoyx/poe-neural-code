@@ -69,7 +69,7 @@ class PoeProvider:
                 kind = "enum" if sc.get("enum") else {"boolean": "boolean", "integer": "integer", "number": "number"}.get(sc.get("type"), "string")
                 params.append(ParamSpec(pr["name"], kind, [str(x) for x in sc.get("enum", [])], pr.get("default_value"), pr.get("description") or ""))
             out.append(ModelInfo(params=params, reasoning=bool(d.get("reasoning")), description=(d.get("description") or "")[:300],
-                                 owner=d.get("owned_by") or "",
+                                 owner=d.get("owned_by") or "", input_modalities=arch.get("input_modalities") or [],
                 id=d["id"], context_length=cw.get("context_length") or d.get("context_length"), max_output=cw.get("max_output_tokens"),
                 prompt_price=_f(price.get("prompt")), completion_price=_f(price.get("completion")),
                 cache_read_price=_f(price.get("input_cache_read")),

@@ -25,6 +25,7 @@ class Session:
     claude_session_id: str | None = None
     cli_sessions: dict = field(default_factory=dict)  # agent externe -> identifiant de session de l'agent
     provider_models: dict = field(default_factory=dict)  # fournisseur -> dernier modèle choisi
+    extra_dirs: list = field(default_factory=list)
     agent: str = "build"  # profil d'agent actif (build, plan, ou personnalisé)
     model_options: dict = field(default_factory=dict)  # modèle -> {réglage: valeur}
     undo_stack: list = field(default_factory=list)
@@ -45,6 +46,15 @@ class Session:
     @staticmethod
     def load(sid: str) -> "Session":
         return Session(**json.loads((sessions_dir() / f"{sid}.json").read_text(encoding="utf-8")))
+
+
+def delete_session(sid: str) -> bool:
+    """Supprime l'état de travail de la session (fichier JSON). Les archives de la mémoire du projet sont conservées."""
+    f = sessions_dir() / f"{sid}.json"
+    if f.exists():
+        f.unlink()
+        return True
+    return False
 
 
 def list_sessions() -> list[Session]:

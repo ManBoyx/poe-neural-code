@@ -1,8 +1,26 @@
-# Eclipse — nom de code « POE · Neural Code »
+# Eclipse 0.2.0 — nom de code « POE · Neural Code »
 
 **Eclipse** est un agent de programmation en terminal (Python/Textual, Windows et Linux) : mémoire externe structurée (Neural Memory Engine),
 suivi local de consommation, serveurs MCP, **skills, plugins et modes**, et deux fournisseurs : **Poe** (clé `POE_API_KEY`) ou **Claude Code** (abonnement).
 Ergonomie inspirée d'OpenCode : mêmes commandes slash, même touche « leader », `@fichier`, `!commande`, modes build/plan.
+
+## Nouveautés 0.2.0
+Interface refaite (barre d'état, saisie multiligne avec historique, indicateur d'activité, pied de tour avec coût, onglets, blocs repliables, diffs toujours visibles),
+**modèles gratuits** (`/free`), images jointes, `web_fetch`, paramètres d'échantillonnage, `/retry` `/edit` `/fork` `/add-dir` `/system` `/config` `/doctor` `/context` `/diff`,
+commandes-prompts `/review` `/explain` `/tests` `/fix` `/commit` `/plan`. Détail : [CHANGELOG.md](CHANGELOG.md).
+
+## Icônes
+Aucun emoji : Eclipse utilise les icônes **Nerd Fonts** (jeux Material Design, Devicons, Codicons ; noms et codes vérifiés dans la liste officielle nerdfonts.com).
+Elles s'affichent si une police Nerd Font est installée (par ex. JetBrainsMono Nerd Font) et utilisée ou disponible en repli par le terminal ; sinon, `/config` → `icons = text`
+remplace chaque icône par un symbole texte simple.
+
+## Modèles gratuits (`/free` ou `eclipse free`)
+| Source | Ce qu'il faut | Contrôle par Eclipse | Remarques |
+|---|---|---|---|
+| **OpenCode** (modèles `-free`) | OpenCode installé, **aucun compte** | mode délégué : pas d'aperçu des commandes, tokens estimés | Leur API refuse l'usage hors d'OpenCode : Eclipse passe par OpenCode lui-même, sans imiter son client. |
+| **OpenRouter** `:free` | compte gratuit + clé (`/connect`) | **complet** (aperçu, diffs, permissions, mémoire) | limites quotidiennes d'OpenRouter ; données envoyées à des tiers |
+| **Ollama** (local) | `ollama serve` + un modèle (≈ 2 à 5 Go) | **complet** | privé, gratuit, mais lent sans carte graphique |
+| Groq, Google AI Studio, Mistral, Cerebras, GitHub Models | clé gratuite chez le fournisseur | complet | quotas et conditions propres à chacun ; adresses à confirmer pour certains |
 
 ## Installation
 ```bash
@@ -22,9 +40,9 @@ eclipse models | sessions | export ID | stats | skills | plugins | modes
 ```
 
 ## Interface
-Conversation en blocs (Markdown, outils repliables avec résultat, diffs colorés, réflexion du modèle masquable), champ de saisie avec **aperçu des
+Barre d'état (projet, branche, fournisseur, modèle, mode, bypass, contexte, consommation), conversation en blocs (Markdown, outils repliables d'un clic, diffs colorés toujours affichés, réflexion masquable, pied de tour avec durée et coût), indicateur d'activité, saisie **multiligne** (Maj+Entrée) avec historique (↑/↓) et **aperçu des
 commandes pendant la frappe** (`/` + lettres ; ↑↓ choisir, Tab compléter, Entrée exécuter), `@fichier` (recherche floue, contenu joint), `!commande`
-(aperçu + confirmation). Barre latérale (Ctrl+B) : session, contexte (tokens/%), todo, fichiers modifiés, extensions, consommation. Thèmes (`/themes`,
+(aperçu + confirmation). Barre latérale (Ctrl+B) à onglets : **Session** (contexte, todo, fichiers modifiés) · **Conso** · **Outils** (permissions, dossiers, extensions, MCP, fusion, skills, modes). Thèmes (`/themes`,
 aperçu en direct) : `eclipse`, `eclipse-light` + thèmes Textual. **Aperçu avant exécution** : toute commande/modification passe par une fenêtre montrant
 la commande complète ou le diff, avec avertissements, avant votre accord.
 
