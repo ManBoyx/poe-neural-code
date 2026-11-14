@@ -97,7 +97,7 @@ Tous passent par la **maîtrise des tokens d'Eclipse** (journal mesuré/estimé,
   (préréglages non vérifiés, étiquetés) et vos propres agents via `<données>/agents.json`. **Mode délégué** pour les agents autres que Claude Code : l'agent exécute ses PROPRES
   outils (Eclipse ne peut pas en prévisualiser les commandes — annoncé), tokens mesurés si l'agent les donne sinon **estimés**, mode `plan` transmis si l'agent a une option lecture seule.
 - **API par clé** : Poe, OpenRouter, OpenAI, Anthropic (API), Google Gemini, Mistral, Groq, DeepSeek, xAI, Together, Ollama et LM Studio (locaux), ou toute adresse compatible OpenAI
-  (« Autre fournisseur »). Vous saisissez la clé (masquée) ; elle est vérifiée puis stockée (trousseau du système si `keyring` est installé, sinon fichier à droits 600, non chiffré). Les modèles
+  (« Autre fournisseur »). Vous saisissez la clé (masquée) ; elle est vérifiée puis stockée dans le trousseau du système (Secret Service/KWallet sous Linux, Gestionnaire d'identification sous Windows) ; sans trousseau disponible, elle n'est pas enregistrée (jamais en clair) : utilisez alors la variable d'environnement du fournisseur. Les modèles
   du fournisseur apparaissent aussitôt dans `/models`. Hors Poe : pas de « points », mais USD estimé (prix du catalogue × tokens mesurés) et limites de tokens. `/disconnect ID` oublie une clé.
 
 ## Consommation : `/usage` et panneau latéral

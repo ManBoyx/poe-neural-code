@@ -1,0 +1,32 @@
+# Avis connus, examinés et acceptés (étape 6). Chaque entrée expire : la CI les signalera de nouveau à cette date.
+# Tout NOUVEL avis fait échouer la CI.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0429"
+ignoreUntil = 2027-05-01
+reason = "glib 0.18 imposé par Tauri sous Linux (gtk-rs 0.18). Défaut de solidité de glib::VariantStrIter, fonction qu'Eclipse n'utilise pas. Disparaîtra avec le passage de Tauri à gtk-rs 0.20+."
+
+[[IgnoredVulns]]
+id = "GHSA-wrw7-89jp-8q8g"
+ignoreUntil = 2027-05-01
+reason = "Même avis que RUSTSEC-2024-0429 (glib)."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+ignoreUntil = 2027-05-01
+reason = "proc-macro-error non maintenu : macro utilisée seulement à la compilation, aucune faille connue."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0370"
+ignoreUntil = 2027-05-01
+reason = "zvariant 5.15 non maintenu (dépendance de zbus via Tauri/arboard) : aucune faille connue."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0371"
+ignoreUntil = 2027-05-01
+reason = "zbus_names non maintenu : aucune faille connue."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0372"
+ignoreUntil = 2027-05-01
+reason = "zvariant_derive non maintenu : aucune faille connue."

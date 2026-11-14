@@ -96,13 +96,12 @@ def test_http_errors_explicit():
 
 
 # ------------------------------------------------------------------ clés
-def test_credentials_store_permissions_priority_and_delete(monkeypatch):
-    monkeypatch.setattr(credentials, "_keyring", lambda: None)
+def test_credentials_keyring_only_env_priority_and_delete(monkeypatch, fake_keyring):
     assert credentials.get_key("prov", "PROV_KEY") is None
     where = credentials.set_key("prov", "  secret-abc-123  ")
-    assert "credentials.json" in where and credentials.get_key("prov") == "secret-abc-123"
-    if sys.platform != "win32":
-        assert stat.S_IMODE(credentials._file().stat().st_mode) == 0o600
+    assert "trousseau" in where and credentials.get_key("prov") == "secret-abc-123"
+    assert fake_keyring.store[(credentials.SERVICE, "prov")] == "secret-abc-123"
+    assert not credentials._legacy_file().exists()  # rien sur le disque
     monkeypatch.setenv("PROV_KEY", "from-env")
     assert credentials.get_key("prov", "PROV_KEY") == "from-env"  # l'environnement est prioritaire
     monkeypatch.delenv("PROV_KEY")
@@ -110,8 +109,44 @@ def test_credentials_store_permissions_priority_and_delete(monkeypatch):
     assert credentials.mask("sk-abcdefghijkl") == "sk-…jkl" and credentials.mask(None) == "—" and "secret" not in credentials.mask("secret-key-long")
 
 
-def test_registry_presets_and_custom(monkeypatch):
+def test_no_keyring_means_refusal_never_plaintext(monkeypatch):
     monkeypatch.setattr(credentials, "_keyring", lambda: None)
+    with pytest.raises(credentials.KeyringUnavailable, match="OPENAI_API_KEY"):
+        credentials.set_key("openai", "sk-secret", "OPENAI_API_KEY")
+    assert not credentials._legacy_file().exists()
+    assert "variables d'environnement" in credentials.storage_kind()
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    assert credentials.get_key("openai", "OPENAI_API_KEY") == "sk-env"
+
+
+def test_legacy_plaintext_file_is_migrated_then_deleted(fake_keyring):
+    f = credentials._legacy_file()
+    f.write_text(json.dumps({"openrouter": "sk-or-ancienne"}), encoding="utf-8")
+    assert credentials.get_key("openrouter") == "sk-or-ancienne"
+    assert not f.exists() and fake_keyring.store[(credentials.SERVICE, "openrouter")] == "sk-or-ancienne"
+
+
+def test_insecure_backends_are_rejected():
+    class Fail:  # keyring.backends.fail.Keyring
+        priority = 0
+    Fail.__module__ = "keyring.backends.fail"
+
+    class Plain:  # keyrings.alt.file.PlaintextKeyring
+        priority = 0.5
+    Plain.__module__ = "keyrings.alt.file"
+
+    class Secret:
+        priority = 5
+    Secret.__module__ = "keyring.backends.SecretService"
+
+    class Chain:
+        def __init__(self, *b):
+            self.backends = list(b)
+    assert not credentials._secure(Fail()) and not credentials._secure(Plain())
+    assert credentials._secure(Secret()) and credentials._secure(Chain(Plain(), Secret())) and not credentials._secure(Chain(Plain()))
+
+
+def test_registry_presets_and_custom(monkeypatch):
     ids = [s.id for s in P.all_specs()]
     for need in ("poe", "openrouter", "openai", "anthropic", "google", "mistral", "groq", "deepseek", "xai", "together", "ollama", "lmstudio"):
         assert need in ids
@@ -127,7 +162,6 @@ def test_registry_presets_and_custom(monkeypatch):
 
 # ------------------------------------------------------------------ services
 def test_connect_provider_switches_loads_models_and_remembers_models(tmp_path, monkeypatch):
-    monkeypatch.setattr(credentials, "_keyring", lambda: None)
     models = {"data": [{"id": "gpt-x", "context_length": 1000, "pricing": {"prompt": "0.000001", "completion": "0.000002"}}, {"id": "text-embedding-3"}]}
 
     def h(req):
@@ -177,3 +211,12 @@ def test_non_poe_provider_records_usd_estimate_and_no_points(tmp_path):
     r = sv.budget.conn.execute("SELECT * FROM ledger").fetchone()
     assert r["tokens_kind"] == "measured" and (r["tokens_in"], r["tokens_out"]) == (1000, 100)
     assert r["points"] is None and r["points_kind"] == "unavailable" and r["usd"] == pytest.approx(1000 * 1e-6 + 100 * 2e-6)
+
+
+def test_connect_without_keyring_reports_and_stores_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(credentials, "_keyring", lambda: None)
+    sv = create_services(tmp_path, config=Config())
+    ok, msg = asyncio.run(sv.connect_provider("openai", "sk-a-ne-pas-ecrire"))
+    assert not ok and "trousseau" in msg and "OPENAI_API_KEY" in msg
+    assert not credentials._legacy_file().exists()
+    assert "sk-a-ne-pas-ecrire" not in "".join(p.read_text(errors="ignore") for p in credentials._legacy_file().parent.rglob("*") if p.is_file() and p.suffix in (".json", ".log"))

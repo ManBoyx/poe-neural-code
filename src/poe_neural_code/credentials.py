@@ -1,91 +1,125 @@
-"""Clés d'API des fournisseurs.
+"""Clés d'API des fournisseurs : JAMAIS en clair sur le disque.
 
-Ordre : variable d'environnement (prioritaire) → trousseau du système si la bibliothèque `keyring` est installée → fichier `credentials.json`
-en droits 600 dans le dossier de données (NON chiffré : le dire à l'utilisateur). Les clés ne sont jamais journalisées ni affichées.
+Ordre de lecture : variable d'environnement (prioritaire) → trousseau du système.
+- Linux : Secret Service (GNOME Keyring, KWallet) via libsecret/D-Bus ;
+- Windows : Gestionnaire d'identification (Windows Credential Manager) ;
+- macOS : Trousseau.
+Sans trousseau sécurisé disponible (serveur sans session graphique, par exemple), l'enregistrement est REFUSÉ avec
+une explication : utilisez alors la variable d'environnement du fournisseur. Les clés ne sont jamais journalisées
+ni affichées (voir `mask`).
+
+Les anciennes versions pouvaient écrire `credentials.json` en clair : au premier accès avec un trousseau disponible,
+son contenu est transféré dans le trousseau puis le fichier est supprimé.
 """
 from __future__ import annotations
 
 import json
 import os
-import stat
-import sys
 
 from .paths import data_dir
 
 SERVICE = "eclipse-poe-neural-code"
 
+# Modules de trousseau qui ne chiffrent pas réellement (fichiers en clair, ou « chiffrés » avec une clé stockée à côté).
+_INSECURE_PREFIXES = ("keyring.backends.fail", "keyring.backends.null", "keyrings.alt")
 
-def _file():
+
+class KeyringUnavailable(RuntimeError):
+    """Aucun trousseau sécurisé : on refuse d'écrire la clé plutôt que de la stocker en clair."""
+
+
+def _legacy_file():
     return data_dir() / "credentials.json"
 
 
+def _secure(backend) -> bool:
+    mod = type(backend).__module__
+    if mod.startswith(_INSECURE_PREFIXES):
+        return False
+    if hasattr(backend, "backends"):  # ChainerBackend : au moins un trousseau réel derrière
+        return any(_secure(b) for b in backend.backends)
+    try:
+        return float(getattr(backend, "priority", 1)) > 0
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _keyring():
+    """Le module `keyring` si un trousseau SÉCURISÉ est utilisable, sinon None."""
     try:
         import keyring  # type: ignore
-        keyring.get_keyring()
-        return keyring
+        return keyring if _secure(keyring.get_keyring()) else None
     except Exception:  # noqa: BLE001
         return None
 
 
-def _read() -> dict[str, str]:
+def backend_name() -> str | None:
+    kr = _keyring()
+    if not kr:
+        return None
     try:
-        return json.loads(_file().read_text(encoding="utf-8"))
+        b = kr.get_keyring()
+        return getattr(b, "name", None) or type(b).__name__
     except Exception:  # noqa: BLE001
-        return {}
+        return "trousseau"
 
 
 def storage_kind() -> str:
-    return "trousseau du système" if _keyring() else "fichier credentials.json (droits 600, non chiffré)"
+    name = backend_name()
+    if name:
+        return f"trousseau du système ({name})"
+    return "aucun trousseau sécurisé disponible : clés seulement par variables d'environnement"
+
+
+def _migrate_legacy(kr) -> None:
+    f = _legacy_file()
+    if not f.is_file():
+        return
+    try:
+        data = json.loads(f.read_text(encoding="utf-8"))
+        for pid, key in data.items():
+            if key and not kr.get_password(SERVICE, pid):
+                kr.set_password(SERVICE, pid, key)
+        f.unlink()
+    except Exception:  # noqa: BLE001
+        pass  # on réessaiera au prochain accès ; le fichier n'est de toute façon plus jamais lu sans trousseau
 
 
 def get_key(provider_id: str, env: str | None = None) -> str | None:
     if env and os.environ.get(env):
         return os.environ[env].strip()
     kr = _keyring()
-    if kr:
-        try:
-            v = kr.get_password(SERVICE, provider_id)
-            if v:
-                return v
-        except Exception:  # noqa: BLE001
-            pass
-    return _read().get(provider_id) or None
+    if not kr:
+        return None
+    _migrate_legacy(kr)
+    try:
+        return kr.get_password(SERVICE, provider_id) or None
+    except Exception:  # noqa: BLE001
+        return None
 
 
-def set_key(provider_id: str, key: str) -> str:
-    key = key.strip()
+def set_key(provider_id: str, key: str, env: str | None = None) -> str:
+    """Enregistre la clé dans le trousseau ; lève KeyringUnavailable s'il n'y en a pas (jamais de repli en clair)."""
     kr = _keyring()
-    if kr:
-        try:
-            kr.set_password(SERVICE, provider_id, key)
-            return "trousseau du système"
-        except Exception:  # noqa: BLE001
-            pass
-    data = _read()
-    data[provider_id] = key
-    f = _file()
-    f.write_text(json.dumps(data), encoding="utf-8")
-    if sys.platform != "win32":
-        f.chmod(stat.S_IRUSR | stat.S_IWUSR)
-    return "fichier credentials.json (droits 600, non chiffré)"
+    if not kr:
+        hint = f" Définissez plutôt la variable d'environnement {env}." if env else ""
+        raise KeyringUnavailable(
+            "Aucun trousseau sécurisé disponible (Secret Service / KWallet sous Linux, Gestionnaire d'identification "
+            "sous Windows) : la clé n'est PAS enregistrée, pour ne jamais l'écrire en clair." + hint)
+    _migrate_legacy(kr)
+    kr.set_password(SERVICE, provider_id, key.strip())
+    return storage_kind()
 
 
 def delete_key(provider_id: str) -> bool:
-    ok = False
     kr = _keyring()
-    if kr:
-        try:
-            kr.delete_password(SERVICE, provider_id)
-            ok = True
-        except Exception:  # noqa: BLE001
-            pass
-    data = _read()
-    if provider_id in data:
-        del data[provider_id]
-        _file().write_text(json.dumps(data), encoding="utf-8")
-        ok = True
-    return ok
+    if not kr:
+        return False
+    try:
+        kr.delete_password(SERVICE, provider_id)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def mask(key: str | None) -> str:

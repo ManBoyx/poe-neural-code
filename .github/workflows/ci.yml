@@ -68,3 +68,14 @@ jobs:
       - run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
       - working-directory: android
         run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
+
+  audit:
+    name: "Audit des dépendances (OSV : RustSec, GitHub, PyPI, npm, Maven)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: "osv-scanner (avis acceptés et justifiés dans osv-scanner.toml)"
+        run: |
+          curl -fsSL -o osv-scanner https://github.com/google/osv-scanner/releases/download/v2.7.1/osv-scanner_linux_amd64
+          chmod +x osv-scanner
+          ./osv-scanner scan source --config osv-scanner.toml -L desktop/src-tauri/Cargo.lock -L desktop/package-lock.json

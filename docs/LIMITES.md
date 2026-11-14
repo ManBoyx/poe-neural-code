@@ -38,7 +38,7 @@
 - **Gemini CLI** est installé mais inutilisable ici (Google a retiré l'accès individuel) ; **Codex** et **Kiro** ne sont pas installés : leurs options sont des hypothèses étiquetées « NON vérifiées ».
 - **Mode délégué** : pas d'aperçu ni de confirmation des commandes de l'agent externe ; tokens ESTIMÉS (caractères/4) sans compteur ; la limite est appliquée sur l'estimation (arrêt du processus). Un agent
   peut avoir sa propre sandbox/approbation : Eclipse ne la pilote pas (OpenCode est lancé sans `--auto`).
-- **Clés** : fichier non chiffré à droits 600 si le trousseau système n'est pas disponible ; elles ne sont jamais journalisées ni transmises aux processus enfants (POE_API_KEY retirée de leur environnement).
+- **Clés** : uniquement dans le trousseau du système ou une variable d'environnement. Sans trousseau (serveur sans session graphique), l'enregistrement est refusé, jamais de repli en clair ; un ancien `credentials.json` est transféré dans le trousseau puis supprimé. Elles ne sont jamais journalisées ni transmises aux processus enfants (POE_API_KEY retirée de leur environnement).
 - Les points sont propres à Poe ; ailleurs le budget en points n'existe pas (limites de tokens uniquement).
 
 ## Bypass, /effort, fusion

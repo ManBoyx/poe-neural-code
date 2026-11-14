@@ -107,7 +107,11 @@ def cmd_login(args) -> int:
         return 1
     key = getpass.getpass(f"Clé d'API {spec.label} (saisie masquée) : ") if spec.key_required else None
     if key:
-        credentials.set_key(spec.id, key)
+        try:
+            credentials.set_key(spec.id, key, spec.key_env)
+        except credentials.KeyringUnavailable as e:
+            print(f"[échec] {e}", file=sys.stderr)
+            return 1
     prov = build_provider(spec)
     ok, msg = asyncio.run(prov.verify())  # type: ignore[attr-defined]
     asyncio.run(prov.aclose())

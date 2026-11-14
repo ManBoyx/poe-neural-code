@@ -149,7 +149,6 @@ def test_bypass_mode_consults_without_prompt(tmp_path, monkeypatch):
 
 
 def test_api_helper_measured_tokens_and_usd_from_catalog(tmp_path, monkeypatch):
-    monkeypatch.setattr(credentials, "_keyring", lambda: None)
     credentials.set_key("openrouter", "k")
 
     def h(req):
@@ -174,7 +173,6 @@ def test_api_helper_measured_tokens_and_usd_from_catalog(tmp_path, monkeypatch):
 
 
 def test_api_helper_without_key_is_reported(tmp_path, monkeypatch):
-    monkeypatch.setattr(credentials, "_keyring", lambda: None)
     sv, ev, asked, log = mk(tmp_path, monkeypatch, [[tc("ask_helper", {"helper": "api:openai/gpt-x", "prompt": "q"})], [TextDelta("ok")]], helpers=("api:openai/gpt-x",))
     go(sv)
     assert "clé absente" in sv.provider.calls[1]["messages"][-1]["content"]
