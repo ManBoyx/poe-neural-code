@@ -1,0 +1,12 @@
+# sshj et BouncyCastle chargent leurs algorithmes par réflexion : on les conserve entièrement.
+-keep class org.bouncycastle.** { *; }
+-keep class net.schmizz.** { *; }
+-keep class com.hierynomus.** { *; }
+-keep class org.connectbot.terminal.** { *; }
+-dontwarn org.bouncycastle.**
+-dontwarn org.slf4j.**
+-dontwarn javax.naming.**
+-dontwarn com.jcraft.jzlib.**
+-dontwarn org.ietf.jgss.**
+-dontwarn sun.security.x509.**
+-dontwarn javax.security.auth.login.**
