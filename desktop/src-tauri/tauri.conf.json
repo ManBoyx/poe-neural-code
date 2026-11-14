@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Eclipse",
+  "mainBinaryName": "eclipse-terminal",
+  "version": "0.2.0",
+  "identifier": "io.github.manboyx.eclipse",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Eclipse",
+        "width": 1200,
+        "height": 780,
+        "minWidth": 640,
+        "minHeight": 400,
+        "backgroundColor": "#0e0e18",
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["appimage", "deb", "rpm", "nsis", "msi"],
+    "category": "DeveloperTool",
+    "shortDescription": "Terminal de programmation avec agents IA",
+    "longDescription": "Eclipse héberge le moteur Eclipse (agents IA, budgets, mémoire) et vos shells dans une même fenêtre.",
+    "publisher": "ManBoyx",
+    "copyright": "© 2026 ManBoyx. Tous droits réservés.",
+    "license": "LicenseRef-Proprietary",
+    "licenseFile": "../../LICENSE",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "resources": { "../../build/engine/dist/eclipse-engine/": "engine/" },
+    "linux": {
+      "appimage": { "bundleMediaFramework": false },
+      "deb": { "section": "devel" },
+      "rpm": { "release": "1" }
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "nsis": { "installMode": "currentUser", "languages": ["French", "English"], "displayLanguageSelector": false },
+      "wix": { "language": ["fr-FR", "en-US"] }
+    }
+  }
+}

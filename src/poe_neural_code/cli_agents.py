@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .paths import data_dir
+from . import platform_compat as PC
 
 
 @dataclass
@@ -102,7 +103,7 @@ def detect(with_version: bool = False) -> list[Detected]:
         v = ""
         if path and with_version:
             try:
-                r = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=6)
+                r = subprocess.run(PC.resolve_argv([path, "--version"]), capture_output=True, text=True, timeout=6)
                 v = (r.stdout or r.stderr).strip().splitlines()[0][:60] if (r.stdout or r.stderr).strip() else ""
             except Exception:  # noqa: BLE001
                 v = ""

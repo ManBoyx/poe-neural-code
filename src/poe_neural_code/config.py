@@ -16,6 +16,8 @@ class Config(BaseModel):
     max_output_tokens: int = 4096
     max_agent_steps: int = 25
     command_timeout_s: int = 120
+    shell: str = "auto"  # shell de run_command : auto | bash | zsh | sh | pwsh | powershell | cmd | wsl
+    new_file_eol: str = "lf"  # fin de ligne des fichiers créés : lf | crlf | native (les fichiers existants gardent la leur)
     auto_accept_edits: bool = False
     sidebar_visible: bool = True
     # Taux points/USD saisi manuellement : sans lui, les points ne sont pas estimables.

@@ -23,6 +23,7 @@ from .provider.base import Done, ModelInfo, Notice, Provider, ProviderError, Tex
 from .session import Session
 from .tools.base import Tool, ToolContext, ToolResult
 from .tools.permissions import AdminRefused
+from . import platform_compat as PC
 
 log = get_logger()
 
@@ -160,7 +161,7 @@ class Agent:
         pack = build_context(self.memory, self.session.district_id, self.session.conversation_id, token_budget=max(500, int(usable * 0.25)))
         todo = "\n".join(f"- [{t.status}] {t.content}" for t in self.ctx.todos.items) or "(vide)"
         extra = extra_system(self.ext, self.session.agent, self.ctx.workspace.root, self.config)
-        return {"role": "system", "content": f"{SYSTEM}\n\nProject root: {self.ctx.workspace.root}\n\n{extra}\n\n{pack.text}\n\n## Todo list\n{todo}"}
+        return {"role": "system", "content": f"{SYSTEM}\n\nProject root: {self.ctx.workspace.root}\n{PC.environment_note(PC.pick_shell(self.config.shell))}\n\n{extra}\n\n{pack.text}\n\n## Todo list\n{todo}"}
 
     def _fit(self, msgs: list[dict]) -> list[dict]:
         """Respecte la capacité réelle : retire d'abord les anciens résultats d'outils (références conservées)."""

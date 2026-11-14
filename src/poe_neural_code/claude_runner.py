@@ -31,6 +31,7 @@ from .memory.engine import Memory
 from .session import Session
 from .tools.base import ToolContext
 from .tools.exec_tool import kill_tree
+from . import platform_compat as PC
 
 log = get_logger()
 MODEL_ID = "claude-code"  # identifiant de portée des budgets / du registre
@@ -77,7 +78,7 @@ class ClaudeCodeRunner:
         pack = build_context(self.memory, self.session.district_id, self.session.conversation_id, token_budget=3000)
         todo = "\n".join(f"- [{t.status}] {t.content}" for t in self.ctx.todos.items) or "(vide)"
         extra = extra_system(self.ext, self.session.agent, self.ctx.workspace.root, self.config)
-        return f"{SYSTEM_APPEND}\n\nProject root: {self.ctx.workspace.root}\n\n{extra}\n\n{pack.text}\n\n## Todo list\n{todo}"
+        return f"{SYSTEM_APPEND}\n\nProject root: {self.ctx.workspace.root}\n{PC.environment_note(PC.pick_shell(self.config.shell))}\n\n{extra}\n\n{pack.text}\n\n## Todo list\n{todo}"
 
     def _command(self, cfg_path: str, resume: bool, stream_input: bool = False) -> list[str]:
         c = self.config
@@ -155,9 +156,9 @@ class ClaudeCodeRunner:
         guard_failed = False
         try:
             proc = await asyncio.create_subprocess_exec(
-                *self._command(str(cfg_file), resume, stream_input=bool(attachments)), cwd=str(self.ctx.workspace.root), env=env, stdin=asyncio.subprocess.PIPE,
+                *PC.resolve_argv(self._command(str(cfg_file), resume, stream_input=bool(attachments))), cwd=str(self.ctx.workspace.root), env=env, stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=32 * 1024 * 1024,
-                **({"start_new_session": True} if os.name != "nt" else {}))
+                **PC.group_kwargs())
         except FileNotFoundError:
             self.budget.release(res)
             self.emit(StatusEvent(f"Commande introuvable : {self.claude_cmd[0]} (Claude Code installé ? option claude_bin).", "error"))

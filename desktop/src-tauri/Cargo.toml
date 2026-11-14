@@ -1,0 +1,32 @@
+[package]
+name = "eclipse-desktop"
+version = "0.2.0"
+description = "Eclipse : terminal de programmation assistée (moteur Eclipse + shells)"
+authors = ["ManBoyx"]
+license-file = "../../LICENSE"
+edition = "2021"
+publish = false
+
+[lib]
+name = "eclipse_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+portable-pty = "0.9"
+which = "7"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

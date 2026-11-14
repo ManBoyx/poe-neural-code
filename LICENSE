@@ -1,0 +1,17 @@
+Eclipse (nom de code POE · Neural Code)
+Copyright (c) 2026 ManBoyx. Tous droits réservés.
+
+LICENCE D'UTILISATION (logiciel propriétaire, distribué gratuitement sous forme binaire)
+
+1. Le titulaire accorde à toute personne qui obtient une copie binaire officielle d'Eclipse le droit, non exclusif,
+   gratuit et révocable, de l'installer et de l'utiliser, à titre personnel ou professionnel.
+2. Sauf accord écrit du titulaire, il est interdit : de redistribuer le logiciel modifié ; de le vendre ou de le
+   louer ; de le décompiler, désassembler ou d'en extraire le code source, hors des cas autorisés par la loi.
+3. Le code source n'est pas public. Sa communication à un tiers ne vaut pas licence.
+4. Le logiciel est fourni « en l'état », sans garantie d'aucune sorte. Le titulaire n'est pas responsable des
+   dommages liés à son utilisation, dans les limites permises par la loi applicable.
+5. Les composants tiers inclus restent soumis à leur propre licence (voir THIRD-PARTY-NOTICES), notamment :
+   Tauri, xterm.js, portable-pty (MIT/Apache-2.0), Textual, Rich, httpx, pydantic, mcp (MIT/BSD),
+   Python (PSF), police JetBrains Mono / Nerd Fonts (SIL Open Font License 1.1).
+
+Contact : https://github.com/ManBoyx

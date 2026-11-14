@@ -13,6 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .. import platform_compat as PC
 from .base import Tool, ToolContext, ToolResult
 from .permissions import AdminRefused, PermissionRequest, check_command
 
@@ -36,7 +37,7 @@ async def kill_tree(proc: asyncio.subprocess.Process) -> None:
     if proc.returncode is not None:
         return
     try:
-        if sys.platform == "win32":
+        if PC.is_windows():
             subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True)
         else:
             os.killpg(proc.pid, signal.SIGTERM)
@@ -50,7 +51,7 @@ async def kill_tree(proc: asyncio.subprocess.Process) -> None:
 
 class RunCommand(Tool):
     name = "run_command"
-    description = ("Exécute une commande shell dans la racine du projet (scripts, tests, builds). Délai par défaut 120 s. "
+    description = ("Exécute une commande dans la racine du projet (scripts, tests, builds), avec le shell indiqué dans le prompt système. Délai par défaut 120 s. "
                    "Confirmation demandée. Pas de sudo.")
     schema = {"type": "object", "properties": {"command": {"type": "string", "minLength": 1},
                                                "timeout_s": {"type": "integer", "minimum": 1, "maximum": 3600}},
@@ -68,13 +69,15 @@ class RunCommand(Tool):
         cmd = args["command"]
         timeout = args.get("timeout_s") or ctx.config.command_timeout_s
         env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
-        kw: dict = {}
-        if sys.platform == "win32":
-            kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        else:
-            kw["start_new_session"] = True
-        proc = await asyncio.create_subprocess_shell(cmd, cwd=str(ctx.workspace.root), env=env, stdin=asyncio.subprocess.DEVNULL,
-                                                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, **kw)
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        spec = PC.pick_shell(getattr(ctx.config, "shell", "auto"))
+        argv, line = PC.shell_invocation(cmd, spec)
+        common = dict(cwd=str(ctx.workspace.root), env=env, stdin=asyncio.subprocess.DEVNULL,
+                      stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, **PC.group_kwargs())
+        if argv is not None:
+            proc = await asyncio.create_subprocess_exec(*argv, **common)
+        else:  # cmd.exe : la ligne est passée telle quelle au shell système
+            proc = await asyncio.create_subprocess_shell(line, **common)
         chunks: list[bytes] = []
         size = 0
 

@@ -20,6 +20,7 @@ from .memory.engine import Memory, estimate_tokens
 from .session import Session
 from .tools.base import ToolContext
 from .tools.exec_tool import kill_tree
+from . import platform_compat as PC
 
 log = get_logger()
 
@@ -104,10 +105,10 @@ class DelegatedRunner:
             self.emit(StatusEvent(f"BYPASS : {'les confirmations de ' + a.label + ' sont désactivées (' + ' '.join(a.bypass_args) + ')' if a.bypass_args else a.label + ' n’a pas d’option bypass connue : ses propres confirmations restent actives'}.", "warn"))
         env = {k: v for k, v in os.environ.items() if k not in ("POE_API_KEY",)}
         try:
-            proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(self.ctx.workspace.root), env=env,
+            proc = await asyncio.create_subprocess_exec(*PC.resolve_argv(cmd), cwd=str(self.ctx.workspace.root), env=env,
                                                         stdin=asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL,
                                                         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=32 * 1024 * 1024,
-                                                        **({"start_new_session": True} if os.name != "nt" else {}))
+                                                        **PC.group_kwargs())
         except (FileNotFoundError, PermissionError) as e:
             self.budget.release(res)
             self.emit(StatusEvent(f"Lancement impossible : {e}", "error"))
