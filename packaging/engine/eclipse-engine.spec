@@ -4,14 +4,15 @@
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 hidden = []
-for pkg in ("poe_neural_code", "textual", "rich", "uvicorn", "mcp", "keyring", "httpx", "anyio"):
+# keyring choisit son trousseau à l'exécution : secretstorage/jeepney (Linux), win32ctypes (Windows) doivent être inclus.
+for pkg in ("poe_neural_code", "textual", "rich", "uvicorn", "mcp", "keyring", "httpx", "anyio", "secretstorage", "jeepney", "win32ctypes"):
     try:
         hidden += collect_submodules(pkg, filter=lambda n: not n.startswith("mcp.cli"))
     except Exception:
         pass
 
 datas = collect_data_files("textual") + collect_data_files("poe_neural_code")
-for dist in ("keyring", "mcp", "textual"):
+for dist in ("keyring", "mcp", "textual", "SecretStorage", "jeepney"):
     try:
         datas += copy_metadata(dist)
     except Exception:

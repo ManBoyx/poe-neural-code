@@ -26,7 +26,6 @@ def run_app(tmp_path, body, size=(150, 46)):
 
 
 def test_connect_flow_with_masked_key_verification_and_model_picker(tmp_path, monkeypatch):
-    monkeypatch.setattr(credentials, "_keyring", lambda: None)
     models = {"data": [{"id": "gpt-x", "context_length": 8000, "pricing": {"prompt": "0.000001", "completion": "0.000002"}}]}
 
     def h(req):
@@ -99,7 +98,6 @@ def test_provider_command_switches_to_detected_cli_agent_with_warning(tmp_path):
 
 
 def test_disconnect_forgets_key(tmp_path, monkeypatch):
-    monkeypatch.setattr(credentials, "_keyring", lambda: None)
     credentials.set_key("openai", "sk-x")
 
     async def body(app, pilot, prov):

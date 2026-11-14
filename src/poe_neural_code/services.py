@@ -127,7 +127,10 @@ class Services:
         spec = get_spec(provider_id)
         if spec is None:
             return False, f"fournisseur inconnu : {provider_id}"
-        where = credentials.set_key(spec.id, key) if key else None
+        try:
+            where = credentials.set_key(spec.id, key, spec.key_env) if key else None
+        except credentials.KeyringUnavailable as e:
+            return False, str(e)
         prov = build_provider(spec)
         ok, msg = await prov.verify()  # type: ignore[attr-defined]
         await prov.aclose()

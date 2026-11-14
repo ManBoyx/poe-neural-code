@@ -8,6 +8,12 @@
 - Mises à jour depuis GitHub, canaux stable et bêta. Avant d'installer : journal des changements affiché,
   empreinte SHA-256 contrôlée et signature vérifiée (liée au numéro de version). Toute vérification qui échoue entraîne un refus.
 - Script d'installation Linux (`install.sh`) : vérifie la signature et l'empreinte avant d'installer.
+- Application Android (Kotlin) : terminal SSH vers vos machines et Eclipse distant ; secrets chiffrés par l'Android
+  Keystore, empreinte des serveurs vérifiée, permission Internet uniquement, mises à jour hors Play Store.
+### Sécurité
+- Clés d'API uniquement dans le trousseau du système (Secret Service/KWallet, Gestionnaire d'identification Windows) :
+  plus aucun repli en clair. Un ancien `credentials.json` est transféré dans le trousseau puis supprimé.
+- Audit automatique des dépendances dans la CI (OSV, pip-audit, npm audit) ; bilan dans docs/SECURITE.md.
 ### Moteur
 - Commandes de l'IA sous Windows : PowerShell (commande encodée, accents et guillemets préservés), cmd en UTF-8 ou WSL ;
   le modèle est informé de la syntaxe à utiliser.

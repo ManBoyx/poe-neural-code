@@ -80,3 +80,32 @@ def tc(name, args, id_="c1"):
 
 
 MODEL = ModelInfo("m1", context_length=100_000, max_output=8000, prompt_price=1e-6, completion_price=3e-6, supports_tools=True)
+
+
+class FakeKeyring:
+    """Trousseau en mémoire : les tests n'écrivent JAMAIS dans le trousseau réel de l'utilisateur."""
+
+    def __init__(self):
+        self.store = {}
+
+    def get_password(self, service, user):
+        return self.store.get((service, user))
+
+    def set_password(self, service, user, pw):
+        self.store[(service, user)] = pw
+
+    def delete_password(self, service, user):
+        if (service, user) not in self.store:
+            raise KeyError(user)
+        del self.store[(service, user)]
+
+    def get_keyring(self):
+        return self
+
+
+@pytest.fixture(autouse=True)
+def fake_keyring(monkeypatch):
+    from poe_neural_code import credentials
+    kr = FakeKeyring()
+    monkeypatch.setattr(credentials, "_keyring", lambda: kr)
+    return kr
