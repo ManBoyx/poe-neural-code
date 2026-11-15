@@ -119,6 +119,7 @@ class DelegatedRunner:
             self.emit(StatusEvent(f"BYPASS : {'les confirmations de ' + a.label + ' sont désactivées (' + ' '.join(a.bypass_args) + ')' if a.bypass_args else a.label + ' n’a pas d’option bypass connue : ses propres confirmations restent actives'}.", "warn"))
         env = {k: v for k, v in os.environ.items() if k not in ("POE_API_KEY",)}
         env.update(mcp_env)
+        env["PWD"] = str(self.ctx.workspace.root)  # certains agents (OpenCode) prennent PWD, pas le dossier réel, comme dossier du projet
         try:
             proc = await asyncio.create_subprocess_exec(*PC.resolve_argv(cmd), cwd=str(self.ctx.workspace.root), env=env,
                                                         stdin=asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL,

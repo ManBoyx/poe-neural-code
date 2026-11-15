@@ -85,6 +85,18 @@ export function UsageBody({ u }: { u: Usage }) {
         </dl>
         <p class="legend">{estimated ? "Certaines valeurs sont estimées par Eclipse ; " : ""}mesuré = renvoyé par le fournisseur.</p>
       </section>
+      {u.savings && (
+        <section>
+          <h3>Tokens évités (estimation)</h3>
+          <dl>
+            <dt>Lectures partielles</dt><dd>{fmt(u.savings.partial_reads)}</dd>
+            <dt>Contexte allégé</dt><dd>{fmt(u.savings.context_trim)}</dd>
+            <dt>Total estimé</dt><dd><b>{fmt(u.savings.partial_reads + u.savings.context_trim)}</b></dd>
+            <dt>Cache de passages</dt><dd>{u.savings.cache_hits} réutilisation(s)</dd>
+          </dl>
+          <details class="method"><summary>Comment c'est calculé</summary><p>{u.savings.method}</p></details>
+        </section>
+      )}
       {u.envelopes.length > 0 && (
         <section>
           <h3>{u.subscription ? "Limite Eclipse" : "Budgets"}</h3>

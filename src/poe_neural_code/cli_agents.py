@@ -46,8 +46,10 @@ class CliAdapter:
 PRESETS: list[CliAdapter] = [
     CliAdapter("claude", "Claude Code", "claude", verified="testé en réel : outils d'Eclipse via pont MCP, tokens mesurés, fenêtres d'abonnement",
                integrated=True),
-    CliAdapter("opencode", "OpenCode", "opencode", ["run", "--format", "json"], "arg", output="opencode-json", model_flag="--model", session_flag="--session", file_flag="--file",
-               plan_args=["--agent", "plan"], bypass_args=["--auto"], verified="format JSON testé en réel (texte reçu ; aucun compteur de tokens → estimé)",
+    # --standalone : serveur privé (sinon `opencode run` se rattache au service OpenCode en arrière-plan, qui ignore notre
+    # configuration MCP et travaille dans SON dossier — constaté avec opencode 2.1.4 et `opencode serve --service`)
+    CliAdapter("opencode", "OpenCode", "opencode", ["run", "--standalone", "--format", "json"], "arg", output="opencode-json", model_flag="--model", session_flag="--session", file_flag="--file",
+               plan_args=["--agent", "plan"], bypass_args=["--auto"], verified="testé en réel (opencode 2.1.4, modèle gratuit) : format JSON, mémoire d'Eclipse par MCP, fichiers dans le dossier de travail",
                notes="sans --auto par défaut : les permissions de l'agent restent les siennes (--auto seulement en mode bypass d'Eclipse)"),
     CliAdapter("gemini", "Gemini CLI", "gemini", ["-o", "text"], "flag", "-p", model_flag="-m", plan_args=["--approval-mode", "plan"], bypass_args=["--approval-mode", "yolo"],
                verified="options lues dans --help ; NON testé (authentification refusée sur cette machine : offre individuelle retirée par Google)",

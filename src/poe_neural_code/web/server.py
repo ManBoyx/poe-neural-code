@@ -211,6 +211,16 @@ def search_conversations(sv: Services | None, q: str, limit: int = 30) -> list[d
     return out
 
 
+SAVINGS_METHOD = (
+    "Estimation, pas une mesure du fournisseur (1 token ≈ 4 caractères). "
+    "Lectures partielles : pour chaque read_file limité à des lignes, tokens du fichier entier moins tokens renvoyés. "
+    "Contexte allégé : à chaque requête, tokens des anciens résultats d'outils et vieux messages retirés du contexte "
+    "(ils restent archivés et rechargeables avec memory_load) ; compté à chaque envoi, car ils auraient été renvoyés. "
+    "Le compactage crée les résumés qui permettent cet allègement : il n'est pas compté une seconde fois. "
+    "Cache de passages : nombre de réutilisations, sans gain de tokens (il évite des lectures sur le disque). "
+    "Non compté : ce que la mémoire évite de relire (impossible à mesurer sans savoir ce que le modèle aurait fait).")
+
+
 class Hub:
     """Une conversation ouverte à la fois (comme une fenêtre de discussion), plus les abonnés au flux d'événements."""
 
@@ -350,8 +360,11 @@ class Hub:
             envs.append({"name": e.name, "kind": e.kind, "period_s": e.period_s, "renews_at": st["renews_at"],
                          "spent_points": st["spent_points"], "total_points": st["total_points"],
                          "spent_tokens": st["spent_tokens"], "token_limit": e.token_limit, "on_exhaust": e.on_exhaust})
+        sav = sv.session.savings
         out: dict = {"subscription": subscription, "mode_label": sv.mode_label, "session_tokens": dict(sv.agent.session_tokens),
-                     "totals": tot, "envelopes": envs, "now": time.time()}
+                     "totals": tot, "envelopes": envs, "now": time.time(),
+                     "savings": {"partial_reads": int(sav.get("partial_reads", 0)), "context_trim": int(sav.get("context_trim", 0)),
+                                 "cache_hits": getattr(sv.ctx.cache, "hits", 0), "method": SAVINGS_METHOD}}
         if sv.mode == "claude":
             info = sv.claude.info
             out["claude"] = {"model": info.model, "cache_read_tokens": info.cache_read_tokens, "cost_usd_equiv": info.cost_usd_equiv,
@@ -478,7 +491,8 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         q = request.query_params.get("q", "").strip()
         rows = sv.memory.items(did)
         items = [{"id": r["id"], "kind": r["kind"], "key": r["key"], "content": r["content"], "created": r["created"],
-                  "sources": [dict(x) for x in sv.memory.item_sources(r["id"])][:3]} for r in rows]
+                  "pinned": bool(r["pinned"]), "sources": [dict(x) for x in sv.memory.item_sources(r["id"])][:3]} for r in rows]
+        items.sort(key=lambda i: not i["pinned"])
         stats = {
             "items": len(items),
             "summaries": sv.memory.one("SELECT COUNT(*) n FROM summaries WHERE district_id=?", (did,))["n"],
@@ -498,6 +512,27 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
             return bad("note inconnue", 404)
         hub.sv.memory.set_item_status(iid, "retracted")  # retirée du contexte ; la ligne reste (historique)
         return JSONResponse({"ok": True})
+
+    async def memory_edit(request):
+        """Modifier le texte d'une note (nouvelle version, historique conservé) et/ou l'épingler."""
+        if (r := need_open()):
+            return r
+        sv = hub.sv
+        iid = int(request.path_params["iid"])
+        row = sv.memory.one("SELECT district_id FROM items WHERE id=? AND status='active'", (iid,))
+        if row is None or row["district_id"] != sv.session.district_id:
+            return bad("note inconnue", 404)
+        d = await body(request)
+        try:
+            if isinstance(d.get("content"), str):
+                if not d["content"].strip():
+                    return bad("une note ne peut pas être vide (utilisez « Oublier »)")
+                iid = sv.memory.edit_item(iid, d["content"][:4000])
+            if "pinned" in d:
+                sv.memory.set_pinned(iid, bool(d["pinned"]))
+        except ValueError as e:
+            return bad(str(e))
+        return JSONResponse({"ok": True, "id": iid})
 
     async def files(_request):
         if (r := need_open()):
@@ -809,7 +844,8 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         Route("/api/connections", connections), Route("/api/open", open_, methods=["POST"]),
         Route("/api/sessions/{sid}", remove, methods=["DELETE"]), Route("/api/new_discussion", new_discussion, methods=["POST"]),
         Route("/api/settings", settings, methods=["POST"]), Route("/api/memory", memory),
-        Route("/api/memory/{iid:int}", forget, methods=["DELETE"]), Route("/api/files", files), Route("/api/file", file),
+        Route("/api/memory/{iid:int}", forget, methods=["DELETE"]),
+        Route("/api/memory/{iid:int}/edit", memory_edit, methods=["POST"]), Route("/api/files", files), Route("/api/file", file),
         Route("/api/upload", upload, methods=["POST"]), Route("/api/auto_edits", auto_edits, methods=["POST"]),
         Route("/api/retry", retry, methods=["POST"]), Route("/api/log", client_log, methods=["POST"]), Route("/api/logs", logs), Route("/api/health", health),
         Route("/api/changes", changes), Route("/api/changes/revert", revert_all, methods=["POST"]),

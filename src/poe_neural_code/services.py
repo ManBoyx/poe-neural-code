@@ -100,9 +100,12 @@ class Services:
                 raise KeyError(aid)
             r = DelegatedRunner(self.config, self.budget, self.memory, self.ctx, self.session, self._emit or (lambda e: None), a, shutil.which(a.binary))
             r.ext = self.ext
-            # Accès direct à la mémoire (pont MCP limité aux 3 outils mémoire) : prêt côté Eclipse (DelegatedRunner.memory_bridge),
-            # mais OpenCode 2.1.4 n'a chargé notre serveur MCP ni par OPENCODE_CONFIG_CONTENT ni par OPENCODE_CONFIG lors des essais :
-            # non activé tant que ce n'est pas vérifié. Les agents délégués reçoivent le guide d'économie et les notes du projet.
+            if aid == "opencode":
+                # OpenCode garde ses outils de fichiers et accède à la mémoire d'Eclipse (MCP local, jeton, 3 outils seulement).
+                # Vérifié avec opencode 2.1.4 (--standalone + OPENCODE_CONFIG_CONTENT, format "mcp": {"servers": …}) : appel réel
+                # de eclipse_memory_note constaté. Les autres agents délégués : notes du projet seulement (non vérifiés).
+                from .claude_bridge import EclipseBridge
+                r.memory_bridge = EclipseBridge(lambda: self.agent, allowed={"memory_search", "memory_load", "memory_note"})
             self.delegated[aid] = r
         return self.delegated[aid]
 
@@ -360,7 +363,7 @@ def create_services(workspace: str | Path, *, resume: str | None = None, provide
     todos.replace(sess.todos) if sess.todos else None
     ctx = ToolContext(workspace=ws, config=cfg, permissions=PermissionManager(asker, cfg.auto_accept_edits), todos=todos,
                       cancel=asyncio.Event(), memory=mem, district_id=sess.district_id, conversation_id=sess.conversation_id,
-                      cache=WorkingCache())
+                      cache=WorkingCache(), savings=sess.savings)
     mcp = McpManager(load_mcp_config(cfg.mcp_config))
     agent = Agent(prov, cfg, bud, mem, ctx, builtin_tools(), sess, {}, lambda e: None)
     bridge = EclipseBridge(lambda: agent)

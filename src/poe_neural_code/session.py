@@ -30,6 +30,7 @@ class Session:
     model_options: dict = field(default_factory=dict)  # modèle -> {réglage: valeur}
     undo_stack: list = field(default_factory=list)
     redo_stack: list = field(default_factory=list)
+    savings: dict = field(default_factory=dict)  # tokens évités, estimation : partial_reads, context_trim (voir web/server.py)
     baseline_tree: str | None = None  # état des fichiers au début de la conversation (diff global, « Tout annuler »)
 
     @staticmethod

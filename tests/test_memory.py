@@ -160,3 +160,12 @@ def test_should_compact_depends_on_window_and_reserve():
     assert not should_compact(100_000, 4000, 0.25, 10_000, 0.6)
     assert should_compact(100_000, 4000, 0.25, 50_000, 0.6)
     assert should_compact(8_000, 4000, 0.5, 100, 0.6)  # fenêtre trop petite pour le travail attendu
+
+
+def test_exact_duplicate_notes_are_not_stored_twice(mem):
+    d = mem.ensure_district("dup", "/dup")
+    a, _ = mem.add_item(d, "decision", "Le serveur web sera écrit avec Flask")
+    b, _ = mem.add_item(d, "decision", "  le serveur web sera écrit avec  Flask ")
+    c, _ = mem.add_item(d, "fact", "Le serveur web sera écrit avec Flask")  # autre type : note distincte
+    assert a == b and c != a
+    assert len(mem.items(d)) == 2

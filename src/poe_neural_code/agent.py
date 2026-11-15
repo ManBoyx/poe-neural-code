@@ -186,6 +186,10 @@ class Agent:
                 del out[1]
         while len(out) > 1 and out[1].get("role") == "tool":  # jamais de résultat d'outil orphelin en tête
             del out[1]
+        removed = size(msgs) - size(out)
+        if removed > 0:  # contexte allégé pour CETTE requête (estimation, comptée à chaque envoi)
+            sv = self.ctx.savings
+            sv["context_trim"] = sv.get("context_trim", 0) + removed
         return out
 
     async def _next(self, aiter):

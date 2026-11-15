@@ -72,6 +72,7 @@ class ToolContext:
     memory: Any = None  # memory.engine.Memory
     district_id: int | None = None
     conversation_id: int | None = None
+    savings: dict = field(default_factory=dict)  # tokens évités (estimation) : partagé avec Session.savings
     cache: Any = None  # memory.cache.WorkingCache
     on_output: Callable[[str], None] | None = None  # sortie de commande en direct
 

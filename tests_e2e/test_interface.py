@@ -196,3 +196,24 @@ def test_diff_global_et_tout_annuler(page, server):
     expect(page.locator(".toast")).to_contain_text("restauré")
     assert not (server["project"] / "nouveau.md").exists()
     assert (server["project"] / "README.md").read_text(encoding="utf-8") == "# Démo\n"
+
+
+# --- Étape C ---------------------------------------------------------------------------------------------------------
+
+def test_memoire_modifier_et_epingler(page):
+    page.get_by_title("Mémoire du dossier").click()
+    note = page.locator(".note-item", has_text="Flask")
+    note.get_by_role("button", name="Modifier").click()
+    page.locator(".ni-edit").fill("Le site utilise Flask 3 plutôt que Django.")
+    page.keyboard.press("Control+Enter")
+    expect(page.locator(".note-item", has_text="Flask 3")).to_be_visible()
+    page.locator(".note-item", has_text="Flask 3").get_by_role("button", name="Épingler").click()
+    expect(page.locator(".memory section").first).to_contain_text("Épinglées")
+    expect(page.locator(".note-item.pinned")).to_contain_text("Flask 3")
+
+
+def test_conso_tokens_evites_et_methode(page):
+    page.get_by_title("Consommation").click()
+    expect(page.locator(".usage")).to_contain_text("Tokens évités (estimation)")
+    page.get_by_text("Comment c'est calculé").click()
+    expect(page.locator(".method p")).to_contain_text("Estimation, pas une mesure du fournisseur")
