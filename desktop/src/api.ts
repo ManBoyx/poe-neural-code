@@ -16,7 +16,7 @@ export interface State {
   mode?: string; mode_label?: string; is_cli?: boolean; configured?: boolean;
   model?: string | null; models?: ModelEntry[]; effort?: Effort | null; agents?: string[];
   permissions?: string; todos?: Todo[]; pending_permissions?: PermissionEvent[];
-  auto_edits?: boolean; context?: { used: number; window: number | null };
+  auto_edits?: boolean; context?: { used: number; window: number | null }; ref_limit?: number;
 }
 export interface MemoryItem { id: number; kind: string; key: string | null; content: string; created: number; sources: Record<string, unknown>[] }
 export interface MemoryView {
@@ -25,6 +25,9 @@ export interface MemoryView {
 }
 export interface FileEntry { path: string; size: number; mtime: number; recent: boolean }
 export interface FilePreview { path: string; size: number; text?: string; image?: string; binary?: boolean; truncated?: boolean }
+export interface Changes { available: boolean; reason?: string; shadow?: boolean; files: { status: string; path: string }[]; diff: string; truncated: boolean }
+export interface SearchResult { id: string; title: string; workspace: string; snippet: string; ts: number | null }
+export interface PromptCommand { name: string; description: string; kind: string; usage: string }
 export type Upload = { kind: "image"; path: string; name: string; size: number } | { kind: "text"; name: string; text: string; size: number };
 export type TranscriptItem =
   | { kind: "user" | "assistant"; text: string }
@@ -134,6 +137,16 @@ export const api = {
   file: (path: string) => call<FilePreview>("GET", `/api/file?path=${encodeURIComponent(path)}`),
   upload: (name: string, data: string) => call<Upload>("POST", "/api/upload", { name, data }),
   autoEdits: (on: boolean) => call<State>("POST", "/api/auto_edits", { on }),
+  changes: () => call<Changes>("GET", "/api/changes"),
+  revertAll: () => call<{ ok: boolean; touched: string[] }>("POST", "/api/changes/revert", {}),
+  exportMd: () => call<{ markdown: string; filename: string }>("GET", "/api/export"),
+  exportTo: (path: string) => call<{ ok: boolean; path: string }>("POST", "/api/export", { path }),
+  search: (q: string) => call<{ results: SearchResult[] }>("GET", `/api/search?q=${encodeURIComponent(q)}`),
+  commands: () => call<{ commands: PromptCommand[] }>("GET", "/api/commands"),
+  command: (name: string, args: string) => call<{ ok: boolean; shown: string }>("POST", "/api/command", { name, args }),
+  editLast: () => call<{ ok: boolean; text: string; items: TranscriptItem[] }>("POST", "/api/edit", {}),
+  compact: () => call<{ ok: boolean; message: string }>("POST", "/api/compact", {}),
+  fork: () => call<State>("POST", "/api/fork", {}),
   retry: () => call<{ ok: boolean; text: string; items: TranscriptItem[] }>("POST", "/api/retry", {}),
   interrupt: () => call<{ ok: boolean }>("POST", "/api/interrupt", {}),
   permission: (id: string, decision: "once" | "session" | "deny") => call("POST", "/api/permission", { id, decision }),

@@ -329,6 +329,12 @@ class Services:
         self.budget.close()
 
 
+def _shadow_dir(root: Path) -> Path:
+    import hashlib
+    from .paths import data_dir
+    return data_dir() / "snapshots" / hashlib.sha256(str(Path(root).resolve()).encode()).hexdigest()[:16]
+
+
 def create_services(workspace: str | Path, *, resume: str | None = None, provider: Provider | None = None,
                     asker: Asker | None = None, config: Config | None = None, memory: Memory | None = None,
                     budget: Budget | None = None) -> Services:
@@ -360,7 +366,7 @@ def create_services(workspace: str | Path, *, resume: str | None = None, provide
     bridge = EclipseBridge(lambda: agent)
     claude = ClaudeCodeRunner(cfg, bud, mem, ctx, sess, lambda e: None, bridge)
     ext = Extensions(ws.root)
-    sv = Services(cfg, mem, bud, prov, sess, ctx, agent, mcp, claude, bridge, ext, Snapshots(ws.root))
+    sv = Services(cfg, mem, bud, prov, sess, ctx, agent, mcp, claude, bridge, ext, Snapshots(ws.root, shadow_dir=_shadow_dir(ws.root)))
     if sess.mode not in ("claude",) and not sess.mode.startswith("cli:"):
         sv.api_id = sess.mode
         if provider is None and sess.mode != "poe" and get_spec(sess.mode):

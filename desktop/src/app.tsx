@@ -1,14 +1,16 @@
 // Eclipse Desktop : barre latérale des conversations, fil de discussion, saisie, et réglages.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { api, connect, events, health, isDesktop, openLogs, restartEngine, type Info, type PermissionEvent, type State, type TranscriptItem, type Upload, type Usage } from "./api";
+import { api, connect, events, health, isDesktop, openLogs, restartEngine, type FileEntry, type Info, type PermissionEvent, type PromptCommand, type SearchResult, type State, type TranscriptItem, type Upload, type Usage } from "./api";
 import { I } from "./icons";
 import { ConnectionsModal, DEFAULT_PREFS, ModelPicker, SettingsModal, UsageBody, type Prefs } from "./panels";
-import { Dialog, FilePreviewModal, FilesPanel, MemoryPanel, Palette, type Command, type DialogSpec } from "./side";
+import { ChangesModal, Dialog, FilePreviewModal, FilesPanel, MemoryPanel, Palette, Suggest, type Command, type DialogSpec, type Suggestion } from "./side";
 import { Thread, type Item } from "./thread";
 import { UpdateDialog, UpdatePill, UpdateSettings, startUpdates } from "./updates";
 
 const basename = (p: string) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p;
 
+const fsize = (n: number) => (n < 1024 ? `${n} o` : n < 1048576 ? `${(n / 1024).toFixed(0)} Ko` : `${(n / 1048576).toFixed(1)} Mo`);
+const REF_RX = /(^|\s)@([\w./\-]+)/g;
 const kfmt = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)} k` : String(n));
 
 function readAsBase64(f: File): Promise<string> {
@@ -56,6 +58,11 @@ export function App() {
   const [attachments, setAttachments] = useState<Upload[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [files, setFiles] = useState<FileEntry[]>([]);
+  const [promptCmds, setPromptCmds] = useState<PromptCommand[]>([]);
+  const [sug, setSug] = useState<{ items: Suggestion[]; sel: number; kind: "file" | "cmd"; start: number; end: number } | null>(null);
+  const [hits, setHits] = useState<SearchResult[]>([]);
+  const [changesOpen, setChangesOpen] = useState(false);
   const [modal, setModal] = useState<"" | "connections" | "settings" | "update">("");
   const [picker, setPicker] = useState(false);
   const [sidebar, setSidebar] = useState(true);
@@ -80,10 +87,23 @@ export function App() {
   const refreshInfo = useCallback(() => api.info().then(setInfo).catch(() => undefined), []);
   const refreshUsage = useCallback(() => api.usage().then(setUsage).catch(() => setUsage(null)), []);
   // Rafraîchissements en arrière-plan : un échec (moteur en panne) est signalé par la bannière, pas par une exception.
-  const refreshState = useCallback(async (): Promise<State | null> => {
+  // Un instantané d'état demandé AVANT un événement ne doit pas effacer ce que cet événement a apporté
+  // (ex. une demande d'autorisation arrivée pendant la requête) : on compte les événements reçus.
+  const evSeq = useRef(0);
+  const refreshState = useCallback(async function refresh(authoritative = false, attempt = 0): Promise<State | null> {
+    const seq = evSeq.current;
     try {
       const s = await api.state();
-      setState(s); setBusy(Boolean(s.busy)); setPending(s.pending_permissions ?? []);
+      if (seq === evSeq.current) {
+        setState(s);
+        setBusy(Boolean(s.busy));
+        setPending(s.pending_permissions ?? []);
+      } else if (authoritative && attempt < 3) {
+        return refresh(true, attempt + 1);  // des événements sont arrivés pendant la requête : instantané périmé, on redemande
+      } else {
+        setState((cur) => ({ ...s, busy: cur.busy }));
+        setPending((ps) => [...ps, ...(s.pending_permissions ?? []).filter((x) => !ps.some((p) => p.id === x.id))]);
+      }
       return s;
     } catch { return null; }
   }, []);
@@ -101,7 +121,7 @@ export function App() {
     unsub.current?.();
     unsub.current = events(onEvent, (ok) => {
       setOnline(ok);
-      if (ok) { setDown(false); refreshState(); }
+      if (ok) { setDown(false); refreshState(true); }  // (re)connexion : l'état du moteur fait foi
       else setTimeout(async () => { if (!(await health())) setDown(true); }, 1500);
     });
   };
@@ -147,6 +167,7 @@ export function App() {
   }, []);
 
   const onEvent = (e: any) => {
+    evSeq.current += 1;
     switch (e.type) {
       case "delta":
         setItems((xs) => {
@@ -242,6 +263,22 @@ export function App() {
   const send = async () => {
     const t = text.trim();
     if ((!t && attachments.length === 0) || busy || !state.open) return;
+    if (t.startsWith("/") && attachments.length === 0) {
+      const [name, ...rest] = t.slice(1).split(/\s+/);
+      const args = rest.join(" ").trim();
+      if (name in slash) { setText(""); setSug(null); await slash[name].run(args); return; }
+      let known = promptCmds.some((c) => c.name === name);
+      if (!known) {  // liste pas encore chargée (conversation tout juste ouverte) : on la redemande avant de conclure
+        try { const r = await api.commands(); setPromptCmds(r.commands); known = r.commands.some((c) => c.name === name); } catch { /* moteur */ }
+      }
+      if (known) {
+        setText(""); setSug(null); setItems((xs) => [...xs, { kind: "user", text: t }]); setBusy(true);
+        try { await api.command(name, args); } catch (e: any) { setBusy(false); say(e.message); }
+        return;
+      }
+      say(`Commande inconnue : /${name} (tapez / pour la liste)`);
+      return;
+    }
     const texts = attachments.filter((a): a is Extract<Upload, { kind: "text" }> => a.kind === "text");
     const images = attachments.filter((a): a is Extract<Upload, { kind: "image" }> => a.kind === "image");
     const fence = "`".repeat(3);
@@ -268,6 +305,32 @@ export function App() {
       setBusy(true);
     } catch (e: any) { say(e.message); }
   };
+  const undoLast = async () => { try { const r = await api.undo(); if (r.ok) setItems(fromTranscript(r.items)); else say("Rien à annuler."); } catch (e: any) { say(e.message); } };
+  const redoLast = async () => { try { const r = await api.redo(); if (r.ok) setItems(fromTranscript(r.items)); else say("Rien à rétablir."); } catch (e: any) { say(e.message); } };
+  const editLast = async () => {
+    try { const r = await api.editLast(); setItems(fromTranscript(r.items)); setText(r.text); input.current?.focus(); }
+    catch (e: any) { say(e.message); }
+  };
+  const copyLast = () => {
+    const last = [...items].reverse().find((x) => x.kind === "assistant") as { text: string } | undefined;
+    if (last) { navigator.clipboard.writeText(last.text); say("Dernière réponse copiée."); } else say("Aucune réponse à copier.");
+  };
+  const compactNow = async () => { try { say((await api.compact()).message); setRefreshKey((k) => k + 1); } catch (e: any) { say(e.message); } };
+  const forkConv = async () => { try { await api.fork(); await loadConversation(); refreshInfo(); say("Conversation dupliquée."); } catch (e: any) { say(e.message); } };
+  const exportConv = async () => {
+    try {
+      const { markdown, filename } = await api.exportMd();
+      if (isDesktop) {
+        const { save } = await import("@tauri-apps/plugin-dialog");
+        const path = await save({ defaultPath: filename, filters: [{ name: "Markdown", extensions: ["md"] }], title: "Exporter la conversation" });
+        if (path) say(`Exportée : ${(await api.exportTo(path)).path}`);
+      } else {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([markdown], { type: "text/markdown;charset=utf-8" }));
+        a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+      }
+    } catch (e: any) { say(e.message); }
+  };
   const togglePanel = (p: "usage" | "memory" | "files") => { setPanel(panel === p ? "" : p); if (p === "usage") refreshUsage(); setRefreshKey((k) => k + 1); };
   const remove = async (id: string, title: string) => {
     if (!(await ask({ title: "Supprimer la conversation ?", message: `« ${title} » sera retirée de la liste. Les fichiers du dossier et la mémoire du projet sont conservés.`, confirm: "Supprimer", danger: true }))) return;
@@ -277,6 +340,90 @@ export function App() {
     const t = await ask({ title: "Renommer la conversation", input: state.session?.title || "", confirm: "Renommer" });
     if (typeof t === "string") { await api.rename(t); refreshState(); refreshInfo(); }
   };
+
+  // Fichiers (pour @) et commandes-prompts (pour /) de la conversation ouverte
+  useEffect(() => {
+    if (phase !== "ready" || !state.open) { setFiles([]); setPromptCmds([]); return; }
+    api.files().then((r) => setFiles(r.files)).catch(() => undefined);
+    api.commands().then((r) => setPromptCmds(r.commands)).catch(() => undefined);
+  }, [phase, state.session?.id, refreshKey]);
+
+  // Recherche dans le contenu des conversations (en plus des titres)
+  useEffect(() => {
+    const q = filter.trim();
+    if (phase !== "ready" || q.length < 2) { setHits([]); return; }
+    const t = setTimeout(() => api.search(q).then((r) => setHits(r.results)).catch(() => setHits([])), 300);
+    return () => clearTimeout(t);
+  }, [filter, phase]);
+
+  // Commandes « / » de l'application (équivalents des commandes du CLI) ; les commandes-prompts viennent du moteur
+  const slash: Record<string, { desc: string; args?: boolean; run: (args: string) => void | Promise<void> }> = {
+    new: { desc: "Nouvelle conversation dans ce dossier", run: newConversation },
+    discussion: { desc: "Nouvelle discussion (nouveau dossier de travail)", run: newDiscussion },
+    models: { desc: "Choisir le modèle", run: () => setPicker(true) },
+    model: { desc: "Choisir un modèle : /model NOM", args: true, run: async (a) => { if (!a) return setPicker(true); try { setState(await api.model(a)); } catch (e: any) { say(e.message); } } },
+    connect: { desc: "Connexions : agents installés et clés d'API", run: () => setModal("connections") },
+    mode: { desc: "Mode : /mode build | plan", args: true, run: async (a) => { try { setState(await api.agent(a || (state.session?.agent === "plan" ? "build" : "plan"))); } catch (e: any) { say(e.message); } } },
+    undo: { desc: "Annuler le dernier échange (et ses fichiers)", run: undoLast },
+    redo: { desc: "Rétablir l'échange annulé", run: redoLast },
+    retry: { desc: "Relancer le dernier message", run: retry },
+    edit: { desc: "Modifier le dernier message", run: editLast },
+    export: { desc: "Exporter la conversation en Markdown", run: exportConv },
+    diff: { desc: "Modifications des fichiers depuis le début (diff, tout annuler)", run: () => setChangesOpen(true) },
+    compact: { desc: "Résumer l'ancien fil maintenant (archives conservées)", run: compactNow },
+    fork: { desc: "Dupliquer la conversation", run: forkConv },
+    copy: { desc: "Copier la dernière réponse", run: copyLast },
+    rename: { desc: "Renommer la conversation", run: rename },
+    memory: { desc: "Mémoire du dossier", run: () => togglePanel("memory") },
+    files: { desc: "Fichiers du dossier", run: () => togglePanel("files") },
+    usage: { desc: "Consommation", run: () => togglePanel("usage") },
+    thinking: { desc: "Afficher / masquer la réflexion du modèle", run: () => setPrefs({ ...prefs, showThinking: !prefs.showThinking }) },
+    auto: { desc: "Modifications automatiques : activer / désactiver", run: async () => setState(await api.autoEdits(!state.auto_edits)) },
+    help: { desc: "Toutes les commandes (palette)", run: () => setPalette(true) },
+  };
+
+  const refLimit = state.ref_limit ?? 40000;
+  const updateSuggest = (value: string, caret: number) => {
+    if (value.startsWith("/") && !value.slice(0, caret).includes(" ")) {
+      const q = value.slice(1, caret).toLowerCase();
+      const all: Suggestion[] = [
+        ...Object.entries(slash).map(([n, v]) => ({ key: `a:${n}`, label: `/${n}`, detail: v.desc, icon: I.palette })),
+        ...promptCmds.filter((c) => !(c.name in slash)).map((c) => ({ key: `p:${c.name}`, label: `/${c.name}`, detail: c.description, icon: I.chat })),
+      ];
+      const items = all.filter((x) => x.label.slice(1).toLowerCase().startsWith(q)).slice(0, 10);
+      setSug(items.length ? { items, sel: 0, kind: "cmd", start: 0, end: caret } : null);
+      return;
+    }
+    const m = value.slice(0, caret).match(/(^|\s)@([\w./\-]*)$/);
+    if (m) {
+      const q = m[2].toLowerCase();
+      const items = files.filter((f) => f.path.toLowerCase().includes(q)).sort((a, b) => a.path.length - b.path.length).slice(0, 8)
+        .map((f) => ({ key: `f:${f.path}`, label: `@${f.path}`, detail: fsize(f.size), icon: I.fileCode, warn: f.size > refLimit ? "sera tronqué" : undefined }));
+      setSug(items.length ? { items, sel: 0, kind: "file", start: caret - m[2].length - 1, end: caret } : null);
+      return;
+    }
+    setSug(null);
+  };
+  const pickSuggest = (x: Suggestion) => {
+    if (!sug) return;
+    if (sug.kind === "cmd" && x.key.startsWith("a:") && !slash[x.key.slice(2)].args) {
+      setText(""); setSug(null); slash[x.key.slice(2)].run("");
+      return;
+    }
+    const insert = `${x.label} `;
+    const next = text.slice(0, sug.start) + insert + text.slice(sug.end);
+    setText(next); setSug(null);
+    requestAnimationFrame(() => { const el = input.current; if (el) { el.focus(); el.selectionStart = el.selectionEnd = sug.start + insert.length; } });
+  };
+  const refs = useMemo(() => {
+    const out: { path: string; size: number | null }[] = [];
+    for (const m of text.matchAll(REF_RX)) {
+      const path = m[2].replace(/[.,;:!?]+$/, "");
+      if (out.some((r) => r.path === path)) continue;
+      out.push({ path, size: files.find((f) => f.path === path)?.size ?? null });
+    }
+    return out;
+  }, [text, files]);
 
   // Raccourcis clavier globaux
   useEffect(() => {
@@ -308,6 +455,17 @@ export function App() {
     { id: "undo", label: "Annuler le dernier échange", icon: I.undo, enabled: state.open && !busy,
       run: async () => { const r = await api.undo(); if (r.ok) setItems(fromTranscript(r.items)); else say("Rien à annuler."); } },
     { id: "rename", label: "Renommer la conversation", icon: I.edit, run: rename, enabled: state.open },
+    { id: "diff", label: "Modifications des fichiers (diff, tout annuler)", hint: "/diff", icon: I.diff, run: () => setChangesOpen(true), enabled: state.open },
+    { id: "export", label: "Exporter la conversation en Markdown", hint: "/export", icon: I.export, run: exportConv, enabled: state.open },
+    { id: "edit", label: "Modifier le dernier message", hint: "/edit", icon: I.edit, run: editLast, enabled: state.open && !busy },
+    { id: "redo", label: "Rétablir l'échange annulé", hint: "/redo", icon: I.history, run: redoLast, enabled: state.open && !busy },
+    { id: "copy", label: "Copier la dernière réponse", hint: "/copy", icon: I.copy, run: copyLast, enabled: state.open },
+    { id: "compact", label: "Résumer l'ancien fil maintenant", hint: "/compact", icon: I.database, run: compactNow, enabled: state.open && !busy },
+    { id: "fork", label: "Dupliquer la conversation", hint: "/fork", icon: I.newFile, run: forkConv, enabled: state.open && !busy },
+    { id: "thinking", label: prefs.showThinking ? "Masquer la réflexion du modèle" : "Afficher la réflexion du modèle", hint: "/thinking", icon: I.thinking,
+      run: () => setPrefs({ ...prefs, showThinking: !prefs.showThinking }) },
+    ...promptCmds.map((c) => ({ id: `p-${c.name}`, label: `/${c.name} — ${c.description}`, icon: I.chat, enabled: state.open && !busy,
+      run: () => { setText(`/${c.name} `); input.current?.focus(); } })),
     { id: "theme", label: "Changer de thème (sombre / clair)", icon: I.palette,
       run: () => setPrefs({ ...prefs, theme: document.documentElement.dataset.theme === "dark" ? "light" : "dark" }) },
     { id: "side", label: "Afficher / masquer la barre latérale", hint: "Ctrl+B", icon: I.sidebar, run: () => setSidebar((v) => !v) },
@@ -409,7 +567,19 @@ export function App() {
               ))}
             </div>
           ))}
-          {groups.length === 0 && <p class="muted small pad">Aucune conversation.</p>}
+          {groups.length === 0 && hits.length === 0 && <p class="muted small pad">Aucune conversation.</p>}
+          {hits.length > 0 && (
+            <div>
+              <div class="side-group">Dans les messages</div>
+              {hits.map((h) => (
+                <div key={`h-${h.id}`} class={`conv hitconv ${state.session?.id === h.id ? "on" : ""}`} onClick={() => resume(h.id)} role="button" tabIndex={0}
+                  onKeyDown={(e) => e.key === "Enter" && resume(h.id)}>
+                  <span class="conv-title">{h.title}</span>
+                  <span class="conv-snippet">{h.snippet.replace(/^\[\w+\]\s*/, "")}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <div class="side-bottom">
           <button class="side-btn" onClick={() => setModal("connections")} disabled={!state.open}><span class="ico">{I.plug}</span> Connexions</button>
@@ -453,7 +623,7 @@ export function App() {
             <button class="btn primary" disabled={restarting} onClick={restart}>{restarting ? "Relance…" : isDesktop ? "Relancer le moteur" : "Réessayer"}</button>
           </div>
         )}
-        <Thread items={items} pending={pending} busy={busy} empty={welcome} onRetry={state.open ? retry : undefined}
+        <Thread items={items} pending={pending} busy={busy} empty={welcome} onRetry={state.open ? retry : undefined} showThinking={prefs.showThinking}
           onDecide={(id, d) => api.permission(id, d).catch((e) => say(e.message))} />
 
         {state.open && (
@@ -471,12 +641,28 @@ export function App() {
               )}
               <textarea ref={input} rows={1} value={text} placeholder={state.configured ? "Écrivez à Eclipse…   (Ctrl+K : commandes)" : "Configurez d'abord une connexion (Connexions)"}
                 onPaste={(e) => { const fs = Array.from(e.clipboardData?.files ?? []); if (fs.length) { e.preventDefault(); attach(fs); } }}
-                onInput={(e) => { const t = e.target as HTMLTextAreaElement; setText(t.value); t.style.height = "auto"; t.style.height = `${Math.min(t.scrollHeight, 280)}px`; }}
+                onInput={(e) => { const t = e.target as HTMLTextAreaElement; setText(t.value); updateSuggest(t.value, t.selectionStart ?? t.value.length); t.style.height = "auto"; t.style.height = `${Math.min(t.scrollHeight, 280)}px`; }}
+                onBlur={() => setTimeout(() => setSug(null), 150)}
                 onKeyDown={(e) => {
+                  if (sug) {
+                    if (e.key === "ArrowDown") { e.preventDefault(); setSug({ ...sug, sel: (sug.sel + 1) % sug.items.length }); return; }
+                    if (e.key === "ArrowUp") { e.preventDefault(); setSug({ ...sug, sel: (sug.sel - 1 + sug.items.length) % sug.items.length }); return; }
+                    if ((e.key === "Enter" || e.key === "Tab") && !e.isComposing) { e.preventDefault(); pickSuggest(sug.items[sug.sel]); return; }
+                    if (e.key === "Escape") { e.preventDefault(); setSug(null); return; }
+                  }
                   const sendKey = prefs.enterSends ? e.key === "Enter" && !e.shiftKey : e.key === "Enter" && (e.ctrlKey || e.metaKey);
                   if (sendKey && !e.isComposing) { e.preventDefault(); send(); }
                   if (e.key === "Escape" && busy) api.interrupt();
                 }} />
+              {refs.length > 0 && (
+                <div class="refs">{refs.map((r) => (
+                  <span key={r.path} class={`ref ${r.size === null ? "missing" : r.size > refLimit ? "cut" : ""}`}
+                    title={r.size === null ? "Fichier introuvable dans le dossier de travail : il ne sera pas joint" : r.size > refLimit ? `Seuls les ${refLimit.toLocaleString("fr-FR")} premiers caractères seront envoyés` : "Contenu ajouté au message"}>
+                    <span class="ico">{I.fileCode}</span>@{r.path}
+                    <span class="ref-note">{r.size === null ? "introuvable" : r.size > refLimit ? `tronqué à ${Math.round(refLimit / 1000)} k car. (${fsize(r.size)})` : fsize(r.size)}</span>
+                  </span>))}</div>
+              )}
+              {sug && <Suggest items={sug.items} sel={sug.sel} onPick={pickSuggest} />}
               <div class="composer-bar">
                 <label class="icon-btn" title="Joindre une image ou un fichier texte (ou glissez-le dans la fenêtre, ou collez une capture)">
                   <span class="ico">{I.clip}</span>
@@ -534,7 +720,7 @@ export function App() {
             <button class="icon-btn" onClick={() => setPanel("")} title="Fermer"><span class="ico">{I.close}</span></button>
           </header>
           {panel === "memory" && <MemoryPanel ask={ask} refreshKey={refreshKey} />}
-          {panel === "files" && <FilesPanel onOpen={setPreview} refreshKey={refreshKey} />}
+          {panel === "files" && <FilesPanel onOpen={setPreview} refreshKey={refreshKey} onChanges={() => setChangesOpen(true)} />}
           {panel === "usage" && (usage ? <UsageBody u={usage} /> : <p class="muted pad">Chargement…</p>)}
         </aside>
       )}
@@ -548,6 +734,8 @@ export function App() {
       {picker && <div class="click-away" onMouseDown={() => setPicker(false)} />}
       {preview && <FilePreviewModal path={preview} onClose={() => setPreview(null)} />}
       {palette && <Palette commands={commands} onClose={() => setPalette(false)} />}
+      {changesOpen && <ChangesModal ask={ask} onClose={() => setChangesOpen(false)}
+        onReverted={(n) => { say(`${n} fichier(s) restauré(s).`); setRefreshKey((k) => k + 1); }} />}
       {dialog && <Dialog spec={dialog} onDone={() => setDialog(null)} />}
       {dragOver && <div class="drop-hint"><span class="ico">{I.clip}</span> Déposez pour joindre</div>}
       {toast && <div class="toast" role="status">{toast}</div>}

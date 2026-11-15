@@ -1,9 +1,10 @@
 // Panneau latéral (Mémoire, Fichiers), aperçu de fichier, palette de commandes et fenêtres de dialogue.
 import hljs from "highlight.js/lib/common";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { api, type FileEntry, type FilePreview, type MemoryView } from "./api";
+import { api, type Changes, type FileEntry, type FilePreview, type MemoryView } from "./api";
 import { I } from "./icons";
 import { Modal } from "./panels";
+import { DiffView } from "./thread";
 
 const KIND_LABEL: Record<string, string> = {
   goal: "Objectifs", constraint: "Contraintes", decision: "Décisions", fact: "Faits", hypothesis: "Hypothèses",
@@ -94,7 +95,7 @@ export function MemoryPanel({ ask, refreshKey }: { ask: (s: Omit<DialogSpec, "re
 }
 
 // --- Fichiers -----------------------------------------------------------------------------------------------------------
-export function FilesPanel({ onOpen, refreshKey }: { onOpen: (path: string) => void; refreshKey: number }) {
+export function FilesPanel({ onOpen, refreshKey, onChanges }: { onOpen: (path: string) => void; refreshKey: number; onChanges: () => void }) {
   const [files, setFiles] = useState<FileEntry[] | null>(null);
   const [root, setRoot] = useState("");
   const [onlyRecent, setOnlyRecent] = useState(false);
@@ -109,6 +110,7 @@ export function FilesPanel({ onOpen, refreshKey }: { onOpen: (path: string) => v
         <button class={!onlyRecent ? "on" : ""} onClick={() => setOnlyRecent(false)}>Tous ({files?.length ?? 0})</button>
         <button class={onlyRecent ? "on" : ""} onClick={() => setOnlyRecent(true)}title="Modifiés depuis le début de la conversation">Modifiés ({recent})</button>
       </div>
+      <button class="btn" onClick={onChanges}><span class="ico">{I.diff}</span> Toutes les modifications (diff, tout annuler)</button>
       {error && <p class="err small">{error}</p>}
       {files && shown.length === 0 && <p class="muted small pad0">{onlyRecent ? "Aucun fichier modifié pour l'instant." : "Dossier vide : demandez à l'IA de créer des fichiers."}</p>}
       <div class="file-list">
@@ -187,6 +189,66 @@ export function Palette({ commands, onClose }: { commands: Command[]; onClose: (
           {list.length === 0 && <p class="muted small pad">Aucune commande.</p>}
         </div>
       </div>
+    </div>
+  );
+}
+
+// --- Modifications de la discussion : diff global depuis le début, « Tout annuler » ------------------------------------
+export function ChangesModal({ onClose, ask, onReverted }: {
+  onClose: () => void; ask: (s: Omit<DialogSpec, "resolve">) => Promise<string | boolean | null>; onReverted: (n: number) => void;
+}) {
+  const [c, setC] = useState<Changes | null>(null);
+  const [error, setError] = useState("");
+  const [working, setWorking] = useState(false);
+  const load = () => api.changes().then(setC).catch((e) => setError(e.message));
+  useEffect(() => { load(); }, []);
+  const revert = async () => {
+    if (!c) return;
+    const ok = await ask({ title: "Tout annuler ?", danger: true, confirm: `Annuler ${c.files.length} modification(s)`,
+      message: "Les fichiers du dossier reviennent à leur état du début de la conversation : fichiers créés supprimés, fichiers modifiés ou supprimés restaurés. La conversation, elle, est conservée." });
+    if (!ok) return;
+    setWorking(true);
+    try { const r = await api.revertAll(); onReverted(r.touched.length); await load(); }
+    catch (e: any) { setError(e.message); } finally { setWorking(false); }
+  };
+  const label: Record<string, string> = { A: "créé", M: "modifié", D: "supprimé" };
+  return (
+    <Modal title="Modifications de la discussion" icon={I.diff} onClose={onClose} wide>
+      {error && <p class="err">{error}</p>}
+      {!c && !error && <p class="muted">Calcul des différences…</p>}
+      {c && !c.available && <p class="muted">{c.reason ?? "Instantanés indisponibles pour ce dossier."}</p>}
+      {c && c.available && (
+        <>
+          <p class="muted small">Depuis le début de la conversation{c.shadow ? " (suivi par un dépôt fantôme dans les données d'Eclipse : rien n'est écrit dans votre dossier)" : " (instantanés Git, sans commit ni modification de votre dépôt)"}.</p>
+          {c.files.length === 0 ? <p>Aucune modification.</p> : (
+            <>
+              <div class="change-list">{c.files.map((f) => (
+                <span key={f.path} class={`chg ${f.status}`}><b>{label[f.status] ?? f.status}</b> {f.path}</span>))}</div>
+              <DiffView diff={c.diff} />
+              {c.truncated && <p class="muted small">Diff tronqué à l'affichage (fichiers volumineux).</p>}
+              <div class="row-end"><button class="btn primary danger" disabled={working} onClick={revert}>{working ? "Annulation…" : "Tout annuler"}</button></div>
+            </>
+          )}
+        </>
+      )}
+    </Modal>
+  );
+}
+
+// --- Suggestions de la zone de saisie (@fichier, /commande) -----------------------------------------------------------
+export interface Suggestion { key: string; label: string; detail?: string; icon: string; warn?: string }
+
+export function Suggest({ items, sel, onPick }: { items: Suggestion[]; sel: number; onPick: (s: Suggestion) => void }) {
+  if (items.length === 0) return null;
+  return (
+    <div class="suggest" role="listbox">
+      {items.map((s, i) => (
+        <button key={s.key} role="option" aria-selected={i === sel} class={`sg ${i === sel ? "on" : ""}`}
+          onMouseDown={(e) => { e.preventDefault(); onPick(s); }}>
+          <span class="ico">{s.icon}</span><span class="sg-label">{s.label}</span>
+          {s.warn ? <span class="tag amber">{s.warn}</span> : s.detail ? <span class="sg-detail">{s.detail}</span> : null}
+        </button>
+      ))}
     </div>
   );
 }

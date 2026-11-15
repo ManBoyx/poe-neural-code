@@ -83,9 +83,10 @@ def _unwrap(text: str) -> str:
 def transcript(sv: Services, limit: int = 200) -> list[dict]:
     """Fil de la conversation pour l'affichage : messages + appels d'outils avec leur résultat."""
     # Fil en mémoire (à jour même pendant un tour), sinon celui de la session sauvegardée.
-    msgs = (getattr(sv.agent, "messages", None) if not sv.is_cli and sv.mode != "claude" else None) or sv.session.messages
+    live = not sv.is_cli and sv.mode != "claude" and isinstance(getattr(sv.agent, "messages", None), list)
+    msgs = sv.agent.messages if live else sv.session.messages  # vide après une annulation : c'est voulu
     items: list[dict] = []
-    if msgs:
+    if live or msgs:
         tools: dict[str, dict] = {}
         for m in msgs[-limit:]:
             role = m.get("role")
@@ -123,6 +124,7 @@ def transcript(sv: Services, limit: int = 200) -> list[dict]:
 SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", "dist", "build", "target", ".gradle", ".idea", ".mypy_cache"}
 IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp"}
 MAX_UPLOAD = 15 * 1024 * 1024
+from ..extensions.refs import MAX_FILE as REF_LIMIT  # noqa: E402  contenu d'un @fichier au-delà duquel il est tronqué
 
 
 def list_files(root: Path, since: float, limit: int = 600) -> list[dict]:
@@ -166,6 +168,47 @@ def new_discussion_dir(root: Path | None = None) -> Path:
         n += 1
     d.mkdir()
     return d
+
+
+def _tool_line(it: dict) -> str:
+    args = it.get("args") or {}
+    what = next((str(args[k]) for k in ("command", "path", "pattern", "url", "query", "prompt") if args.get(k)), "")
+    state = "échec" if it.get("ok") is False else "fait" if it.get("ok") else "sans résultat"
+    return f"> Outil `{it.get('name')}` — {what.splitlines()[0][:160] if what else ''} ({state})"
+
+
+def export_markdown(sv: Services) -> str:
+    """Conversation en Markdown : messages complets, appels d'outils résumés en une ligne (sans leurs sorties)."""
+    title = sv.session.title or "Conversation"
+    out = [f"# {title}", "", f"Dossier : `{sv.ctx.workspace.root}` · {sv.mode_label} · exporté le {time.strftime('%d/%m/%Y %H:%M')}", ""]
+    for it in transcript(sv, limit=10_000):
+        if it["kind"] == "user":
+            out += ["## Vous", "", it["text"], ""]
+        elif it["kind"] == "assistant":
+            out += ["## Eclipse", "", it["text"], ""]
+        elif it["kind"] == "tool":
+            out += [_tool_line(it), ""]
+    return "\n".join(out).rstrip() + "\n"
+
+
+def search_conversations(sv: Services | None, q: str, limit: int = 30) -> list[dict]:
+    """Recherche dans le CONTENU de toutes les conversations (archives FTS), regroupée par conversation."""
+    from ..memory.engine import Memory
+    mem = sv.memory if sv is not None else Memory()
+    by_conv = {s.conversation_id: s for s in list_sessions()}
+    out: list[dict] = []
+    seen: set[str] = set()
+    for h in mem.search(q, layers=("archive",), limit=limit * 3):
+        s = by_conv.get(h.conversation_id)
+        if s is None or s.id in seen:
+            continue
+        seen.add(s.id)
+        out.append({"id": s.id, "title": s.title or "(sans titre)", "workspace": s.workspace, "snippet": h.text[:240], "ts": h.ts})
+        if len(out) >= limit:
+            break
+    if sv is None:
+        mem.close()
+    return out
 
 
 class Hub:
@@ -216,6 +259,9 @@ class Hub:
         sv.set_emit(self.on_event)
         sv.ctx.permissions.asker = self.ask
         sv.ctx.todos.on_change = lambda: self.publish({"type": "todos", "todos": self.todos()})
+        if sv.session.baseline_tree is None:
+            sv.session.baseline_tree = sv.snap.snapshot()  # état des fichiers au début : diff global et « Tout annuler »
+            sv.session.save()
         self.sv = sv
         asyncio.get_running_loop().create_task(self._startup(sv))
 
@@ -286,6 +332,7 @@ class Hub:
                                                "current": sv.current_options().get(effort.name)},
             "agents": sorted(sv.ext.modes.keys()) if getattr(sv.ext, "modes", None) else ["build", "plan"],
             "permissions": sv.ctx.permissions.mode, "auto_edits": sv.ctx.permissions.mode == "edits", "todos": self.todos(),
+            "ref_limit": REF_LIMIT,
             "context": {"used": getattr(sv.runner, "last_ctx_tokens", 0) or 0, "window": None if sv.is_cli else sv.agent.window()},
             "pending_permissions": [p for _, p in self.pending.values()],
         }
@@ -536,6 +583,104 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         files = [{"name": f.name, "size": f.stat().st_size} for f in sorted(d.iterdir()) if f.is_file()]
         return JSONResponse({"dir": str(d), "files": files})
 
+    async def changes(_request):
+        if (r := need_open()):
+            return r
+        sv = hub.sv
+        if not sv.session.baseline_tree:
+            return JSONResponse({"available": False, "reason": "instantanés indisponibles pour ce dossier (trop gros ou Git absent)",
+                                 "files": [], "diff": "", "truncated": False})
+        return JSONResponse({**sv.snap.changes(sv.session.baseline_tree), "shadow": sv.snap.shadow})
+
+    async def revert_all(_request):
+        if (r := need_open()):
+            return r
+        if hub.busy:
+            return bad("une réponse est en cours : interrompez-la d'abord", 409)
+        sv = hub.sv
+        if not sv.session.baseline_tree:
+            return bad("instantanés indisponibles pour ce dossier")
+        touched = sv.snap.restore(sv.session.baseline_tree)
+        log().info("« Tout annuler » : %d fichier(s) restauré(s) dans %s", len(touched), sv.ctx.workspace.root)
+        return JSONResponse({"ok": True, "touched": touched})
+
+    async def export(request):
+        if (r := need_open()):
+            return r
+        md = export_markdown(hub.sv)
+        safe = re.sub(r"[^\w\- ]+", "", hub.sv.session.title or "conversation").strip()[:60] or "conversation"
+        if request.method == "GET":
+            return JSONResponse({"markdown": md, "filename": f"{safe}.md"})
+        path = Path(str((await body(request)).get("path") or "")).expanduser()
+        if not path.is_absolute() or path.suffix.lower() not in (".md", ".markdown", ".txt"):
+            return bad("chemin absolu en .md attendu")
+        path.write_text(md, encoding="utf-8")
+        return JSONResponse({"ok": True, "path": str(path)})
+
+    async def search(request):
+        q = request.query_params.get("q", "").strip()
+        return JSONResponse({"results": search_conversations(hub.sv, q) if len(q) >= 2 else []})
+
+    async def commands_list(_request):
+        if (r := need_open()):
+            return r
+        out = [{"name": c.name, "description": c.description, "kind": c.kind, "usage": c.usage}
+               for c in hub.sv.ext.commands() if c.kind in ("custom", "skill")]
+        return JSONResponse({"commands": out})
+
+    async def command(request):
+        """Commande-prompt (/review, /fix…, commandes personnalisées .eclipse/commands, skills) : modèle de prompt développé."""
+        if (r := need_open()):
+            return r
+        if hub.busy:
+            return bad("une réponse est déjà en cours", 409)
+        from ..extensions import commands as C
+        d = await body(request)
+        sv = hub.sv
+        c = C.resolve(str(d.get("name", "")), sv.ext.commands())
+        if c is None or c.kind not in ("custom", "skill"):
+            return bad(f"commande inconnue : /{d.get('name', '')}")
+        args = str(d.get("args") or "").strip()
+        if c.kind == "skill":
+            text = f"Utilise le skill « {c.name} » (outil skill) pour cette demande : {args or '(aucun détail)'}"
+        else:
+            if c.agent and c.agent in sv.ext.modes:
+                sv.set_agent(c.agent)
+            text = C.expand_template(c.template, args)
+        hub.turn = asyncio.get_running_loop().create_task(hub.run_turn(text))
+        return JSONResponse({"ok": True, "shown": f"/{c.name} {args}".strip()})
+
+    async def edit_last(_request):
+        if (r := need_open()):
+            return r
+        if hub.busy:
+            return bad("une réponse est en cours", 409)
+        e = hub.sv.undo()
+        if e is None:
+            return bad("rien à modifier")
+        return JSONResponse({"ok": True, "text": e["text"], "items": transcript(hub.sv)})
+
+    async def compact(_request):
+        if (r := need_open()):
+            return r
+        if hub.busy:
+            return bad("une réponse est en cours", 409)
+        from ..memory.compaction import compact_segment, synthesize_district
+        sv = hub.sv
+        sid = compact_segment(sv.memory, sv.session.conversation_id, keep_recent=6, min_messages=2)
+        synthesize_district(sv.memory, sv.session.district_id)
+        return JSONResponse({"ok": sid is not None, "message": "Résumé créé (archives conservées)." if sid else
+                             "Rien à compacter : trop peu d'échanges anciens."})
+
+    async def fork(_request):
+        if (r := need_open()):
+            return r
+        if hub.busy:
+            return bad("une réponse est en cours", 409)
+        s2 = hub.sv.fork_session()
+        await hub.open(resume=s2.id)
+        return JSONResponse(hub.state())
+
     async def remove(request):
         sid = request.path_params["sid"]
         if hub.sv is not None and hub.sv.session.id == sid:
@@ -666,7 +811,12 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         Route("/api/settings", settings, methods=["POST"]), Route("/api/memory", memory),
         Route("/api/memory/{iid:int}", forget, methods=["DELETE"]), Route("/api/files", files), Route("/api/file", file),
         Route("/api/upload", upload, methods=["POST"]), Route("/api/auto_edits", auto_edits, methods=["POST"]),
-        Route("/api/retry", retry, methods=["POST"]), Route("/api/log", client_log, methods=["POST"]), Route("/api/logs", logs), Route("/api/health", health), Route("/api/prompt", prompt, methods=["POST"]),
+        Route("/api/retry", retry, methods=["POST"]), Route("/api/log", client_log, methods=["POST"]), Route("/api/logs", logs), Route("/api/health", health),
+        Route("/api/changes", changes), Route("/api/changes/revert", revert_all, methods=["POST"]),
+        Route("/api/export", export, methods=["GET", "POST"]), Route("/api/search", search),
+        Route("/api/commands", commands_list), Route("/api/command", command, methods=["POST"]),
+        Route("/api/edit", edit_last, methods=["POST"]), Route("/api/compact", compact, methods=["POST"]),
+        Route("/api/fork", fork, methods=["POST"]), Route("/api/prompt", prompt, methods=["POST"]),
         Route("/api/interrupt", interrupt, methods=["POST"]), Route("/api/permission", permission, methods=["POST"]),
         Route("/api/model", model, methods=["POST"]), Route("/api/effort", effort, methods=["POST"]),
         Route("/api/agent", agent, methods=["POST"]), Route("/api/connect", connect, methods=["POST"]),
