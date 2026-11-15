@@ -1,0 +1,120 @@
+"""Parcours de l'interface Eclipse Desktop avec le faux fournisseur (aucune IA réelle)."""
+import os
+import signal
+import time
+
+from playwright.sync_api import expect
+
+from .conftest import tauri_stub
+
+
+def test_demarrage_et_accueil(page):
+    expect(page.get_by_text("Dossier de travail")).to_be_visible()
+    expect(page.get_by_text("Économie de tokens")).to_be_visible()
+    expect(page.locator(".model-btn")).to_contain_text("m1")
+
+
+def test_nouvelle_discussion_cree_son_dossier(page, server):
+    page.get_by_role("button", name="Nouvelle discussion").first.click()
+    expect(page.locator(".chip").first).to_contain_text("discussion-")
+    folders = os.listdir(server["data"] / "discussions")
+    assert len(folders) == 1 and folders[0].startswith("discussion-")
+
+
+def test_message_carte_autorisation_puis_reponse(page, server):
+    page.locator("textarea").fill("Que contient ce projet ?")
+    page.keyboard.press("Enter")
+    card = page.locator(".perm")
+    expect(card).to_be_visible(timeout=10_000)
+    expect(card).to_contain_text("ls -la")
+    page.get_by_role("button", name="Autoriser une fois").click()
+    expect(page.locator(".msg.assistant").last).to_contain_text("Voulez-vous que je crée les tests", timeout=10_000)
+    expect(page.locator(".code-bar").first).to_contain_text("python")
+    expect(page.locator(".conv-title").first).to_have_text("Que contient ce projet ?")
+
+
+def test_refus_d_autorisation(page):
+    page.locator("textarea").fill("Liste")
+    page.keyboard.press("Enter")
+    expect(page.locator(".perm")).to_be_visible(timeout=10_000)
+    page.get_by_role("button", name="Refuser").click()
+    expect(page.locator(".perm")).to_have_count(0, timeout=10_000)
+
+
+def test_panneau_memoire(page):
+    page.get_by_title("Mémoire du dossier").click()
+    expect(page.locator(".memory")).to_contain_text("Le site utilise Flask plutôt que Django.")
+    expect(page.locator(".memory")).to_contain_text("Décisions")
+    page.locator(".memory input").fill("pytest")
+    expect(page.locator(".hit").first).to_contain_text("pytest")
+
+
+def test_panneau_fichiers_et_apercu(page):
+    page.get_by_title("Fichiers du dossier").click()
+    page.locator(".file", has_text="app.py").click()
+    expect(page.locator(".code.preview")).to_contain_text("from flask import Flask")
+    page.keyboard.press("Escape")
+    expect(page.locator(".code.preview")).to_have_count(0)
+
+
+def test_piece_jointe_image(page, server, tmp_path):
+    img = tmp_path / "capture.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 64)
+    page.locator(".composer-bar input[type=file]").set_input_files(str(img))
+    expect(page.locator(".att")).to_contain_text("capture.png")
+    page.locator("textarea").fill("Regarde")
+    page.keyboard.press("Enter")
+    expect(page.locator(".msg.user").last).to_contain_text("pièces jointes : capture.png")
+    stored = list((server["data"] / "attachments").rglob("*capture.png"))
+    assert len(stored) == 1
+
+
+def test_palette_ctrl_k(page):
+    page.keyboard.press("Control+k")
+    page.keyboard.type("mémoire")
+    expect(page.locator(".pal-item")).to_have_count(1)
+    page.keyboard.press("Enter")
+    expect(page.locator(".memory")).to_be_visible()
+
+
+def test_theme_clair(page):
+    page.keyboard.press("Control+k")
+    page.keyboard.type("thème")
+    page.keyboard.press("Enter")
+    expect(page.locator("html")).to_have_attribute("data-theme", "light")
+    expect(page.locator("body")).to_have_css("background-color", "rgb(251, 250, 248)")
+
+
+def test_panne_du_moteur_affiche_la_banniere(page, server):
+    os.killpg(server["proc"].pid, signal.SIGKILL)
+    expect(page.locator(".banner")).to_contain_text("ne répond plus", timeout=25_000)
+    expect(page.get_by_role("button", name="Réessayer")).to_be_visible()
+
+
+# --- Application desktop simulée (Tauri) : moteur lent, absent, relance ----------------------------------------------
+
+def test_moteur_lent_ecran_de_demarrage_puis_interface(browser, server):
+    pg = browser.new_page()
+    pg.add_init_script(tauri_stub(
+        "(cmd) => cmd === 'engine_info' ? new Promise(r => setTimeout(() => r({port: %d, token: '%s'}), 35000))"
+        " : Promise.reject('non simulé')" % (server["port"], server["token"])))
+    t0 = time.time()
+    pg.goto(server["url"] + "/")
+    expect(pg.get_by_text("Démarrage du moteur Eclipse")).to_be_visible()
+    expect(pg.get_by_text("plus long que d'habitude")).to_be_visible(timeout=25_000)
+    pg.wait_for_timeout(max(0, 31_000 - (time.time() - t0) * 1000))
+    expect(pg.get_by_text("Erreur de chargement")).to_have_count(0)  # l'ancien délai de 30 s de boot.js ne se déclenche plus
+    expect(pg.get_by_text("Que voulez-vous faire")).to_be_visible(timeout=15_000)
+
+
+def test_moteur_absent_puis_relance(browser, server):
+    pg = browser.new_page()
+    pg.add_init_script(tauri_stub(
+        "(cmd) => cmd === 'engine_info' ? Promise.reject('moteur Eclipse introuvable dans l\\'installation')"
+        " : cmd === 'engine_restart' ? Promise.resolve({port: %d, token: '%s'}) : Promise.reject('non simulé')"
+        % (server["port"], server["token"])))
+    pg.goto(server["url"] + "/")
+    expect(pg.get_by_text("Le moteur Eclipse n'a pas démarré")).to_be_visible()
+    expect(pg.get_by_text("moteur Eclipse introuvable")).to_be_visible()
+    pg.get_by_role("button", name="Relancer le moteur").click()
+    expect(pg.get_by_text("Que voulez-vous faire")).to_be_visible(timeout=10_000)

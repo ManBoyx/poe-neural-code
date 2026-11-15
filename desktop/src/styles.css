@@ -317,3 +317,12 @@ input.text.wide { width: 100%; padding: 8px 10px; border: 1px solid var(--line);
 .btn.primary.danger { background: var(--red); border-color: var(--red); color: #fff; }
 .main.drag { outline: 2px dashed var(--accent); outline-offset: -8px; }
 .drop-hint { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 70; padding: 14px 22px; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-weight: 600; pointer-events: none; box-shadow: var(--shadow); }
+
+/* --- Démarrage et pannes du moteur ------------------------------------------------------------------------------------ */
+.splash { max-width: 560px; margin: 20vh auto 0; padding: 0 16px; text-align: center; }
+.splash .logo { font-size: 2.6rem; color: var(--accent); }
+.splash h1 { font-size: 1.5rem; font-weight: 600; margin: 10px 0; }
+.splash .spinner { vertical-align: -2px; margin-right: 6px; }
+.row-center { display: flex; justify-content: center; gap: 8px; margin-top: 14px; }
+.banner { display: flex; align-items: center; gap: 10px; margin: 10px 16px 0; padding: 10px 14px; border: 1px solid var(--amber); border-radius: 10px; background: rgba(251, 191, 36, .08); color: var(--text); font-size: .92rem; }
+.banner > .ico { color: var(--amber); }

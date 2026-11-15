@@ -165,15 +165,13 @@ export interface Command { id: string; label: string; hint?: string; icon: strin
 export function Palette({ commands, onClose }: { commands: Command[]; onClose: () => void }) {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
-  const box = useRef<HTMLInputElement>(null);
-  useEffect(() => { box.current?.focus(); }, []);
   const list = commands.filter((c) => c.enabled !== false && c.label.toLowerCase().includes(q.trim().toLowerCase()));
   useEffect(() => setSel(0), [q]);
   const run = (c?: Command) => { if (c) { onClose(); c.run(); } };
   return (
     <div class="overlay top" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div class="palette" role="dialog" aria-label="Commandes">
-        <input ref={box} placeholder="Que voulez-vous faire ?" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)}
+        <input ref={(el) => el?.focus()} placeholder="Que voulez-vous faire ?" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)}
           onKeyDown={(e) => {
             if (e.key === "Escape") onClose();
             else if (e.key === "ArrowDown") { e.preventDefault(); setSel((s) => Math.min(s + 1, list.length - 1)); }

@@ -22,7 +22,14 @@ pub fn run() {
             engine::start(app.handle());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine::engine_info, updates::update_check, updates::update_install])
+        .invoke_handler(tauri::generate_handler![
+            engine::engine_info,
+            engine::engine_status,
+            engine::engine_restart,
+            engine::open_logs,
+            updates::update_check,
+            updates::update_install
+        ])
         .build(tauri::generate_context!())
         .expect("démarrage de l'application impossible");
     app.run(|handle, event| {
