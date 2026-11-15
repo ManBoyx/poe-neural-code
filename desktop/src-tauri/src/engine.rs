@@ -287,4 +287,45 @@ mod tests {
         std::env::remove_var("ECLIPSE_ENGINE");
         std::env::remove_var("PNC_HOME");
     }
+
+    /// Version portable : avec portable.txt à côté de l'exécutable, données ET journaux restent dans ./data,
+    /// et le moteur reçoit PNC_HOME=./data. Sans le témoin : emplacements habituels.
+    #[cfg(unix)]
+    #[test]
+    fn portable_mode_keeps_data_next_to_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let exe_dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+        let marker = exe_dir.join(paths::PORTABLE_MARKER);
+        let dir = std::env::temp_dir().join(format!("eclipse-portable-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("faux-moteur.sh");
+        std::fs::write(&script, "#!/bin/sh\necho \"PNC_HOME=$PNC_HOME\" >&2\necho '{\"port\":1,\"token\":\"t\"}'\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("ECLIPSE_ENGINE", &script);
+        std::env::remove_var("PNC_HOME");
+
+        assert!(!paths::is_portable());
+        assert_ne!(paths::engine_data_dir(), exe_dir.join("data"));
+        std::fs::write(&marker, "portable").unwrap();
+        let result = std::panic::catch_unwind(|| {
+            assert!(paths::is_portable());
+            assert_eq!(paths::engine_data_dir(), exe_dir.join("data"));
+            assert_eq!(paths::logs_dir(), exe_dir.join("data").join("logs"));
+            let app = tauri::test::mock_builder().manage(Engine::default()).build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+            let handle = app.handle().clone();
+            start(&handle);
+            let engine = handle.state::<Engine>();
+            engine.wait(Duration::from_secs(10)).unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+            engine.stop();
+            let log = std::fs::read_to_string(exe_dir.join("data").join("logs").join("engine-stderr.log")).unwrap();
+            assert!(log.contains(&format!("PNC_HOME={}", exe_dir.join("data").display())), "journal : {log}");
+        });
+        let _ = std::fs::remove_file(&marker);
+        let _ = std::fs::remove_dir_all(exe_dir.join("data"));
+        std::env::remove_var("ECLIPSE_ENGINE");
+        assert!(!paths::is_portable());
+        result.unwrap();
+    }
 }

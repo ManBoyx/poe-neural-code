@@ -205,15 +205,22 @@ mod tests {
         let bytes = std::fs::read(dir.join("pkg.bin")).unwrap();
 
         let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
+        ctx.package_info_mut().version = "0.2.0".parse().unwrap(); // application installée : 0.2.0
         ctx.config_mut().plugins.0.insert("updater".into(), serde_json::json!({ "pubkey": pubkey, "requireSignedVersion": true }));
         let app = tauri::test::mock_builder().plugin(tauri_plugin_updater::Builder::new().build()).build(ctx).unwrap();
         let updater = app.handle().updater_builder().target("linux-x86_64").endpoints(vec![endpoint("stable")]).unwrap().build().unwrap();
         let manifest = |version: &str, sig: &str| serde_json::json!({
-            "version": version, "notes": "", "pub_date": "2026-11-14T00:00:00Z",
+            "version": version, "notes": "## Nouveautés\n- Relance du moteur\n- Mémoire éditable", "pub_date": "2026-11-16T00:00:00Z",
             "platforms": { "linux-x86_64": { "url": "https://example.invalid/pkg.bin", "signature": sig } }
         });
-        let good = updater.restore_update(manifest("9.9.9", &read("pkg.bin.sig"))).unwrap().expect("version plus récente");
+        let good = updater.restore_update(manifest("0.3.0", &read("pkg.bin.sig"))).unwrap().expect("version plus récente");
 
+        // 0. montée 0.2.0 -> 0.3.0 : proposée, avec le journal des changements
+        assert_eq!(good.current_version, "0.2.0");
+        assert_eq!(good.version, "0.3.0");
+        assert!(good.body.as_deref().unwrap_or("").contains("Mémoire éditable"));
+        // même version que l'installée : rien à proposer
+        assert!(updater.restore_update(manifest("0.2.0", &read("pkg.bin.sig"))).unwrap().is_none());
         // 1. paquet intact, bonne clé, bonne version : accepté
         assert!(good.verify(&bytes).is_ok());
         // 2. un seul octet modifié : refusé
@@ -221,10 +228,10 @@ mod tests {
         tampered[1000] ^= 0x01;
         assert!(good.verify(&tampered).is_err());
         // 3. signé par une autre clé : refusé
-        let other = updater.restore_update(manifest("9.9.9", &read("pkg-other.bin.sig"))).unwrap().unwrap();
+        let other = updater.restore_update(manifest("0.3.0", &read("pkg-other.bin.sig"))).unwrap().unwrap();
         assert!(other.verify(&std::fs::read(dir.join("pkg-other.bin")).unwrap()).is_err());
         // 4. bonne signature mais annoncée pour une autre version (rejeu d'un ancien paquet) : refusé
-        let replay = updater.restore_update(manifest("9.9.10", &read("pkg.bin.sig"))).unwrap().unwrap();
+        let replay = updater.restore_update(manifest("0.3.1", &read("pkg.bin.sig"))).unwrap().unwrap();
         assert!(replay.verify(&bytes).is_err());
     }
 }

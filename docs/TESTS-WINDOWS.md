@@ -1,42 +1,65 @@
-# À tester sur un vrai Windows
+# Tests à faire sur Windows (Eclipse Desktop 0.3.0)
 
-Ce qui ne peut pas être vérifié depuis Linux. La CI (GitHub Actions, `windows-latest`) construit l'installateur et
-lance les tests Python du moteur sous Windows ; tout ce qui demande un écran, un clavier ou une installation
-réelle reste à faire à la main, sur Windows 10 (version 1809 ou plus récente) et Windows 11.
+Machines visées : Windows 10 (version 1809 ou plus récente) et Windows 11. Pour chaque ligne, notez OK / KO et,
+en cas de KO, joignez le dossier des logs (Réglages > Ouvrir les logs).
 
-## Installation
-- [ ] Installateur NSIS (`Eclipse_x.y.z_x64-setup.exe`) : installe sans droits administrateur (mode « utilisateur courant »).
-- [ ] Avertissement SmartScreen attendu (pas de certificat de signature) : « Informations complémentaires » puis « Exécuter quand même ».
-- [ ] Installateur MSI : installe et se désinstalle depuis « Applications installées ».
-- [ ] Machine sans WebView2 (Windows 10 ancien) : l'installateur télécharge WebView2.
-- [ ] Version portable (.zip) : décompressée dans un dossier quelconque, elle démarre et crée `data\` à côté de l'exécutable.
+## 1. Installation
+1. Installateur `Eclipse_0.3.0_x64-setup.exe` : l'installation se fait sans demande de droits administrateur.
+2. SmartScreen s'affiche (binaire non signé) : « Informations complémentaires » puis « Exécuter quand même » permet de continuer.
+3. `Eclipse_0.3.0_x64_fr-FR.msi` : installe, puis se désinstalle depuis Paramètres > Applications.
+4. Sur une machine sans WebView2, l'installateur le télécharge et l'application démarre ensuite.
+5. Le raccourci « Eclipse » du menu Démarrer lance l'application.
 
-## Terminal (ConPTY)
-- [ ] L'onglet Eclipse démarre et affiche les icônes (police embarquée), sans caractères carrés.
-- [ ] Onglets PowerShell 7, Windows PowerShell, cmd, WSL et Git Bash (si installés) : chacun s'ouvre, l'invite s'affiche.
-- [ ] Accents : `echo élève` dans cmd, `Write-Output "élève"` dans PowerShell, `dir` d'un dossier « Été » : rien de cassé.
-- [ ] Redimensionner la fenêtre : le texte se réorganise (Eclipse comme les shells), pas de lignes dupliquées.
-- [ ] Fermer un onglet ou la fenêtre : aucun `eclipse-engine.exe`, `pwsh.exe` ou `conhost.exe` ne reste dans le Gestionnaire des tâches.
-- [ ] `exit` dans un shell : le message « Session terminée » apparaît, « Relancer » fonctionne.
+## 2. Démarrage et moteur
+1. Au premier lancement, l'écran « Démarrage du moteur Eclipse… » s'affiche, puis l'accueil, en moins de 60 s.
+   Notez la durée (un antivirus peut ralentir la première fois).
+2. Aucune fenêtre de console noire ne s'ouvre à côté de l'application.
+3. Le Gestionnaire des tâches montre `eclipse-terminal.exe` et `eclipse-engine.exe`.
+   Après fermeture de la fenêtre, ni l'un ni l'autre ne reste au bout de 5 s.
+4. Tuer `eclipse-engine.exe` depuis le Gestionnaire des tâches : la bannière « Le moteur Eclipse ne répond plus »
+   apparaît en moins de 20 s. « Relancer le moteur » ramène l'interface sans fermer la fenêtre.
+5. Réglages > « Ouvrir les logs » ouvre l'Explorateur sur `%APPDATA%\poe-neural-code\logs`, qui contient `pnc.log`,
+   `ui.log` et `engine-stderr.log`.
 
-## Clavier et presse-papiers
-- [ ] Ctrl+C sans sélection interrompt (`ping -t localhost` dans cmd) ; avec sélection, copie.
-- [ ] Ctrl+V colle ; Ctrl+Maj+C / Ctrl+Maj+V aussi ; clic droit copie (sélection) ou colle.
-- [ ] Coller plusieurs lignes dans PowerShell : pas d'exécution ligne par ligne non voulue (collage « bracketed »).
-- [ ] Raccourcis Eclipse : Ctrl+X puis une lettre (leader), Ctrl+T, Ctrl+P, F2, Tab, Échap, Ctrl+R (renommer, pas de rechargement de la page).
-- [ ] F5 et Ctrl+R ne rechargent pas l'interface.
-- [ ] AltGr (claviers AZERTY) : `@`, `#`, `{`, `}`, `[`, `]`, `\`, `|`, `~` se tapent normalement.
+## 3. Discussion et fichiers
+1. « Nouvelle discussion » crée `%USERPROFILE%\Projets\Eclipse\discussion-AAAAMMJJ-HHMMSS` et l'ouvre.
+2. « Ouvrir un projet… » ouvre la boîte de dialogue native de choix de dossier, et le projet choisi s'ouvre.
+3. Connexions > Claude Code (si installé par npm ou par l'installateur officiel) : un message simple reçoit une réponse.
+4. Demander à l'IA de créer `test.txt` avec « élève » : la carte d'autorisation s'affiche. Après accord, le fichier
+   existe et s'ouvre correctement dans le Bloc-notes, avec les accents intacts.
+5. Demander une commande (par exemple « liste les fichiers ») : elle s'exécute dans PowerShell, avec une syntaxe
+   PowerShell. Les accents de la sortie sont corrects dans la carte d'outil.
+6. Un fichier existant en fins de ligne CRLF, modifié par l'IA, reste en CRLF (vérifier dans Notepad++ ou VS Code).
+7. Panneau Fichiers : `test.txt` apparaît comme modifié, et l'aperçu s'ouvre.
+8. `/diff` (ou palette > « Modifications des fichiers ») : le diff s'affiche. « Tout annuler » supprime `test.txt`
+   après confirmation.
+9. `@` dans la saisie : l'autocomplétion propose les fichiers du dossier ; un chemin avec sous-dossier s'insère bien.
+10. Glisser une image depuis l'Explorateur dans la fenêtre : la pièce jointe apparaît. Coller une capture
+    (Win+Maj+S puis Ctrl+V) : idem.
+11. `/export` : la boîte « Enregistrer sous » native s'ouvre et le fichier `.md` est écrit à l'endroit choisi.
 
-## Moteur Eclipse sous Windows
-- [ ] `run_command` utilise PowerShell 7 (ou Windows PowerShell) ; `/config shell = cmd` ou `wsl` change de shell.
-- [ ] Le modèle reçoit bien la consigne « syntaxe PowerShell » (il ne propose plus de commandes bash).
-- [ ] Mode Claude Code : `claude` installé par npm (`claude.cmd`) ou par l'installateur natif (`claude.exe`) démarre, les prompts avec guillemets et accents arrivent intacts.
-- [ ] OpenCode / Codex installés par npm : même vérification.
-- [ ] Écriture d'un fichier CRLF existant : il reste en CRLF ; nouveau fichier : LF (réglable avec `new_file_eol`).
-- [ ] `/undo` : fonctionne si Git pour Windows est installé ; message clair sinon.
-- [ ] Interruption (Échap) d'une commande longue : tout l'arbre de processus est arrêté (`taskkill /T`).
-- [ ] Clés d'API : stockées dans le Gestionnaire d'identification Windows (étape 6), visibles sous « Informations d'identification Windows ».
+## 4. Clavier et affichage
+1. Ctrl+K (palette), Ctrl+N (nouvelle discussion), Ctrl+B (barre latérale), Ctrl+, (réglages), Échap (arrêter une réponse).
+2. Clavier AZERTY : `@`, `#`, `{`, `}`, `[`, `]`, `\`, `|`, `~` se tapent normalement dans la saisie.
+3. Thème clair et thème sombre lisibles. Avec la mise à l'échelle Windows à 125 % et 150 %, le texte est net
+   et rien ne déborde.
+4. Les icônes (police Nerd Font embarquée) s'affichent : aucun carré vide.
 
-## Mises à jour (après l'étape 3)
-- [ ] Installation NSIS : la mise à jour se télécharge, sa signature est vérifiée, l'installateur se relance seul.
-- [ ] Version portable : l'application propose le téléchargement du nouveau .zip (pas d'installation automatique).
+## 5. Sécurité et clés
+1. Connexions > une clé d'API : elle apparaît dans Gestionnaire d'identification > Informations d'identification Windows
+   (nom `eclipse-poe-neural-code`) et n'est écrite nulle part en clair dans `%APPDATA%\poe-neural-code`.
+2. Demander à l'IA une commande `Format-Volume` ou `rm -rf /` : elle est refusée sans même proposer d'autorisation (étape E).
+
+## 6. Version portable
+1. Décompresser `Eclipse_0.3.0_x64_portable.zip` dans un dossier quelconque (ou une clé USB) et lancer `eclipse-terminal.exe`.
+2. Après une discussion, un dossier `data\` existe à côté de l'exécutable, avec `logs\`, `sessions\` et `memory.db`.
+   `%APPDATA%\poe-neural-code` n'est pas modifié.
+3. Les mises à jour proposent « Page de la version » ; « Installer » est indisponible, avec l'explication.
+
+## 7. Mise à jour 0.2.x vers 0.3.0 (nécessite vos clés et une version publiée)
+1. Installer une 0.2.x signée avec votre clé, puis publier la 0.3.0 (ou une 0.3.0-beta.1 sur le canal bêta).
+2. Réglages > « Vérifier maintenant » : le bouton « Mise à jour 0.3.0 » apparaît. Le journal des changements s'affiche
+   avant l'installation.
+3. « Installer » : téléchargement, vérification, puis l'installateur se lance en mode passif et Eclipse redémarre en 0.3.0
+   (Réglages affiche 0.3.0).
+4. Remplacer le fichier téléchargé par un autre (test avancé, facultatif) : la mise à jour est refusée.
