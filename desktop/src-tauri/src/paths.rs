@@ -34,7 +34,7 @@ pub fn portable_data_dir() -> Option<PathBuf> {
 
 /// Ordre : ECLIPSE_ENGINE (développement) → ressources de l'installation → dossier de l'exécutable (portable)
 /// → commande `eclipse` du PATH (installation Python existante).
-pub fn engine_path(app: &AppHandle) -> Option<PathBuf> {
+pub fn engine_path<R: tauri::Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("ECLIPSE_ENGINE").map(PathBuf::from) {
         if p.is_file() {
             return Some(p);
@@ -51,4 +51,29 @@ pub fn engine_path(app: &AppHandle) -> Option<PathBuf> {
         return Some(found);
     }
     which::which("eclipse").ok()
+}
+
+/// Dossier de données du moteur, même règle que paths.py : PNC_HOME (portable), sinon
+/// %APPDATA%\\poe-neural-code (Windows) ou $XDG_DATA_HOME/poe-neural-code (Linux, ~/.local/share par défaut).
+pub fn engine_data_dir() -> PathBuf {
+    if let Some(d) = portable_data_dir() {
+        return d;
+    }
+    if let Some(d) = std::env::var_os("PNC_HOME") {
+        return PathBuf::from(d);
+    }
+    #[cfg(windows)]
+    {
+        if let Some(a) = std::env::var_os("APPDATA") {
+            return PathBuf::from(a).join("poe-neural-code");
+        }
+    }
+    if let Some(x) = std::env::var_os("XDG_DATA_HOME") {
+        return PathBuf::from(x).join("poe-neural-code");
+    }
+    home_dir().unwrap_or_else(|| PathBuf::from(".")).join(".local").join("share").join("poe-neural-code")
+}
+
+pub fn logs_dir() -> PathBuf {
+    engine_data_dir().join("logs")
 }

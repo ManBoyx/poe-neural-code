@@ -4,6 +4,8 @@
 # 1) moteur Python (PyInstaller) construit dans le conteneur ; 2) application Tauri et paquets.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+# Les tests de l'interface passent AVANT toute compilation (désactivable : SKIP_UI_TESTS=1).
+[ "${SKIP_UI_TESTS:-0}" = 1 ] || packaging/test-ui.sh
 RUNTIME=$(command -v podman || command -v docker)
 "$RUNTIME" build -t eclipse-build -f packaging/linux/Containerfile packaging/linux
 mkdir -p build/cache/cargo build/cache/target

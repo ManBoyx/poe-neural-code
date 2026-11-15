@@ -5,6 +5,8 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
+use std::fs::OpenOptions;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
@@ -17,14 +19,25 @@ pub struct EngineInfo {
     pub token: String,
 }
 
+#[derive(Serialize)]
+pub struct EngineStatus {
+    alive: bool,
+    error: Option<String>,
+}
+
 #[derive(Default)]
 pub struct Engine {
     ready: Mutex<Option<Result<EngineInfo, String>>>,
     signal: Condvar,
     child: Mutex<Option<Child>>,
+    generation: AtomicU64,
 }
 
 impl Engine {
+    fn reset(&self) {
+        *self.ready.lock().unwrap() = None;
+    }
+
     fn set(&self, v: Result<EngineInfo, String>) {
         *self.ready.lock().unwrap() = Some(v);
         self.signal.notify_all();
@@ -38,6 +51,15 @@ impl Engine {
             g = self.signal.wait_timeout(g, left).unwrap().0;
         }
         g.clone().unwrap()
+    }
+
+    pub fn status(&self) -> EngineStatus {
+        let alive = self.child.lock().unwrap().as_mut().map(|c| matches!(c.try_wait(), Ok(None))).unwrap_or(false);
+        let error = match &*self.ready.lock().unwrap() {
+            Some(Err(e)) => Some(e.clone()),
+            _ => None,
+        };
+        EngineStatus { alive, error }
     }
 
     pub fn stop(&self) {
@@ -72,8 +94,25 @@ pub fn clean_appimage_env(cmd: &mut Command) {
     }
 }
 
-pub fn start(app: &AppHandle) {
+/// Sortie d'erreur du moteur (traces de plantage avant même ses propres journaux) : logs/engine-stderr.log,
+/// rotation simple à 1 Mo (l'ancien fichier devient .1).
+fn stderr_log() -> Stdio {
+    let dir = paths::logs_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let file = dir.join("engine-stderr.log");
+    if std::fs::metadata(&file).map(|m| m.len() > 1_000_000).unwrap_or(false) {
+        let _ = std::fs::rename(&file, dir.join("engine-stderr.log.1"));
+    }
+    match OpenOptions::new().create(true).append(true).open(&file) {
+        Ok(f) => Stdio::from(f),
+        Err(_) => Stdio::null(),
+    }
+}
+
+pub fn start<R: tauri::Runtime>(app: &AppHandle<R>) {
     let state = app.state::<Engine>();
+    state.reset();
+    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let Some(exe) = paths::engine_path(app) else {
         state.set(Err("moteur Eclipse introuvable dans l'installation".into()));
         return;
@@ -82,7 +121,7 @@ pub fn start(app: &AppHandle) {
     cmd.args(["serve", "--watch-stdin"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(stderr_log())
         .env("PYTHONUTF8", "1")
         .env("PYTHONIOENCODING", "utf-8")
         .env("ECLIPSE_DESKTOP", "1");
@@ -123,6 +162,10 @@ pub fn start(app: &AppHandle) {
             _ => engine.set(Err("le moteur s'est arrêté au démarrage".into())),
         }
         for _ in lines {} // vide la sortie jusqu'à la fin du moteur
+        // Fin de la sortie = moteur arrêté. Si aucune relance n'a eu lieu entre-temps, on le signale à l'interface.
+        if engine.generation.load(Ordering::SeqCst) == generation {
+            engine.set(Err("le moteur Eclipse s'est arrêté".into()));
+        }
     });
 }
 
@@ -131,6 +174,33 @@ pub async fn engine_info(app: AppHandle) -> Result<EngineInfo, String> {
     tauri::async_runtime::spawn_blocking(move || app.state::<Engine>().wait(Duration::from_secs(60)))
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn engine_status(app: AppHandle) -> EngineStatus {
+    app.state::<Engine>().status()
+}
+
+/// Relance le moteur sans fermer la fenêtre (nouveau port, nouveau jeton).
+#[tauri::command]
+pub async fn engine_restart(app: AppHandle) -> Result<EngineInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let engine = app.state::<Engine>();
+        engine.stop();
+        start(&app);
+        engine.wait(Duration::from_secs(60))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn open_logs(app: AppHandle) -> Result<String, String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = paths::logs_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().to_string())
 }
 
 #[cfg(test)]
@@ -142,6 +212,17 @@ mod tests {
         let i: EngineInfo = serde_json::from_str(r#"{"event": "ready", "port": 41234, "token": "abc"}"#).unwrap();
         assert_eq!(i.port, 41234);
         assert_eq!(i.token, "abc");
+    }
+
+    #[test]
+    fn reset_then_failure_is_reported() {
+        let e = Engine::default();
+        e.set(Ok(EngineInfo { port: 1, token: "t".into() }));
+        e.reset();
+        assert!(e.wait(Duration::from_millis(20)).is_err());
+        e.set(Err("le moteur Eclipse s'est arrêté".into()));
+        assert_eq!(e.status().error.as_deref(), Some("le moteur Eclipse s'est arrêté"));
+        assert!(!e.status().alive);
     }
 
     #[test]
@@ -162,5 +243,48 @@ mod tests {
         assert!(removed.contains(&"LD_LIBRARY_PATH".to_string()) && removed.contains(&"APPDIR".to_string()));
         std::env::remove_var("APPDIR");
         std::env::remove_var("LD_LIBRARY_PATH");
+    }
+
+    /// Cycle réel (sans fenêtre) : faux moteur = script shell qui annonce son port puis attend.
+    #[cfg(unix)]
+    #[test]
+    fn real_process_start_crash_detection_and_restart() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("eclipse-engine-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("faux-moteur.sh");
+        std::fs::write(&script, "#!/bin/sh\necho 'trace sur stderr' >&2\necho '{\"event\":\"ready\",\"port\":4321,\"token\":\"t\"}'\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("ECLIPSE_ENGINE", &script);
+        std::env::set_var("PNC_HOME", dir.join("donnees"));
+
+        let app = tauri::test::mock_builder().manage(Engine::default()).build(tauri::test::mock_context(tauri::test::noop_assets())).unwrap();
+        let handle = app.handle().clone();
+        start(&handle);
+        let engine = handle.state::<Engine>();
+        assert_eq!(engine.wait(Duration::from_secs(10)).unwrap().port, 4321);
+        assert!(engine.status().alive);
+
+        // plantage : le processus disparaît -> l'état passe en erreur
+        if let Some(c) = engine.child.lock().unwrap().as_mut() {
+            c.kill().unwrap();
+        }
+        let t0 = Instant::now();
+        while engine.status().error.is_none() && t0.elapsed() < Duration::from_secs(5) {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert_eq!(engine.status().error.as_deref(), Some("le moteur Eclipse s'est arrêté"));
+
+        // relance : nouveau processus prêt
+        engine.stop();
+        start(&handle);
+        assert_eq!(engine.wait(Duration::from_secs(10)).unwrap().token, "t");
+        assert!(engine.status().alive);
+        engine.stop();
+        let log = std::fs::read_to_string(dir.join("donnees").join("logs").join("engine-stderr.log")).unwrap();
+        assert!(log.contains("trace sur stderr"));
+        std::env::remove_var("ECLIPSE_ENGINE");
+        std::env::remove_var("PNC_HOME");
     }
 }

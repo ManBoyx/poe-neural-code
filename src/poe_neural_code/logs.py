@@ -31,13 +31,28 @@ class _Redact(logging.Filter):
         return True
 
 
+def logs_dir():
+    """Dossier des journaux : <données>/logs (moteur pnc.log, interface ui.log, sortie d'erreur engine-stderr.log)."""
+    d = data_dir() / "logs"
+    d.mkdir(exist_ok=True)
+    return d
+
+
 def get_logger(name: str = "pnc") -> logging.Logger:
+    """Journal <données>/logs/<name>.log, avec rotation (1 Mo, 3 anciens fichiers) et masquage des secrets.
+    Si le dossier de données change (PNC_HOME, tests), le fichier suit."""
     log = logging.getLogger(name)
-    if not log.handlers:
-        log.setLevel(logging.INFO)
-        h = logging.handlers.RotatingFileHandler(data_dir() / "pnc.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8")
-        h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-        h.addFilter(_Redact())
-        log.addHandler(h)
-        log.propagate = False
+    path = str(logs_dir() / f"{name}.log")
+    current = [h for h in log.handlers if isinstance(h, logging.handlers.RotatingFileHandler)]
+    if current and current[0].baseFilename == path:
+        return log
+    for h in current:
+        log.removeHandler(h)
+        h.close()
+    log.setLevel(logging.INFO)
+    h = logging.handlers.RotatingFileHandler(path, maxBytes=1_000_000, backupCount=3, encoding="utf-8")
+    h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    h.addFilter(_Redact())
+    log.addHandler(h)
+    log.propagate = False
     return log

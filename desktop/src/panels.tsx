@@ -1,6 +1,6 @@
 // Panneaux et fenêtres : consommation, connexions, sélecteur de modèle, réglages (dont mises à jour).
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { api, isDesktop, type Connections, type State, type Usage } from "./api";
+import { api, isDesktop, openLogs, type Connections, type State, type Usage } from "./api";
 import { I } from "./icons";
 
 const fmt = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n));
@@ -225,6 +225,9 @@ export function SettingsModal({ prefs, setPrefs, version, onClose, updates, disc
         <input class="text" value={dir} onInput={(e) => setDir((e.target as HTMLInputElement).value)} spellcheck={false} />
         <button class="btn" onClick={async () => { const err = await onSaveDir(dir); setDirMsg(err ?? "Enregistré."); }}>Enregistrer</button></div>
       {dirMsg && <p class="small muted">{dirMsg}</p>}
+      <div class="field"><label>Journaux (logs)</label>
+        <button class="btn" onClick={async () => { try { setDirMsg(`Logs : ${await openLogs()}`); } catch (e: any) { setDirMsg(String(e?.message ?? e)); } }}>Ouvrir les logs</button>
+        <span class="muted small">moteur, interface et erreurs de démarrage, rotation à 1 Mo</span></div>
       {isDesktop && updates}
       <p class="muted small">Eclipse {version}. Aucune télémétrie : seules vos requêtes aux fournisseurs d'IA et, si elle est activée, la vérification des mises à jour sur GitHub sortent de votre ordinateur.</p>
     </Modal>

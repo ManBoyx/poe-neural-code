@@ -8,5 +8,5 @@
   }
   window.addEventListener("error", function (e) { show((e.error && e.error.stack) || e.message || String(e)); });
   window.addEventListener("unhandledrejection", function (e) { show((e.reason && e.reason.stack) || String(e.reason)); });
-  setTimeout(function () { if (!window.__eclipseReady) show("l'interface ne s'est pas initialisée après 30 s (démarrage du moteur trop long ?)."); }, 30000);
+  setTimeout(function () { if (!window.__eclipseReady) show("le script de l'interface ne s'est pas chargé (fichier manquant ou bloqué)."); }, 30000);
 })();

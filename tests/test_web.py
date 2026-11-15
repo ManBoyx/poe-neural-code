@@ -208,3 +208,16 @@ def test_auto_edits_toggle_and_context_in_state(setup):
     assert c.post("/api/auto_edits", headers=AUTH, json={"on": True}).json()["auto_edits"] is True
     assert hub.sv.ctx.permissions.mode == "edits"
     assert c.post("/api/retry", headers=AUTH).status_code == 400  # rien à relancer
+
+
+def test_client_errors_are_logged_redacted_and_rate_limited(setup):
+    from poe_neural_code.logs import logs_dir
+    c, *_ = setup
+    assert c.post("/api/log", headers=AUTH, json={"level": "error", "message": "plantage avec sk-abcdefghijklmnop"}).json()["ok"]
+    text = (logs_dir() / "ui.log").read_text()
+    assert "plantage" in text and "sk-abcdefghijklmnop" not in text
+    for _ in range(70):
+        r = c.post("/api/log", headers=AUTH, json={"message": "x"}).json()
+    assert r.get("dropped") is True
+    logs = c.get("/api/logs", headers=AUTH).json()
+    assert logs["dir"].endswith("logs") and any(f["name"] == "ui.log" for f in logs["files"])

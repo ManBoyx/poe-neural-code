@@ -34,12 +34,15 @@ from .. import __version__, credentials, variants
 from ..agent import (AssistantDelta, AssistantMessage, DiffShown, Paused, StatusEvent, ThinkingEvent, ToolFinished,
                      ToolRequested, TurnDone, UsageEvent)
 from ..cli_agents import detect
+from ..logs import get_logger, logs_dir, redact
 from ..config import load_config, save_config
 from ..providers import all_specs, get_spec, has_credentials
 from ..services import Services, create_services
 from ..session import delete_session, list_sessions
 
 STATIC_DIR = Path(__file__).parent / "static"
+def log():
+    return get_logger("pnc")
 DESKTOP_ORIGINS = {"tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"}
 MAX_OUTPUT = 20_000
 
@@ -234,6 +237,7 @@ class Hub:
         try:
             await sv.run_user_turn(text, attachments=[Path(a) for a in attachments] if attachments else None)
         except Exception as e:  # noqa: BLE001
+            log().exception("tour de conversation (interface desktop)")
             self.publish({"type": "status", "text": f"Erreur : {e}", "level": "error"})
         finally:
             if not sv.session.title:
@@ -508,6 +512,30 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         hub.turn = asyncio.get_running_loop().create_task(hub.run_turn(e["text"]))
         return JSONResponse({"ok": True, "text": e["text"], "items": transcript(hub.sv)})
 
+    ui_budget = {"t": 0.0, "n": 0}
+
+    async def client_log(request):
+        """Erreurs de l'interface -> logs/ui.log (masquées, 4 000 caractères max, 60 par minute max)."""
+        now = time.time()
+        if now - ui_budget["t"] > 60:
+            ui_budget.update(t=now, n=0)
+        ui_budget["n"] += 1
+        if ui_budget["n"] > 60:
+            return JSONResponse({"ok": False, "dropped": True})
+        d = await body(request)
+        level = d.get("level") if d.get("level") in ("info", "warning", "error") else "error"
+        msg = redact(str(d.get("message", ""))[:4000])
+        getattr(get_logger("ui"), level)(msg)
+        return JSONResponse({"ok": True})
+
+    async def health(_request):
+        return JSONResponse({"ok": True, "busy": hub.busy})
+
+    async def logs(_request):
+        d = logs_dir()
+        files = [{"name": f.name, "size": f.stat().st_size} for f in sorted(d.iterdir()) if f.is_file()]
+        return JSONResponse({"dir": str(d), "files": files})
+
     async def remove(request):
         sid = request.path_params["sid"]
         if hub.sv is not None and hub.sv.session.id == sid:
@@ -638,7 +666,7 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         Route("/api/settings", settings, methods=["POST"]), Route("/api/memory", memory),
         Route("/api/memory/{iid:int}", forget, methods=["DELETE"]), Route("/api/files", files), Route("/api/file", file),
         Route("/api/upload", upload, methods=["POST"]), Route("/api/auto_edits", auto_edits, methods=["POST"]),
-        Route("/api/retry", retry, methods=["POST"]), Route("/api/prompt", prompt, methods=["POST"]),
+        Route("/api/retry", retry, methods=["POST"]), Route("/api/log", client_log, methods=["POST"]), Route("/api/logs", logs), Route("/api/health", health), Route("/api/prompt", prompt, methods=["POST"]),
         Route("/api/interrupt", interrupt, methods=["POST"]), Route("/api/permission", permission, methods=["POST"]),
         Route("/api/model", model, methods=["POST"]), Route("/api/effort", effort, methods=["POST"]),
         Route("/api/agent", agent, methods=["POST"]), Route("/api/connect", connect, methods=["POST"]),
@@ -646,7 +674,11 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         Route("/api/redo", undo, methods=["POST"]), Route("/api/events", events),
         Mount("/", StaticFiles(directory=STATIC_DIR, check_dir=False)),  # interface (mode navigateur), en dernier
     ]
-    app = Starlette(routes=routes, middleware=[Middleware(_Guard, token=token, port_ref=port_ref)])
+    async def on_error(request, exc):
+        log().exception("requête %s %s", request.method, request.url.path, exc_info=exc)
+        return JSONResponse({"error": f"erreur interne du moteur : {exc.__class__.__name__} (détails dans les logs)"}, status_code=500)
+
+    app = Starlette(routes=routes, middleware=[Middleware(_Guard, token=token, port_ref=port_ref)], exception_handlers={Exception: on_error})
     app.state.hub = hub
     return app
 
@@ -708,7 +740,8 @@ def serve(port: int = 0, open_browser: bool = False, workspace: str | None = Non
     config = uvicorn.Config(app, log_level="warning", lifespan="off", access_log=False)
     server = uvicorn.Server(config)
 
-    print(json.dumps({"event": "ready", "port": real_port, "token": token}), flush=True)
+    print(json.dumps({"event": "ready", "port": real_port, "token": token, "logs": str(logs_dir())}), flush=True)
+    log().info("serveur Eclipse Desktop prêt sur 127.0.0.1:%s", real_port)
     url = f"http://127.0.0.1:{real_port}/#token={token}"
     if open_browser:
         print(f"Eclipse : {url}", file=sys.stderr, flush=True)

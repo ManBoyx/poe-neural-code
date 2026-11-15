@@ -1,6 +1,6 @@
 // Eclipse Desktop : barre latérale des conversations, fil de discussion, saisie, et réglages.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { api, events, isDesktop, type Info, type PermissionEvent, type State, type TranscriptItem, type Upload, type Usage } from "./api";
+import { api, connect, events, health, isDesktop, openLogs, restartEngine, type Info, type PermissionEvent, type State, type TranscriptItem, type Upload, type Usage } from "./api";
 import { I } from "./icons";
 import { ConnectionsModal, DEFAULT_PREFS, ModelPicker, SettingsModal, UsageBody, type Prefs } from "./panels";
 import { Dialog, FilePreviewModal, FilesPanel, MemoryPanel, Palette, type Command, type DialogSpec } from "./side";
@@ -35,6 +35,13 @@ function group(ts: number): string {
 }
 
 export function App() {
+  const [phase, setPhase] = useState<"connecting" | "ready" | "failed">("connecting");
+  const [bootError, setBootError] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+  const [down, setDown] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const unsub = useRef<(() => void) | null>(null);
+  const updatesStarted = useRef(false);
   const [info, setInfo] = useState<Info | null>(null);
   const [state, setState] = useState<State>({ open: false, version: "" });
   const [items, setItems] = useState<Item[]>([]);
@@ -72,25 +79,71 @@ export function App() {
 
   const refreshInfo = useCallback(() => api.info().then(setInfo).catch(() => undefined), []);
   const refreshUsage = useCallback(() => api.usage().then(setUsage).catch(() => setUsage(null)), []);
-  const refreshState = useCallback(async () => {
-    const s = await api.state();
-    setState(s); setBusy(Boolean(s.busy)); setPending(s.pending_permissions ?? []);
-    return s;
+  // Rafraîchissements en arrière-plan : un échec (moteur en panne) est signalé par la bannière, pas par une exception.
+  const refreshState = useCallback(async (): Promise<State | null> => {
+    try {
+      const s = await api.state();
+      setState(s); setBusy(Boolean(s.busy)); setPending(s.pending_permissions ?? []);
+      return s;
+    } catch { return null; }
   }, []);
   const loadConversation = useCallback(async () => {
     const s = await refreshState();
+    if (!s) return;
     if (s.open) {
-      setItems(fromTranscript((await api.transcript()).items));
+      try { setItems(fromTranscript((await api.transcript()).items)); } catch { /* bannière */ }
       refreshUsage();
     } else setItems([]);
   }, []);
 
-  // Démarrage : informations, conversation éventuellement déjà ouverte, flux d'événements.
+  // --- cycle de vie du moteur : démarrage, panne, relance -----------------------------------------------------------
+  const attach_ = () => {
+    unsub.current?.();
+    unsub.current = events(onEvent, (ok) => {
+      setOnline(ok);
+      if (ok) { setDown(false); refreshState(); }
+      else setTimeout(async () => { if (!(await health())) setDown(true); }, 1500);
+    });
+  };
+  const init = async () => {
+    attach_();
+    await Promise.all([refreshInfo(), loadConversation()]);
+    if (isDesktop && !updatesStarted.current) { updatesStarted.current = true; startUpdates(); }
+  };
+  const boot = async () => {
+    setPhase("connecting"); setBootError(""); setElapsed(0);
+    const t0 = Date.now();
+    const tick = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 1000);
+    try {
+      await connect();
+      setPhase("ready");
+      await init();
+    } catch (e: any) {
+      setBootError(String(e?.message ?? e));
+      setPhase("failed");
+    } finally { clearInterval(tick); }
+  };
+  const restart = async () => {
+    setRestarting(true);
+    try {
+      if (isDesktop) {
+        await restartEngine();
+        setPhase("ready"); setDown(false); setBusy(false); setPending([]);
+        await init();
+        say("Moteur relancé. Une réponse en cours a pu être perdue : relancez-la si besoin.");
+      } else if (await health()) {
+        setDown(false); setPhase("ready"); await init();
+      } else say("Le moteur ne répond toujours pas : relancez « eclipse web » dans un terminal.");
+    } catch (e: any) {
+      setBootError(String(e?.message ?? e)); setPhase("failed");
+    } finally { setRestarting(false); }
+  };
   useEffect(() => {
-    refreshInfo();
-    loadConversation();
-    if (isDesktop) startUpdates();
-    return events(onEvent, (ok) => { setOnline(ok); if (ok) { refreshState(); } });
+    boot();
+    const hb = setInterval(async () => {
+      if (document.visibilityState === "visible" && unsub.current && !(await health())) setDown(true);
+    }, 15000);
+    return () => { clearInterval(hb); unsub.current?.(); };
   }, []);
 
   const onEvent = (e: any) => {
@@ -306,6 +359,31 @@ export function App() {
   );
 
   const effort = state.effort;
+  if (phase !== "ready") {
+    return (
+      <div class="splash">
+        <div class="logo"><span class="ico">{I.eclipse}</span></div>
+        {phase === "connecting" ? (
+          <>
+            <h1>Démarrage du moteur Eclipse…</h1>
+            <p class="muted"><span class="spinner" /> {elapsed} s</p>
+            {elapsed >= 20 && <p class="muted small">C'est plus long que d'habitude (premier lancement, disque lent ou antivirus qui analyse le moteur). Eclipse attend jusqu'à 60 s.</p>}
+          </>
+        ) : (
+          <>
+            <h1>Le moteur Eclipse n'a pas démarré</h1>
+            <p class="err">{bootError}</p>
+            <div class="row-center">
+              <button class="btn primary" disabled={restarting} onClick={isDesktop ? restart : boot}>{restarting ? "Relance…" : isDesktop ? "Relancer le moteur" : "Réessayer"}</button>
+              {isDesktop && <button class="btn" onClick={() => openLogs().then((d) => say(`Logs : ${d}`)).catch((e) => say(String(e)))}>Ouvrir les logs</button>}
+            </div>
+            {!isDesktop && <p class="muted small">Mode navigateur : relancez « eclipse web » dans un terminal pour obtenir une nouvelle adresse.</p>}
+          </>
+        )}
+        {toast && <div class="toast" role="status">{toast}</div>}
+      </div>
+    );
+  }
   return (
     <div class={`app ${sidebar ? "" : "no-sidebar"} ${panel && state.open ? "with-panel" : ""}`}>
       {/* Barre latérale */}
@@ -367,6 +445,14 @@ export function App() {
           )}
         </header>
 
+        {down && (
+          <div class="banner" role="alert">
+            <span class="ico">{I.warn}</span>
+            <span>Le moteur Eclipse ne répond plus.{isDesktop ? "" : " Relancez « eclipse web » dans un terminal si le problème persiste."}</span>
+            <span class="spacer" />
+            <button class="btn primary" disabled={restarting} onClick={restart}>{restarting ? "Relance…" : isDesktop ? "Relancer le moteur" : "Réessayer"}</button>
+          </div>
+        )}
         <Thread items={items} pending={pending} busy={busy} empty={welcome} onRetry={state.open ? retry : undefined}
           onDecide={(id, d) => api.permission(id, d).catch((e) => say(e.message))} />
 

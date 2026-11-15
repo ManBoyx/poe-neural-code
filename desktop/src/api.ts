@@ -50,9 +50,14 @@ export const isDesktop = typeof (window as any).__TAURI_INTERNALS__ !== "undefin
 let base = "";
 let token = "";
 
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const core = await import("@tauri-apps/api/core");
+  return core.invoke<T>(cmd, args);
+}
+
+/** Connexion au moteur. Desktop : attend qu'il soit prêt (Tauri, 60 s au plus). Navigateur : jeton de l'adresse. */
 export async function connect(): Promise<void> {
   if (isDesktop) {
-    const { invoke } = await import("@tauri-apps/api/core");
     const info = await invoke<{ port: number; token: string }>("engine_info");
     base = `http://127.0.0.1:${info.port}`;
     token = info.token;
@@ -68,6 +73,37 @@ export async function connect(): Promise<void> {
     base = location.origin;
     if (!token) throw new Error("Jeton absent : relancez « eclipse web » pour obtenir une adresse valide.");
   }
+}
+
+/** Relance du moteur (desktop) : nouveau processus, nouveau port, nouveau jeton. */
+export async function restartEngine(): Promise<void> {
+  const info = await invoke<{ port: number; token: string }>("engine_restart");
+  base = `http://127.0.0.1:${info.port}`;
+  token = info.token;
+}
+
+/** Le moteur répond-il ? (délai court, jamais d'exception) */
+export async function health(timeoutMs = 3000): Promise<boolean> {
+  if (!base) return false;
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const r = await fetch(`${base}/api/health`, { headers: { Authorization: `Bearer ${token}` }, signal: ctl.signal });
+    return r.ok;
+  } catch { return false; } finally { clearTimeout(t); }
+}
+
+/** Erreurs de l'interface -> logs/ui.log du moteur (sans bloquer, sans jamais lever). */
+export function logError(message: string, level: "error" | "warning" | "info" = "error"): void {
+  if (!base) return;
+  fetch(`${base}/api/log`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ level, message: message.slice(0, 4000) }) }).catch(() => undefined);
+}
+
+/** Ouvre le dossier des logs (desktop) ; dans le navigateur, renvoie seulement son chemin. */
+export async function openLogs(): Promise<string> {
+  if (isDesktop) return invoke<string>("open_logs");
+  return (await call<{ dir: string }>("GET", "/api/logs")).dir;
 }
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {

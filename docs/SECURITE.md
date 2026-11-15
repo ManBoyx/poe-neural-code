@@ -11,7 +11,7 @@
   « fichier » de `keyrings.alt`…), Eclipse **refuse d'enregistrer** la clé et indique la variable d'environnement à
   utiliser. L'ancien repli `credentials.json` (non chiffré) est supprimé : un tel fichier existant est transféré dans
   le trousseau, puis effacé.
-- **Jamais dans les journaux :** `pnc.log` masque les motifs de clés (`sk-…`, `ghp_…`, `Bearer …`, `api_key=…`) et la
+- **Jamais dans les journaux :** `logs/pnc.log` (et `logs/ui.log`) masquent les motifs de clés (`sk-…`, `ghp_…`, `Bearer …`, `api_key=…`) et la
   valeur de `POE_API_KEY`. Les clés saisies sont masquées à l'écran et ne sont jamais affichées en entier (`mask`).
 - **Jamais transmises aux programmes lancés :** `POE_API_KEY` est retirée de l'environnement des commandes et agents.
 - **Jamais dans le dépôt :** `.gitignore` exclut `*.jks`, `*.keystore` et `local.properties`. Les tests utilisent un

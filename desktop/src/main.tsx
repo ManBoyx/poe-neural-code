@@ -1,23 +1,12 @@
 import { render } from "preact";
 import "highlight.js/styles/github-dark.css";
+import { logError } from "./api";
 import { App } from "./app";
-import { connect } from "./api";
 import "./styles.css";
 
-const root = document.getElementById("app")!;
-connect()
-  .then(() => {
-    render(<App />, root);
-    (window as any).__eclipseReady = true;
-  })
-  .catch((e) => {
-    (window as any).__eclipseReady = true;
-    render(
-      <div class="fatal">
-        <h1>Eclipse ne peut pas joindre son moteur</h1>
-        <p>{String(e?.message ?? e)}</p>
-        <button class="btn primary" onClick={() => location.reload()}>Réessayer</button>
-      </div>,
-      root,
-    );
-  });
+// L'interface s'affiche tout de suite ; c'est elle qui attend le moteur (écran de démarrage, échec, panne).
+render(<App />, document.getElementById("app")!);
+(window as any).__eclipseReady = true; // boot.js ne sert plus qu'aux erreurs de chargement du script
+
+addEventListener("error", (e) => logError(`window.error: ${e.message} @ ${e.filename}:${e.lineno}`));
+addEventListener("unhandledrejection", (e) => logError(`promesse rejetée: ${(e.reason && (e.reason.stack || e.reason.message)) || e.reason}`));
