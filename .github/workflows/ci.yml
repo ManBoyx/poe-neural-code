@@ -52,8 +52,11 @@ jobs:
           npx tsc --noEmit
           npm run build
           npm audit --omit=dev
-      - working-directory: desktop/src-tauri
-        run: cargo test --release -- --test-threads=1  # certains tests modifient des variables d'environnement
+      - name: "Tests Rust (dont signature et montée 0.2 -> 0.3 avec des clés JETABLES générées ici)"
+        run: |
+          packaging/release/prepare-signtest.sh "$RUNNER_TEMP/signtest"
+          cd desktop/src-tauri
+          ECLIPSE_SIGNTEST="$RUNNER_TEMP/signtest" cargo test --release -- --test-threads=1
 
   android:
     name: Application Android (tests JVM, dont un vrai serveur SSH)

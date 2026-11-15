@@ -217,3 +217,43 @@ def test_conso_tokens_evites_et_methode(page):
     expect(page.locator(".usage")).to_contain_text("Tokens évités (estimation)")
     page.get_by_text("Comment c'est calculé").click()
     expect(page.locator(".method p")).to_contain_text("Estimation, pas une mesure du fournisseur")
+
+
+# --- Étape D : mise à jour 0.2.x -> 0.3.0 (application desktop simulée) -------------------------------------------------
+
+UPDATE = ("{version: '0.3.0', current: '0.2.0', date: '2026-11-16', notes: '## Nouveautés\\\\n- Relance du moteur\\\\n- Mémoire éditable',"
+          " sha256: 'ab'.repeat(32), can_install: true, reason: null, page: 'https://github.com/ManBoyx/eclipse-releases/releases/tag/v0.3.0'}")
+
+
+def _desktop(browser, server, install_result: str):
+    pg = browser.new_page()
+    pg.add_init_script(tauri_stub(
+        "(cmd) => cmd === 'engine_info' ? Promise.resolve({port: %d, token: '%s'})"
+        " : cmd === 'update_check' ? Promise.resolve(%s)"
+        " : cmd === 'update_install' ? %s : Promise.reject('non simulé')" % (server["port"], server["token"], UPDATE, install_result)))
+    pg.goto(server["url"] + "/")
+    pg.get_by_text("Que voulez-vous faire").wait_for(timeout=10_000)
+    pg.keyboard.press("Control+,")
+    pg.get_by_role("button", name="Vérifier maintenant").click()
+    expect(pg.get_by_text("Version 0.3.0 disponible")).to_be_visible()
+    pg.keyboard.press("Escape")
+    pg.get_by_role("button", name="Mise à jour 0.3.0").click()
+    return pg
+
+
+def test_mise_a_jour_affiche_le_journal_avant_installation(browser, server):
+    pg = _desktop(browser, server, "new Promise(() => {})")
+    dlg = pg.locator(".modal", has_text="Eclipse 0.3.0")
+    expect(dlg).to_contain_text("Version installée : 0.2.0")
+    expect(dlg.locator(".changelog")).to_contain_text("Mémoire éditable")
+    expect(dlg).to_contain_text("vérifie l'empreinte SHA-256")
+    dlg.get_by_role("button", name="Installer").click()
+    expect(dlg).to_contain_text("Téléchargement")
+
+
+def test_mise_a_jour_refusee_si_signature_invalide(browser, server):
+    pg = _desktop(browser, server, "Promise.reject('mise à jour refusée : signature invalide')")
+    dlg = pg.locator(".modal", has_text="Eclipse 0.3.0")
+    dlg.get_by_role("button", name="Installer").click()
+    expect(dlg.locator(".err")).to_contain_text("signature invalide")
+    expect(dlg.get_by_role("button", name="Plus tard")).to_be_enabled()
