@@ -28,7 +28,7 @@ function Markdown({ text }: { text: string }) {
   return <div class="md" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />;
 }
 
-function DiffView({ diff }: { diff: string }) {
+export function DiffView({ diff }: { diff: string }) {
   return (
     <pre class="diff">
       {diff.split("\n").map((l, i) => (
@@ -92,17 +92,20 @@ export function PermissionCard({ p, onDecide }: { p: PermissionEvent; onDecide: 
   );
 }
 
-export function Thread({ items, pending, busy, onDecide, empty, onRetry }: {
+export function Thread({ items, pending, busy, onDecide, empty, onRetry, showThinking = true }: {
   items: Item[]; pending: PermissionEvent[]; busy: boolean; onDecide: (id: string, d: "once" | "session" | "deny") => void; empty: preact.ComponentChildren;
-  onRetry?: () => void;
+  onRetry?: () => void; showThinking?: boolean;
 }) {
   const lastAssistant = items.reduce((acc, it, i) => (it.kind === "assistant" ? i : acc), -1);
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  // Défilement automatique seulement quand le CONTENU change (pas à chaque rafraîchissement de l'application)
+  const last = items[items.length - 1] as any;
+  const signature = `${items.length}|${last?.text?.length ?? 0}|${last?.output?.length ?? 0}|${last?.ok}|${pending.map((p) => p.id).join(",")}|${busy}`;
   useEffect(() => {
     const el = ref.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
-  });
+  }, [signature]);
   const onScroll = () => {
     const el = ref.current!;
     stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -140,12 +143,12 @@ export function Thread({ items, pending, busy, onDecide, empty, onRetry }: {
                   </div>
                 )}
               </div>);
-            case "thinking": return <Thinking key={i} it={it} />;
+            case "thinking": return showThinking ? <Thinking key={i} it={it} /> : null;
             case "tool": return <ToolCard key={it.id || i} it={it} />;
             case "note": return <div key={i} class={`note ${it.level}`}><span class="ico">{it.level === "error" ? I.error : it.level === "warn" ? I.warn : I.info}</span>{it.text}</div>;
           }
         })}
-        {pending.map((p) => <PermissionCard key={p.id} p={p} onDecide={(d) => onDecide(p.id, d)} />)}
+        <div class="perms">{pending.map((p) => <PermissionCard key={p.id} p={p} onDecide={(d) => onDecide(p.id, d)} />)}</div>
         {busy && pending.length === 0 && <div class="working"><span class="dots"><i /><i /><i /></span> Eclipse travaille…</div>}
       </div>
     </div>

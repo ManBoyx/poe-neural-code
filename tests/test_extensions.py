@@ -282,12 +282,45 @@ def test_undo_redo_restores_files_and_conversation(tmp_path):
     assert sv.redo() is None
 
 
-def test_undo_without_git_only_conversation(tmp_path):
+def test_undo_without_git_uses_shadow_repo(tmp_path):
     sv, ev, asked, proj = mk(tmp_path, [[tc("write_file", {"path": "a.txt", "content": "1"})], [TextDelta("ok")]])
+    assert sv.snap.shadow and not (proj / ".git").exists()  # dépôt fantôme dans les données d'Eclipse, rien dans le projet
     run(sv, "x")
     r = sv.undo()
-    assert r["git"] is False and (proj / "a.txt").exists()  # fichiers non restaurés hors Git (annoncé à l'utilisateur)
+    assert r["git"] is True and not (proj / "a.txt").exists()  # fichier créé par l'IA : retiré
     assert sv.agent.messages == []
+    assert list(proj.iterdir()) == []
+
+
+def test_shadow_repo_refused_for_big_folders_and_home(tmp_path, monkeypatch):
+    from poe_neural_code import undo as U
+    big = tmp_path / "gros"
+    big.mkdir()
+    for i in range(6):
+        (big / f"f{i}.txt").write_text("x")
+    monkeypatch.setattr(U, "SHADOW_MAX_FILES", 5)
+    assert not U.small_enough(big, max_files=5)
+    assert not U.Snapshots(big, shadow_dir=tmp_path / "ombre").available  # repli : conversation seule (annoncé)
+    monkeypatch.setattr(U.Path, "home", staticmethod(lambda: big))
+    assert not U.Snapshots(big, shadow_dir=tmp_path / "ombre2").available  # jamais tout le dossier personnel
+
+
+def test_changes_lists_added_modified_deleted(tmp_path):
+    from poe_neural_code.undo import Snapshots
+    proj = tmp_path / "p"
+    proj.mkdir()
+    (proj / "garde.txt").write_text("v1\n")
+    (proj / "supprime.txt").write_text("x\n")
+    snap = Snapshots(proj, shadow_dir=tmp_path / "ombre")
+    base = snap.snapshot()
+    (proj / "garde.txt").write_text("v2\n")
+    (proj / "supprime.txt").unlink()
+    (proj / "nouveau.txt").write_text("n\n")
+    ch = snap.changes(base)
+    assert sorted((f["status"], f["path"]) for f in ch["files"]) == [("A", "nouveau.txt"), ("D", "supprime.txt"), ("M", "garde.txt")]
+    assert "-v1" in ch["diff"] and "+v2" in ch["diff"]
+    snap.restore(base)
+    assert (proj / "garde.txt").read_text() == "v1\n" and (proj / "supprime.txt").exists() and not (proj / "nouveau.txt").exists()
 
 
 def test_undo_empty_and_new_turn_clears_redo(tmp_path):

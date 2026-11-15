@@ -221,3 +221,68 @@ def test_client_errors_are_logged_redacted_and_rate_limited(setup):
     assert r.get("dropped") is True
     logs = c.get("/api/logs", headers=AUTH).json()
     assert logs["dir"].endswith("logs") and any(f["name"] == "ui.log" for f in logs["files"])
+
+
+def _turn(c, hub, text):
+    c.post("/api/prompt", headers=AUTH, json={"text": text})
+    assert wait(lambda: not hub.busy)
+
+
+def test_changes_and_revert_all_in_a_plain_folder(setup):
+    c, hub, turns, proj = setup
+    (proj / "avant.txt").write_text("v1\n")
+    c.post("/api/open", headers=AUTH, json={"workspace": str(proj)})
+    assert hub.sv.session.baseline_tree and hub.sv.snap.shadow  # pas de Git : dépôt fantôme
+    (proj / "avant.txt").write_text("v2\n")
+    (proj / "cree.txt").write_text("nouveau\n")
+    ch = c.get("/api/changes", headers=AUTH).json()
+    assert {(f["status"], f["path"]) for f in ch["files"]} == {("M", "avant.txt"), ("A", "cree.txt")} and "+v2" in ch["diff"]
+    r = c.post("/api/changes/revert", headers=AUTH).json()
+    assert r["ok"] and set(r["touched"]) >= {"avant.txt", "cree.txt"}
+    assert (proj / "avant.txt").read_text() == "v1\n" and not (proj / "cree.txt").exists()
+    assert c.get("/api/changes", headers=AUTH).json()["files"] == []
+
+
+def test_export_markdown_with_tool_summaries(setup, tmp_path):
+    c, hub, turns, proj = setup
+    turns += [[ToolCall("t1", "list_dir", json.dumps({"path": "."}))], [TextDelta("Voilà le **résultat**.")]]
+    c.post("/api/open", headers=AUTH, json={"workspace": str(proj)})
+    _turn(c, hub, "liste les fichiers")
+    md = c.get("/api/export", headers=AUTH).json()
+    assert md["filename"] == "liste les fichiers.md"
+    assert "## Vous\n\nliste les fichiers" in md["markdown"] and "> Outil `list_dir` — . (fait)" in md["markdown"]
+    assert "Voilà le **résultat**." in md["markdown"]
+    out = tmp_path / "export.md"
+    assert c.post("/api/export", headers=AUTH, json={"path": str(out)}).json()["ok"] and out.read_text().startswith("# liste les fichiers")
+    assert c.post("/api/export", headers=AUTH, json={"path": "relatif.md"}).status_code == 400
+    assert c.post("/api/export", headers=AUTH, json={"path": str(tmp_path / "x.sh")}).status_code == 400
+
+
+def test_search_in_conversation_content(setup):
+    c, hub, turns, proj = setup
+    turns += [[TextDelta("La base choisie est PostgreSQL.")]]
+    c.post("/api/open", headers=AUTH, json={"workspace": str(proj)})
+    _turn(c, hub, "quelle base de données ?")
+    res = c.get("/api/search", headers=AUTH, params={"q": "postgresql"}).json()["results"]
+    assert len(res) == 1 and res[0]["id"] == hub.sv.session.id and "PostgreSQL" in res[0]["snippet"]
+    assert c.get("/api/search", headers=AUTH, params={"q": "x"}).json()["results"] == []
+
+
+def test_prompt_commands_edit_compact_and_fork(setup):
+    c, hub, turns, proj = setup
+    turns += [[TextDelta("relecture faite")], [TextDelta("deuxième")]]
+    c.post("/api/open", headers=AUTH, json={"workspace": str(proj)})
+    names = {x["name"] for x in c.get("/api/commands", headers=AUTH).json()["commands"]}
+    assert {"review", "fix", "explain", "tests", "commit", "plan"} <= names
+    assert c.post("/api/command", headers=AUTH, json={"name": "inconnue"}).status_code == 400
+    r = c.post("/api/command", headers=AUTH, json={"name": "review", "args": "src/"}).json()
+    assert r["shown"] == "/review src/"
+    assert wait(lambda: not hub.busy)
+    assert "src/" in hub.sv.provider.calls[-1]["messages"][-1]["content"]  # modèle de prompt développé avec l'argument
+    e = c.post("/api/edit", headers=AUTH).json()
+    assert e["ok"] and "src/" in e["text"] and e["items"] == []
+    assert "Rien à compacter" in c.post("/api/compact", headers=AUTH).json()["message"]
+    _turn(c, hub, "un")
+    old = hub.sv.session.id
+    st = c.post("/api/fork", headers=AUTH).json()
+    assert st["session"]["id"] != old and st["session"]["title"].endswith("(fork)")

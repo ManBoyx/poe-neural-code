@@ -39,7 +39,11 @@ async def doctor(sv, transport=None) -> list[Check]:
     except sqlite3.Error:
         out.append(Check("SQLite FTS5 (recherche mémoire)", "fail", "absent : recherche mémoire impossible"))
     out.append(Check("Git (/undo, /diff)", "ok" if shutil.which("git") else "warn", "disponible" if shutil.which("git") else "absent : /undo ne restaurera pas les fichiers"))
-    out.append(Check("Projet sous Git", "ok" if sv.snap.available else "warn", str(sv.ctx.workspace.root) if sv.snap.available else "non : /undo n'annulera que la conversation"))
+    real_git = sv.snap.available and not sv.snap.shadow
+    out.append(Check("Projet sous Git", "ok" if real_git else "warn", str(sv.ctx.workspace.root) if real_git else "non"))
+    out.append(Check("Annulation des fichiers (/undo, /diff)", "ok" if sv.snap.available else "warn",
+                     ("instantanés Git du projet" if real_git else "dépôt fantôme dans les données d'Eclipse (rien n'est écrit dans le projet)")
+                     if sv.snap.available else "indisponible (dossier trop gros ou Git absent) : /undo n'annulera que la conversation"))
     out.append(Check("Fournisseur actif", "ok" if (sv.is_cli or sv.provider.configured()) else "fail",
                      sv.mode_label + ("" if sv.is_cli or sv.provider.configured() else " — sans clé (/connect)")))
     keys = [s.label for s in all_specs() if s.key_required and has_credentials(s)]

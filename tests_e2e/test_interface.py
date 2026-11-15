@@ -118,3 +118,81 @@ def test_moteur_absent_puis_relance(browser, server):
     expect(pg.get_by_text("moteur Eclipse introuvable")).to_be_visible()
     pg.get_by_role("button", name="Relancer le moteur").click()
     expect(pg.get_by_text("Que voulez-vous faire")).to_be_visible(timeout=10_000)
+
+
+# --- Étape B ---------------------------------------------------------------------------------------------------------
+
+def test_arobase_autocompletion_et_fichier_tronque(page, server):
+    (server["project"] / "gros.txt").write_text("x" * 50_000, encoding="utf-8")
+    page.get_by_title("Fichiers du dossier").click()  # rafraîchit la liste des fichiers
+    box = page.locator("textarea")
+    box.click()
+    page.keyboard.type("Regarde @gro")
+    expect(page.locator(".sg").first).to_contain_text("@gros.txt")
+    expect(page.locator(".sg").first).to_contain_text("sera tronqué")
+    page.keyboard.press("Enter")
+    expect(box).to_have_value("Regarde @gros.txt ")
+    expect(page.locator(".ref.cut")).to_contain_text("tronqué à 40 k car.")
+    page.keyboard.type("et @absent.py")
+    expect(page.locator(".ref.missing")).to_contain_text("introuvable")
+
+
+def test_commandes_slash(page):
+    box = page.locator("textarea")
+    box.click()
+    page.keyboard.type("/me")
+    expect(page.locator(".sg").first).to_contain_text("/memory")
+    page.keyboard.press("Enter")  # action sans argument : exécutée tout de suite
+    expect(page.locator(".memory")).to_be_visible()
+    expect(box).to_have_value("")
+    page.keyboard.type("/inconnue")
+    page.keyboard.press("Escape")
+    page.keyboard.press("Enter")
+    expect(page.locator(".toast")).to_contain_text("Commande inconnue")
+
+
+def test_commande_prompt_review(page):
+    page.locator("textarea").fill("/review src/")
+    page.keyboard.press("Enter")
+    expect(page.locator(".msg.user").last).to_have_text("/review src/")
+
+
+def test_export_markdown_navigateur(page):
+    page.locator("textarea").fill("Bonjour")
+    page.keyboard.press("Enter")
+    expect(page.locator(".perm")).to_be_visible(timeout=10_000)
+    page.get_by_role("button", name="Autoriser une fois").click()
+    expect(page.locator(".msg.assistant").last).to_contain_text("Voulez-vous", timeout=10_000)
+    with page.expect_download() as dl:
+        page.keyboard.press("Control+k")
+        page.keyboard.type("exporter")
+        page.keyboard.press("Enter")
+    d = dl.value
+    assert d.suggested_filename == "Bonjour.md"
+    text = open(d.path(), encoding="utf-8").read()
+    assert "## Vous\n\nBonjour" in text and "> Outil `list_dir`" in text
+
+
+def test_recherche_dans_le_contenu(page):
+    page.locator("textarea").fill("Parlons de cryptographie")
+    page.keyboard.press("Enter")
+    expect(page.locator(".perm")).to_be_visible(timeout=10_000)
+    page.get_by_role("button", name="Refuser").click()
+    page.locator(".side-search input").fill("cryptographie")
+    expect(page.locator(".hitconv").first).to_contain_text("cryptographie")
+
+
+def test_diff_global_et_tout_annuler(page, server):
+    (server["project"] / "nouveau.md").write_text("créé par l'IA\n", encoding="utf-8")
+    (server["project"] / "README.md").write_text("# Démo modifiée\n", encoding="utf-8")
+    page.keyboard.press("Control+k")
+    page.keyboard.type("modifications des fichiers")
+    page.keyboard.press("Enter")
+    modal = page.locator(".modal", has_text="Modifications de la discussion")
+    expect(modal.locator(".chg.A", has_text="nouveau.md")).to_be_visible()
+    expect(modal.locator(".diff")).to_contain_text("+# Démo modifiée")
+    modal.get_by_role("button", name="Tout annuler").click()
+    page.locator(".modal", has_text="Tout annuler ?").get_by_role("button", name="Annuler 3 modification(s)").click()
+    expect(page.locator(".toast")).to_contain_text("restauré")
+    assert not (server["project"] / "nouveau.md").exists()
+    assert (server["project"] / "README.md").read_text(encoding="utf-8") == "# Démo\n"

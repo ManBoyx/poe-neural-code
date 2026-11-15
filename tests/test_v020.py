@@ -211,6 +211,7 @@ def test_doctor_reports_checks(tmp_path):
     names = {c.name: c for c in checks}
     assert names["Python ≥ 3.11"].status == "ok" and names["SQLite FTS5 (recherche mémoire)"].status == "ok"
     assert names["Réseau : Poe"].status == "ok" and names["Projet sous Git"].status == "warn"
+    assert names["Annulation des fichiers (/undo, /diff)"].status == "ok" and "fantôme" in names["Annulation des fichiers (/undo, /diff)"].detail
     assert names["Fournisseur actif"].status in ("ok", "fail")
 
 

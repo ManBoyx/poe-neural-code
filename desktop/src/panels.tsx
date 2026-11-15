@@ -200,8 +200,8 @@ export function ConnectionsModal({ onClose, onConnected }: { onClose: () => void
 }
 
 // --- Réglages -------------------------------------------------------------------------------------------------------
-export interface Prefs { theme: "system" | "dark" | "light"; fontSize: number; enterSends: boolean }
-export const DEFAULT_PREFS: Prefs = { theme: "system", fontSize: 15, enterSends: true };
+export interface Prefs { theme: "system" | "dark" | "light"; fontSize: number; enterSends: boolean; showThinking: boolean }
+export const DEFAULT_PREFS: Prefs = { theme: "system", fontSize: 15, enterSends: true, showThinking: true };
 
 export function SettingsModal({ prefs, setPrefs, version, onClose, updates, discussionsDir, onSaveDir }: {
   prefs: Prefs; setPrefs: (p: Prefs) => void; version: string; onClose: () => void; updates: preact.ComponentChildren;
