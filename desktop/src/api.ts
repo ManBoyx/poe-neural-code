@@ -18,7 +18,7 @@ export interface State {
   permissions?: string; todos?: Todo[]; pending_permissions?: PermissionEvent[];
   auto_edits?: boolean; context?: { used: number; window: number | null }; ref_limit?: number;
 }
-export interface MemoryItem { id: number; kind: string; key: string | null; content: string; created: number; sources: Record<string, unknown>[] }
+export interface MemoryItem { id: number; kind: string; key: string | null; content: string; created: number; pinned: boolean; sources: Record<string, unknown>[] }
 export interface MemoryView {
   items: MemoryItem[]; hits: { ref: string; layer: string; text: string }[];
   stats: { items: number; summaries: number; archives: number; conversations: number; cache_hits: number; cache_misses: number };
@@ -40,6 +40,7 @@ export interface Usage {
   subscription: boolean; mode_label: string; session_tokens: { in: number; out: number }; now: number;
   totals: { requests: number; usd: number; points: Record<string, number>; tokens_in: Record<string, number>; tokens_out: Record<string, number>; points_unavailable_requests: number };
   envelopes: Envelope[];
+  savings?: { partial_reads: number; context_trim: number; cache_hits: number; method: string };
   claude?: { model: string | null; cache_read_tokens: number; cost_usd_equiv: number;
     windows: { key: string; name: string; seconds: number | null; utilization: number | null; resets_at: number | null }[] };
 }
@@ -132,6 +133,7 @@ export const api = {
   remove: (id: string) => call<{ deleted: boolean }>("DELETE", `/api/sessions/${encodeURIComponent(id)}`),
   prompt: (text: string, attachments: string[] = []) => call<{ ok: boolean }>("POST", "/api/prompt", { text, attachments }),
   memory: (q = "") => call<MemoryView>("GET", `/api/memory${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  editMemory: (id: number, b: { content?: string; pinned?: boolean }) => call<{ ok: boolean; id: number }>("POST", `/api/memory/${id}/edit`, b),
   forget: (id: number) => call<{ ok: boolean }>("DELETE", `/api/memory/${id}`),
   files: () => call<{ root: string; files: FileEntry[] }>("GET", "/api/files"),
   file: (path: string) => call<FilePreview>("GET", `/api/file?path=${encodeURIComponent(path)}`),

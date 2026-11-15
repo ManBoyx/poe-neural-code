@@ -65,6 +65,10 @@ class ReadFile(Tool):
         lines = data.decode("utf-8", errors="replace").splitlines()
         s, e = args.get("start", 1), args.get("end", len(lines))
         txt = "\n".join(f"{i}\t{l}" for i, l in enumerate(lines[s - 1:e], s))
+        if s > 1 or e < len(lines):  # lecture partielle : tokens du fichier entier non envoyés (estimation)
+            from ..memory.engine import estimate_tokens
+            full = estimate_tokens("\n".join(f"{i}\t{l}" for i, l in enumerate(lines, 1)))
+            ctx.savings["partial_reads"] = ctx.savings.get("partial_reads", 0) + max(0, full - estimate_tokens(txt))
         note = ""
         if len(txt) > MAX_READ:
             txt, note = txt[:MAX_READ], f"\n[… tronqué à {MAX_READ} caractères : utilisez start/end]"

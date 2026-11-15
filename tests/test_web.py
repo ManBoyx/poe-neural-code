@@ -286,3 +286,45 @@ def test_prompt_commands_edit_compact_and_fork(setup):
     old = hub.sv.session.id
     st = c.post("/api/fork", headers=AUTH).json()
     assert st["session"]["id"] != old and st["session"]["title"].endswith("(fork)")
+
+
+def test_tokens_saved_partial_reads_and_context_trim(setup):
+    c, hub, turns, proj = setup
+    (proj / "long.py").write_text("\n".join(f"ligne_{i} = {i} * 1000" for i in range(400)), encoding="utf-8")
+    turns += [[ToolCall("r1", "read_file", json.dumps({"path": "long.py", "start": 1, "end": 10}))], [TextDelta("lu")],
+              [ToolCall("r2", "read_file", json.dumps({"path": "long.py"}))], [TextDelta("fini")], [TextDelta("encore")]]
+    c.post("/api/open", headers=AUTH, json={"workspace": str(proj)})
+    _turn(c, hub, "lis le début")
+    s = c.get("/api/usage", headers=AUTH).json()["savings"]
+    assert s["partial_reads"] > 2000 and "Estimation" in s["method"]
+    # contexte allégé : on force une petite fenêtre, les anciens résultats d'outils sont retirés et comptés
+    hub.sv.config.context_window_override = 2600
+    _turn(c, hub, "lis tout")
+    _turn(c, hub, "et maintenant ?")
+    s2 = c.get("/api/usage", headers=AUTH).json()["savings"]
+    assert s2["context_trim"] > 0
+    assert hub.sv.session.savings["context_trim"] == s2["context_trim"]  # persisté avec la session
+
+
+def test_memory_edit_and_pin_always_injected(setup):
+    from poe_neural_code.memory.context import build_context
+    c, hub, turns, proj = setup
+    c.post("/api/open", headers=AUTH, json={"workspace": str(proj)})
+    sv = hub.sv
+    d = sv.session.district_id
+    iid, _ = sv.memory.add_item(d, "fact", "Le port du serveur est 8080", key="port")
+    for i in range(60):  # beaucoup de notes : le budget de contexte est dépassé
+        sv.memory.add_item(d, "fact", f"Détail numéro {i} " + "bla " * 30)
+    r = c.post(f"/api/memory/{iid}/edit", headers=AUTH, json={"content": "Le port du serveur est 9090"}).json()
+    new = r["id"]
+    assert new != iid and sv.memory.one("SELECT status FROM items WHERE id=?", (iid,))["status"] == "superseded"
+    assert c.post(f"/api/memory/{new}/edit", headers=AUTH, json={"content": "  "}).status_code == 400
+    pack = build_context(sv.memory, d, None, token_budget=300)
+    assert "9090" not in pack.text  # budget dépassé : la note n'y figure pas forcément
+    assert c.post(f"/api/memory/{new}/edit", headers=AUTH, json={"pinned": True}).json()["ok"]
+    pack = build_context(sv.memory, d, None, token_budget=300)
+    assert "Notes épinglées" in pack.text and "9090" in pack.text  # épinglée : toujours fournie, même hors budget
+    items = c.get("/api/memory", headers=AUTH).json()["items"]
+    assert items[0]["pinned"] and "9090" in items[0]["content"]
+    r2 = c.post(f"/api/memory/{new}/edit", headers=AUTH, json={"content": "Le port du serveur est 7070"}).json()
+    assert sv.memory.one("SELECT pinned FROM items WHERE id=?", (r2["id"],))["pinned"] == 1  # l'épinglage suit la nouvelle version

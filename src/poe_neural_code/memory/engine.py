@@ -90,6 +90,10 @@ class Memory:
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(items)")}
+        if "pinned" not in cols:  # migration douce des bases existantes
+            self.conn.execute("ALTER TABLE items ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+            self.conn.commit()
         self.lock = threading.RLock()
 
     def close(self) -> None:
@@ -180,6 +184,13 @@ class Memory:
         dept = self.department_id(district_id, KIND_TO_DEPT[kind])
         contradiction = None
         with self.lock:
+            if not replaces:
+                # Doublon exact (même type, même texte normalisé, encore actif) : on renvoie la note existante.
+                # Un doublon serait réinjecté à chaque tour pour rien (coût en tokens).
+                for o in self.conn.execute("SELECT id, content FROM items WHERE district_id=? AND kind=? AND status='active'",
+                                           (district_id, kind)).fetchall():
+                    if _norm(o["content"]) == _norm(content):
+                        return o["id"], None
             if replaces:
                 self.conn.execute("UPDATE items SET status='superseded' WHERE id=?", (replaces,))
             elif key and kind in CONTRADICTABLE:
@@ -203,6 +214,35 @@ class Memory:
                         (district_id, o["id"], iid, time.time(), f"clé « {key} » : valeurs différentes")).lastrowid
             self.conn.commit()
         return iid, contradiction
+
+    MAX_PINNED = 40
+
+    def set_pinned(self, item_id: int, pinned: bool) -> None:
+        """Une note épinglée est TOUJOURS fournie au modèle (hors budget), dans la limite de MAX_PINNED notes."""
+        with self.lock:
+            if pinned:
+                row = self.conn.execute("SELECT district_id FROM items WHERE id=?", (item_id,)).fetchone()
+                n = self.conn.execute("SELECT COUNT(*) FROM items WHERE district_id=? AND pinned=1 AND status='active'",
+                                      (row["district_id"],)).fetchone()[0] if row else 0
+                if n >= self.MAX_PINNED:
+                    raise ValueError(f"au plus {self.MAX_PINNED} notes épinglées par dossier")
+            self.conn.execute("UPDATE items SET pinned=? WHERE id=?", (1 if pinned else 0, item_id))
+            self.conn.commit()
+
+    def edit_item(self, item_id: int, content: str) -> int:
+        """Nouvelle version d'une note (l'ancienne passe 'superseded', historique conservé) ; l'épinglage est conservé."""
+        old = self.one("SELECT * FROM items WHERE id=?", (item_id,))
+        if old is None:
+            raise KeyError(item_id)
+        if old["content"].strip() == content.strip():
+            return item_id
+        new_id, _ = self.add_item(old["district_id"], old["kind"], content.strip(), key=old["key"], replaces=item_id,
+                                  rationale=old["rationale"] or "")
+        if old["pinned"]:
+            with self.lock:
+                self.conn.execute("UPDATE items SET pinned=1 WHERE id=?", (new_id,))
+                self.conn.commit()
+        return new_id
 
     def set_item_status(self, item_id: int, status: str) -> None:
         self._w("UPDATE items SET status=? WHERE id=?", (status, item_id))

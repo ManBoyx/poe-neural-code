@@ -48,7 +48,7 @@ def test_custom_adapters_from_agents_json():
 def test_build_command_variants():
     op, gm = CA.get_adapter("opencode"), CA.get_adapter("gemini")
     cmd, stdin = CA.build_command(op, "/b/opencode", "fais X", model="p/m#high", plan=True, session_id="ses_1")
-    assert cmd == ["/b/opencode", "run", "--format", "json", "--agent", "plan", "--model", "p/m#high", "--session", "ses_1", "fais X"] and stdin is None
+    assert cmd == ["/b/opencode", "run", "--standalone", "--format", "json", "--agent", "plan", "--model", "p/m#high", "--session", "ses_1", "fais X"] and stdin is None
     cmd, _ = CA.build_command(gm, "/b/gemini", "salut", plan=True)
     assert cmd == ["/b/gemini", "-o", "text", "--approval-mode", "plan", "-p", "salut"]
     cmd, stdin = CA.build_command(CA.CliAdapter("s", "s", "s", ["x"], "stdin"), "/b/s", "texte")
@@ -205,3 +205,33 @@ def test_services_routes_cli_modes_and_scopes(tmp_path, monkeypatch):
     assert sv.runner is sv.claude and sv.model_key == "claude-code"
     sv.set_mode("poe")
     assert not sv.is_cli and sv.runner is sv.agent
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="faux binaire shell")
+def test_opencode_runs_standalone_in_project_with_memory_mcp(tmp_path, monkeypatch):
+    """Faux « opencode » : enregistre ses arguments et son environnement, puis répond en JSON."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    dump = tmp_path / "dump.json"
+    fake = bindir / "opencode"
+    fake.write_text("#!/usr/bin/env python3\nimport json, os, sys\n"
+                    f"json.dump({{'argv': sys.argv[1:], 'env': dict(os.environ), 'cwd': os.getcwd()}}, open({str(dump)!r}, 'w'))\n"
+                    "print(json.dumps({'type': 'text', 'part': {'text': 'ok'}}))\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("POE_API_KEY", "secret-a-ne-pas-transmettre")
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    sv = create_services(proj, config=Config())
+    sv.set_mode("cli:opencode")
+    assert sv.delegated_runner().memory_bridge is not None
+    asyncio.run(sv.run_user_turn("bonjour"))
+    d = json.load(open(dump))
+    assert d["argv"][:2] == ["run", "--standalone"]
+    assert d["env"]["PWD"] == str(proj.resolve()) and Path(d["cwd"]).resolve() == proj.resolve()
+    cfg = json.loads(d["env"]["OPENCODE_CONFIG_CONTENT"])
+    srv = cfg["mcp"]["servers"]["eclipse"]
+    assert srv["type"] == "remote" and srv["url"].startswith("http://127.0.0.1:") and srv["headers"]["Authorization"].startswith("Bearer ")
+    assert "POE_API_KEY" not in d["env"]
+    assert "eclipse_memory_note" in d["argv"][-1]  # consignes mémoire ajoutées seulement parce que la mémoire est accessible
+    asyncio.run(sv.close())

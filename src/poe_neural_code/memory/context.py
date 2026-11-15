@@ -25,8 +25,16 @@ def build_context(mem: Memory, district_id: int, conversation_id: int | None, to
     parts: list[tuple[str, list[str]]] = []
     refs: list[str] = []
 
+    pinned = [r for r in mem.items(district_id) if "pinned" in r.keys() and r["pinned"]]
+    pinned_ids = {r["id"] for r in pinned}
+    always: set[str] = set()
+    if pinned:  # notes épinglées par l'utilisateur : toujours fournies, en tête, hors budget
+        parts.append(("Notes épinglées par l'utilisateur", [_fmt_item(r, mem) for r in pinned]))
+        refs.extend(f"item:{r['id']}" for r in pinned)
+        always.add("Notes épinglées par l'utilisateur")
+
     def items_block(title, kinds, statuses=("active",), limit=30):
-        rows = mem.items(district_id, kinds, statuses)[-limit:]
+        rows = [r for r in mem.items(district_id, kinds, statuses) if r["id"] not in pinned_ids][-limit:]
         if rows:
             parts.append((title, [_fmt_item(r, mem) for r in rows]))
             refs.extend(f"item:{r['id']}" for r in rows)
@@ -63,7 +71,7 @@ def build_context(mem: Memory, district_id: int, conversation_id: int | None, to
         sec = [f"## {title}"]
         for ln in lines:
             t = estimate_tokens(ln)
-            if used + t > token_budget:
+            if used + t > token_budget and title not in always:
                 trunc.append(title)
                 break
             sec.append(ln)

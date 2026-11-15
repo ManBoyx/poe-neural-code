@@ -351,3 +351,10 @@ input.text.wide { width: 100%; padding: 8px 10px; border: 1px solid var(--line);
 .files > .btn { justify-self: start; display: inline-flex; gap: 8px; align-items: center; font-size: .84rem; }
 .perms { display: flex; flex-direction: column; gap: 14px; }
 .perms:empty { display: none; }
+.method summary { cursor: pointer; color: var(--accent); font-size: .82rem; margin-top: 8px; }
+.method p { color: var(--muted); font-size: .8rem; margin: 6px 0 0; }
+.note-item.pinned { border-color: var(--accent); background: var(--accent-soft); }
+.pin-ico { color: var(--accent); margin-right: 6px; }
+.ni-edit { width: 100%; padding: 6px 8px; border: 1px solid var(--accent); border-radius: 6px; background: var(--raised); resize: vertical; font-size: .88rem; }
+.ni-meta .spacer { flex: 1; }
+.ni-meta .link { margin-left: 0; }

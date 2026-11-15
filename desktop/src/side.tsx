@@ -43,9 +43,11 @@ export function MemoryPanel({ ask, refreshKey }: { ask: (s: Omit<DialogSpec, "re
   const load = (query = q) => api.memory(query).then((v) => { setM(v); setError(""); }).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [refreshKey]);
   useEffect(() => { const t = setTimeout(() => load(q), 250); return () => clearTimeout(t); }, [q]);
+  const [editing, setEditing] = useState<{ id: number; text: string } | null>(null);
+  const pinned = (m?.items ?? []).filter((x) => x.pinned);
   const groups = useMemo(() => {
     const g = new Map<string, MemoryView["items"]>();
-    for (const it of m?.items ?? []) g.set(it.kind, [...(g.get(it.kind) ?? []), it]);
+    for (const it of m?.items ?? []) if (!it.pinned) g.set(it.kind, [...(g.get(it.kind) ?? []), it]);
     return [...g.entries()].sort((a, b) => KIND_ORDER.indexOf(a[0]) - KIND_ORDER.indexOf(b[0]));
   }, [m]);
   const forget = async (id: number, content: string) => {
@@ -54,6 +56,37 @@ export function MemoryPanel({ ask, refreshKey }: { ask: (s: Omit<DialogSpec, "re
       load();
     }
   };
+  const save = async () => {
+    if (!editing) return;
+    try { await api.editMemory(editing.id, { content: editing.text }); setEditing(null); load(); } catch (e: any) { setError(e.message); }
+  };
+  const togglePin = async (id: number, on: boolean) => {
+    try { await api.editMemory(id, { pinned: on }); load(); } catch (e: any) { setError(e.message); }
+  };
+  const note = (it: MemoryView["items"][number]) => (
+    <div class={`note-item ${it.pinned ? "pinned" : ""}`} key={it.id}>
+      {editing?.id === it.id ? (
+        <>
+          <textarea class="ni-edit" value={editing.text} rows={3} onInput={(e) => setEditing({ id: it.id, text: (e.target as HTMLTextAreaElement).value })}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) save(); if (e.key === "Escape") setEditing(null); }} />
+          <div class="ni-meta"><span class="muted">Ctrl+Entrée pour enregistrer</span>
+            <button class="link small" onClick={() => setEditing(null)}>Annuler</button><button class="link small" onClick={save}>Enregistrer</button></div>
+        </>
+      ) : (
+        <>
+          <div class="ni-text">{it.pinned && <span class="ico pin-ico" title="Épinglée : toujours fournie à l'IA">{I.pinned}</span>}{it.content}</div>
+          <div class="ni-meta">
+            <span>{new Date(it.created * 1000).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
+            {it.key && <span class="tag">{it.key}</span>}
+            <span class="spacer" />
+            <button class="link small" onClick={() => togglePin(it.id, !it.pinned)}>{it.pinned ? "Désépingler" : "Épingler"}</button>
+            <button class="link small" onClick={() => setEditing({ id: it.id, text: it.content })}>Modifier</button>
+            <button class="link small" onClick={() => forget(it.id, it.content)}>Oublier</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
   return (
     <div class="memory">
       <p class="explain-small">
@@ -75,19 +108,16 @@ export function MemoryPanel({ ask, refreshKey }: { ask: (s: Omit<DialogSpec, "re
         </section>
       )}
       {!q && groups.length === 0 && m && <p class="muted small pad0">Aucune note pour l'instant : l'IA en crée au fil du travail (décisions, faits, erreurs corrigées…).</p>}
+      {!q && pinned.length > 0 && (
+        <section>
+          <h3>Épinglées : toujours fournies à l'IA</h3>
+          {pinned.map(note)}
+        </section>
+      )}
       {!q && groups.map(([kind, list]) => (
         <section key={kind}>
           <h3>{KIND_LABEL[kind] ?? kind}</h3>
-          {list.map((it) => (
-            <div class="note-item" key={it.id}>
-              <div class="ni-text">{it.content}</div>
-              <div class="ni-meta">
-                <span>{new Date(it.created * 1000).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>
-                {it.key && <span class="tag">{it.key}</span>}
-                <button class="link small" onClick={() => forget(it.id, it.content)}>Oublier</button>
-              </div>
-            </div>
-          ))}
+          {list.map(note)}
         </section>
       ))}
     </div>
