@@ -1,5 +1,14 @@
 # Journal des versions
 
+## Non publié
+### Connexions
+- OpenCode Zen et OpenCode Go par clé d'API (`/connect` dans le CLI, Connexions dans l'application desktop ;
+  variable `OPENCODE_API_KEY` possible). Seuls les modèles au format OpenAI sont proposés (16 pour Zen, 20 pour Go
+  aujourd'hui) ; les modèles gratuits de Zen restent réservés à OpenCode (`/free`), comme l'exige OpenCode.
+  Eclipse s'identifie (`eclipse/VERSION`) et envoie un identifiant de session stable par conversation, condition
+  d'usage d'OpenCode Go. Le catalogue étant public, une clé erronée n'est signalée qu'au premier message.
+- Archives autonomes du CLI (Linux, Windows) et workflow « Préversion privée ».
+
 ## 0.3.0 — 2026-11-16
 ### Eclipse Desktop : application de chat (le CLI garde son interface terminal)
 - Interface graphique façon application de chat : conversations par dossier, fil avec Markdown nettoyé et code coloré,

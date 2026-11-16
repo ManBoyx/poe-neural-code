@@ -93,7 +93,8 @@ class OpenAICompatProvider:
         except ProviderError as e:
             return (False, str(e)) if e.status == 401 else (True, f"clé non vérifiable ({e})")
 
-    async def list_models(self) -> list[ModelInfo]:
+    async def _catalog(self) -> list[dict[str, Any]]:
+        """Éléments bruts de GET /models."""
         try:
             r = await self.http.get(f"{self.base_url}/models", headers=self._headers())
             if r.status_code == 401:
@@ -101,7 +102,13 @@ class OpenAICompatProvider:
             r.raise_for_status()
         except httpx.HTTPError as e:
             raise ProviderError(f"Catalogue indisponible : {e.__class__.__name__}", retryable=True) from e
-        return [self._parse(d) for d in r.json().get("data", []) if isinstance(d, dict) and "id" in d]
+        return [d for d in r.json().get("data", []) if isinstance(d, dict) and "id" in d]
+
+    async def list_models(self) -> list[ModelInfo]:
+        return [self._parse(d) for d in await self._catalog()]
+
+    def _chat_url(self, model: str) -> str:
+        return f"{self.base_url}/chat/completions"
 
     async def stream(self, model: str, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, max_tokens: int | None,
                      options: dict[str, Any] | None = None) -> AsyncIterator[Event]:
@@ -119,7 +126,7 @@ class OpenAICompatProvider:
             calls: dict[int, dict[str, str]] = {}
             finish: str | None = None
             try:
-                async with self.http.stream("POST", f"{self.base_url}/chat/completions", headers=headers, json=body) as r:
+                async with self.http.stream("POST", self._chat_url(model), headers=headers, json=body) as r:
                     if r.status_code == 400 and attempt < 2 and ("stream_options" in body or options):
                         await r.aread()
                         if "stream_options" in body:
