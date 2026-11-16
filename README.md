@@ -23,7 +23,21 @@ remplace chaque icône par un symbole texte simple.
 | Groq, Google AI Studio, Mistral, Cerebras, GitHub Models | clé gratuite chez le fournisseur | complet | quotas et conditions propres à chacun ; adresses à confirmer pour certains |
 
 ## Installation
-**Utilisateurs** : applications Linux (AppImage, .deb, .rpm), Windows (installateur, MSI, portable, Scoop) et Android.
+**Préversion privée (en ce moment)** : page « Releases » de ce dépôt (connecté à GitHub), version `prive-v0.3.0`.
+
+| Fichier | Contenu |
+|---|---|
+| `Eclipse_0.3.0_amd64.AppImage` / `.deb` / `.rpm` | Linux : application desktop (interface graphique, moteur inclus) |
+| `Eclipse_0.3.0_x64-setup.exe` / `.msi` / `_portable.zip` | Windows : application desktop (installateur, MSI, version portable) |
+| `eclipse-cli_0.3.0_linux-x86_64.tar.gz` | Linux : CLI autonome (interface terminal), sans Python à installer |
+| `eclipse-cli_0.3.0_windows-x64.zip` | Windows : CLI autonome (`eclipse.cmd`), sans Python à installer |
+| `poe_neural_code-0.3.0-py3-none-any.whl` | CLI pour Python ≥ 3.11 : `pipx install ./poe_neural_code-0.3.0-py3-none-any.whl` |
+
+Téléchargement en ligne de commande : `gh release download prive-v0.3.0 -R ManBoyx/poe-neural-code -p '*.AppImage'`.
+Ces fichiers ne sont pas signés pour la mise à jour automatique : on installe les versions suivantes à la main.
+Nouvelle préversion : Actions > « Préversion privée » > Run workflow (Linux, Windows, ou les deux).
+
+**Utilisateurs (après la publication publique)** : applications Linux (AppImage, .deb, .rpm), Windows (installateur, MSI, portable, Scoop) et Android.
 Toutes les commandes sont sur https://github.com/ManBoyx/eclipse-releases. Linux, en une ligne :
 ```sh
 curl -fsSL https://github.com/ManBoyx/eclipse-releases/releases/latest/download/install.sh | sh
