@@ -39,9 +39,19 @@ PRESETS: list[ProviderSpec] = [
     ProviderSpec("cerebras", "Cerebras", "https://api.cerebras.ai/v1", "CEREBRAS_API_KEY", verified="adresse NON vérifiée ; offre gratuite avec clé"),
     ProviderSpec("github", "GitHub Models", "https://models.github.ai/inference", "GITHUB_MODELS_TOKEN",
                  verified="adresse NON vérifiée ; jeton GitHub avec la permission « models »", notes="gratuit avec quotas pour les comptes GitHub"),
+    ProviderSpec("opencode-zen", "OpenCode Zen", "https://opencode.ai/zen/v1", "OPENCODE_API_KEY",
+                 verified="catalogue public et adresse de chat vérifiés en réel (401 sans clé) ; chat non testé (pas de clé)",
+                 notes="clé sur opencode.ai ; modèles payants au format OpenAI (les gratuits sont réservés à OpenCode : /free)"),
+    ProviderSpec("opencode-go", "OpenCode Go (abonnement)", "https://opencode.ai/zen/go/v1", "OPENCODE_API_KEY",
+                 verified="catalogue public vérifié en réel ; chat non testé (pas d'abonnement)",
+                 notes="abonnement OpenCode Go ; Eclipse s'identifie et envoie un identifiant de session, comme l'exige OpenCode"),
     ProviderSpec("ollama", "Ollama (local)", "http://localhost:11434/v1", None, key_required=False, verified="local : nécessite `ollama serve`"),
     ProviderSpec("lmstudio", "LM Studio (local)", "http://localhost:1234/v1", None, key_required=False, verified="local : serveur LM Studio actif requis"),
 ]
+
+
+# adresse de chat par défaut (le catalogue donne celle de chaque modèle)
+OPENCODE_CHAT = {"opencode-zen": "https://opencode.ai/inference/openai/v1", "opencode-go": "https://opencode.ai/inference/go/openai/v1"}
 
 
 def _custom_file():
@@ -79,5 +89,9 @@ def has_credentials(spec: ProviderSpec) -> bool:
 def build_provider(spec: ProviderSpec, transport=None) -> Provider:
     if spec.id == "poe":
         return PoeProvider(transport=transport)  # type: ignore[return-value]
+    if spec.id in OPENCODE_CHAT:
+        from .provider.opencode import OpenCodeProvider
+        return OpenCodeProvider(spec.id, spec.base_url, OPENCODE_CHAT[spec.id], lambda: credentials.get_key(spec.id, spec.key_env),
+                                label=spec.label, key_env=spec.key_env, allow_free=spec.id == "opencode-go", transport=transport)  # type: ignore[return-value]
     return OpenAICompatProvider(spec.id, spec.base_url, lambda: credentials.get_key(spec.id, spec.key_env), label=spec.label, key_env=spec.key_env,
                                 key_required=spec.key_required, transport=transport)  # type: ignore[return-value]

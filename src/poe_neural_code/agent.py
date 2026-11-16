@@ -276,6 +276,8 @@ class Agent:
         usage: Usage | None = None
         interrupted = False
         opts = self.options()
+        if hasattr(self.provider, "conversation_hint"):  # OpenCode : identifiant de session stable par conversation
+            self.provider.conversation_hint = str(self.session.conversation_id)
         agen = (self.provider.stream(self.session.model, msgs, self._tool_specs(), max_out, options=opts) if opts
                 else self.provider.stream(self.session.model, msgs, self._tool_specs(), max_out)).__aiter__()
         try:
