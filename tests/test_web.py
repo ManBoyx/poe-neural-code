@@ -328,3 +328,12 @@ def test_memory_edit_and_pin_always_injected(setup):
     assert items[0]["pinned"] and "9090" in items[0]["content"]
     r2 = c.post(f"/api/memory/{new}/edit", headers=AUTH, json={"content": "Le port du serveur est 7070"}).json()
     assert sv.memory.one("SELECT pinned FROM items WHERE id=?", (r2["id"],))["pinned"] == 1  # l'épinglage suit la nouvelle version
+
+
+def test_browser_mode_sends_strict_csp(setup):
+    c, *_ = setup
+    r = c.get("/")
+    csp = r.headers.get("content-security-policy", "")
+    assert "script-src 'self'" in csp and "'unsafe-inline'" not in csp and "frame-ancestors 'none'" in csp
+    assert r.headers["x-frame-options"] == "DENY" and r.headers["referrer-policy"] == "no-referrer"
+    assert "content-security-policy" not in c.get("/api/info", headers=AUTH).headers  # API JSON : sans objet

@@ -35,10 +35,78 @@ class AdminRefused(Exception):
     pass
 
 
+class ForbiddenCommand(AdminRefused):
+    """Commande TOUJOURS refusée (destruction du système ou d'un disque), quel que soit le mode, même bypass total."""
+
+
+# Cibles dont la suppression récursive détruirait le système ou le dossier personnel.
+_ROOT_TARGETS = re.compile(r"""^["']?(/|/\*|~|~/|~/\*|\$HOME|\$\{HOME\}|\$HOME/\*?|\$env:USERPROFILE|%USERPROFILE%|"""
+                           r"""/(bin|boot|dev|etc|home|lib|lib64|opt|proc|root|sbin|srv|sys|usr|var)/?|"""
+                           r"""[a-zA-Z]:[\\/]?|[a-zA-Z]:[\\/]\*|[a-zA-Z]:[\\/](Windows|Users|Program Files)[\\/]?)["']?$""", re.I)
+# Motifs dangereux où qu'ils soient dans la ligne (redirections, dd vers un périphérique, fork bomb).
+_FORBIDDEN_ANYWHERE = [
+    (re.compile(r"\bdd\b[^;&|]*\bof=/dev/", re.I), "écriture directe sur un périphérique (dd)"),
+    (re.compile(r">\s*/dev/(sd|hd|nvme|vd|mmcblk|disk)", re.I), "écriture directe sur un disque"),
+    (re.compile(r":\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:"), "bombe de processus (fork bomb)"),
+]
+# Programmes refusés quand ils sont LA commande lancée (un simple mot dans un grep ou un echo reste permis).
+_FORBIDDEN_PROGRAMS = {
+    **{n: "formatage ou partitionnement de disque" for n in (
+        "mkfs", "mke2fs", "mkswap", "wipefs", "fdisk", "sfdisk", "gdisk", "parted", "blkdiscard", "diskpart",
+        "format-volume", "clear-disk", "initialize-disk", "remove-partition")},
+    **{n: "arrêt ou redémarrage de l'ordinateur" for n in ("shutdown", "poweroff", "halt", "reboot", "stop-computer", "restart-computer")},
+    "bcdedit": "modification destructrice du système Windows",
+}
+
+
+def _segments(cmd: str) -> list[list[str]]:
+    import shlex
+    out = []
+    for seg in re.split(r"\s*(?:&&|\|\||;|\||\n)\s*", cmd):
+        try:
+            toks = shlex.split(seg, posix=True)
+        except ValueError:
+            toks = seg.split()
+        if toks:
+            out.append(toks)
+    return out
+
+
+def forbidden_reason(cmd: str) -> str | None:
+    """Raison du refus définitif, ou None. Complète la confirmation manuelle, ne la remplace pas."""
+    for rx, why in _FORBIDDEN_ANYWHERE:
+        if rx.search(cmd):
+            return why
+    for toks in _segments(cmd):
+        name = toks[0].lower().rsplit("/", 1)[-1].removesuffix(".exe")
+        base = name.split(".", 1)[0]  # mkfs.ext4 -> mkfs
+        if name in _FORBIDDEN_PROGRAMS or base in _FORBIDDEN_PROGRAMS:
+            return _FORBIDDEN_PROGRAMS.get(name) or _FORBIDDEN_PROGRAMS[base]
+        args = " ".join(toks[1:]).lower()
+        if name in ("format", "format.com") and re.match(r"^[a-z]:", args):
+            return "formatage de disque"
+        if (name == "cipher" and "/w" in args) or (name == "vssadmin" and "delete" in args and "shadows" in args) \
+                or (name == "reg" and args.startswith("delete") and "hklm" in args):
+            return "modification destructrice du système Windows"
+        flags = [t for t in toks[1:] if t.startswith("-") or (t.startswith("/") and len(t) <= 3 and name in ("rd", "rmdir", "del", "erase"))]
+        targets = [t for t in toks[1:] if t not in flags]
+        recursive = any(("r" in f.lower() and f.startswith("-") and not f.startswith("--")) or f.lower() in ("--recursive", "-recurse", "/s")
+                        for f in flags) or "--no-preserve-root" in toks
+        if name in ("rm", "rmdir", "rd", "del", "erase", "remove-item", "ri") and recursive and any(_ROOT_TARGETS.match(t) for t in targets):
+            return "suppression récursive d'un dossier système, d'un disque ou du dossier personnel"
+        if name in ("chmod", "chown", "chgrp") and recursive and any(_ROOT_TARGETS.match(t) for t in targets):
+            return "changement récursif de droits sur un dossier système ou le dossier personnel"
+    return None
+
+
 def check_command(cmd: str) -> tuple[bool, list[str]]:
-    """(destructif?, avertissements). Lève AdminRefused pour toute élévation de privilèges."""
+    """(destructif?, avertissements). Lève AdminRefused (élévation) ou ForbiddenCommand (liste noire) : aucun mode ne
+    permet de passer outre, ni « modifications auto », ni bypass, ni bypass total."""
     if ADMIN.search(cmd):
         raise AdminRefused("Élévation de privilèges (sudo/runas…) refusée : aucun accès administrateur implicite.")
+    why = forbidden_reason(cmd)
+    if why:
+        raise ForbiddenCommand(f"Commande toujours refusée ({why}) : Eclipse ne l'exécute dans aucun mode, même si vous l'autorisez.")
     warns = []
     d = bool(DESTRUCTIVE.search(cmd))
     if d:

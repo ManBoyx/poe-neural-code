@@ -282,3 +282,29 @@ export function Suggest({ items, sel, onPick }: { items: Suggestion[]; sel: numb
     </div>
   );
 }
+
+// --- Aide : raccourcis et commandes -------------------------------------------------------------------------------------
+export const SHORTCUTS: [string, string][] = [
+  ["Ctrl+K", "Palette de commandes"], ["Ctrl+N", "Nouvelle discussion"], ["Ctrl+B", "Afficher / masquer la barre latérale"],
+  ["Ctrl+,", "Réglages"], ["F1 ou Ctrl+/", "Cette aide"], ["Entrée", "Envoyer (Maj+Entrée : nouvelle ligne ; réglable)"],
+  ["Échap", "Arrêter la réponse en cours, ou fermer une fenêtre"], ["@", "Citer un fichier du dossier (autocomplétion)"],
+  ["/", "Commandes (autocomplétion)"], ["↑ ↓ puis Entrée ou Tab", "Choisir une suggestion"],
+  ["Ctrl+Entrée", "Enregistrer une note modifiée (panneau Mémoire)"], ["Ctrl+V", "Coller une capture d'écran comme pièce jointe"],
+];
+
+export function HelpModal({ commands, onClose }: { commands: { name: string; desc: string }[]; onClose: () => void }) {
+  return (
+    <Modal title="Aide : raccourcis et commandes" icon={I.info} onClose={onClose} wide>
+      <h3>Raccourcis clavier</h3>
+      <table class="help-table"><tbody>
+        {SHORTCUTS.map(([k, d]) => <tr key={k}><td><kbd>{k}</kbd></td><td>{d}</td></tr>)}
+      </tbody></table>
+      <h3>Commandes « / »</h3>
+      <table class="help-table"><tbody>
+        {commands.map((c) => <tr key={c.name}><td><code>/{c.name}</code></td><td>{c.desc}</td></tr>)}
+      </tbody></table>
+      <p class="muted small">Les commandes et les modifications de fichiers vous sont montrées avant d'être exécutées (sauf « Modifs auto » pour les fichiers).
+        Certaines commandes sont toujours refusées (formatage de disque, suppression du système ou du dossier personnel, arrêt de l'ordinateur…).</p>
+    </Modal>
+  );
+}

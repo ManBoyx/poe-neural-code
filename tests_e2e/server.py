@@ -16,6 +16,13 @@ from poe_neural_code.config import Config, save_config  # noqa: E402
 from poe_neural_code.provider.base import TextDelta, ThinkingDelta, ToolCall  # noqa: E402
 from poe_neural_code.web.server import Hub, build_app  # noqa: E402
 from tests.conftest import FakeProvider  # noqa: E402
+from poe_neural_code import cli_agents  # noqa: E402
+from poe_neural_code.web import server as web_server  # noqa: E402
+
+# Détection simulée : Claude Code et OpenCode « installés », quel que soit l'ordinateur qui lance les tests.
+_FAKE = {"claude", "opencode"}
+web_server.detect = lambda: [cli_agents.Detected(a, f"/faux/{a.binary}" if a.id in _FAKE else None, "")
+                             for a in cli_agents.all_adapters()]
 
 TOKEN = "jeton-e2e"
 ANSWER = ("Voici ce que contient le projet :\n\n- `README.md` : la présentation\n\n"

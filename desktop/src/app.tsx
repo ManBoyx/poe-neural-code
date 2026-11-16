@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { api, connect, events, health, isDesktop, openLogs, restartEngine, type FileEntry, type Info, type PermissionEvent, type PromptCommand, type SearchResult, type State, type TranscriptItem, type Upload, type Usage } from "./api";
 import { I } from "./icons";
 import { ConnectionsModal, DEFAULT_PREFS, ModelPicker, SettingsModal, UsageBody, type Prefs } from "./panels";
-import { ChangesModal, Dialog, FilePreviewModal, FilesPanel, MemoryPanel, Palette, Suggest, type Command, type DialogSpec, type Suggestion } from "./side";
+import { ChangesModal, Dialog, HelpModal, FilePreviewModal, FilesPanel, MemoryPanel, Palette, Suggest, type Command, type DialogSpec, type Suggestion } from "./side";
 import { Thread, type Item } from "./thread";
 import { UpdateDialog, UpdatePill, UpdateSettings, startUpdates } from "./updates";
 
@@ -63,6 +63,8 @@ export function App() {
   const [sug, setSug] = useState<{ items: Suggestion[]; sel: number; kind: "file" | "cmd"; start: number; end: number } | null>(null);
   const [hits, setHits] = useState<SearchResult[]>([]);
   const [changesOpen, setChangesOpen] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [detected, setDetected] = useState<{ id: string; label: string }[]>([]);
   const [modal, setModal] = useState<"" | "connections" | "settings" | "update">("");
   const [picker, setPicker] = useState(false);
   const [sidebar, setSidebar] = useState(true);
@@ -348,6 +350,18 @@ export function App() {
     api.commands().then((r) => setPromptCmds(r.commands)).catch(() => undefined);
   }, [phase, state.session?.id, refreshKey]);
 
+  // Agents installés sur l'ordinateur (Claude Code, OpenCode…) : proposés à l'accueil
+  useEffect(() => {
+    if (phase !== "ready" || !state.open) return;
+    api.connections().then((c) => setDetected(c.agents.filter((a) => a.installed).map((a) => ({ id: a.id, label: a.label })))).catch(() => undefined);
+  }, [phase, state.session?.id]);
+  const quickConnect = async (id: string, label: string) => {
+    try {
+      const r = await api.connect(id);
+      if (r.ok && r.state) { setState(r.state); say(`${label} sélectionné.`); } else say(r.message || "connexion impossible");
+    } catch (e: any) { say(e.message); }
+  };
+
   // Recherche dans le contenu des conversations (en plus des titres)
   useEffect(() => {
     const q = filter.trim();
@@ -379,7 +393,7 @@ export function App() {
     usage: { desc: "Consommation", run: () => togglePanel("usage") },
     thinking: { desc: "Afficher / masquer la réflexion du modèle", run: () => setPrefs({ ...prefs, showThinking: !prefs.showThinking }) },
     auto: { desc: "Modifications automatiques : activer / désactiver", run: async () => setState(await api.autoEdits(!state.auto_edits)) },
-    help: { desc: "Toutes les commandes (palette)", run: () => setPalette(true) },
+    help: { desc: "Aide : raccourcis et commandes", run: () => setHelp(true) },
   };
 
   const refLimit = state.ref_limit ?? 40000;
@@ -397,6 +411,9 @@ export function App() {
     const m = value.slice(0, caret).match(/(^|\s)@([\w./\-]*)$/);
     if (m) {
       const q = m[2].toLowerCase();
+      if (m[2] === "") {  // « @ » vient d'être tapé : liste des fichiers rafraîchie (fichiers créés entre-temps)
+        api.files().then((r) => { setFiles(r.files); }).catch(() => undefined);
+      }
       const items = files.filter((f) => f.path.toLowerCase().includes(q)).sort((a, b) => a.path.length - b.path.length).slice(0, 8)
         .map((f) => ({ key: `f:${f.path}`, label: `@${f.path}`, detail: fsize(f.size), icon: I.fileCode, warn: f.size > refLimit ? "sera tronqué" : undefined }));
       setSug(items.length ? { items, sel: 0, kind: "file", start: caret - m[2].length - 1, end: caret } : null);
@@ -404,6 +421,13 @@ export function App() {
     }
     setSug(null);
   };
+  // La liste des fichiers vient d'être rechargée : recalcul des suggestions en cours (sinon elles restent périmées)
+  useEffect(() => {
+    const el = input.current;
+    if (el && document.activeElement === el && /(^|\s)@[\w./\-]*$/.test(el.value.slice(0, el.selectionStart ?? el.value.length))) {
+      updateSuggest(el.value, el.selectionStart ?? el.value.length);
+    }
+  }, [files]);
   const pickSuggest = (x: Suggestion) => {
     if (!sug) return;
     if (sug.kind === "cmd" && x.key.startsWith("a:") && !slash[x.key.slice(2)].args) {
@@ -433,6 +457,7 @@ export function App() {
       else if (mod && e.key.toLowerCase() === "n" && !e.shiftKey) { e.preventDefault(); if (!busy) newDiscussion(); }
       else if (mod && e.key.toLowerCase() === "b") { e.preventDefault(); setSidebar((v) => !v); }
       else if (mod && e.key === ",") { e.preventDefault(); setModal("settings"); }
+      else if (e.key === "F1" || (mod && e.key === "/")) { e.preventDefault(); setHelp(true); }
     };
     addEventListener("keydown", k);
     return () => removeEventListener("keydown", k);
@@ -470,6 +495,7 @@ export function App() {
       run: () => setPrefs({ ...prefs, theme: document.documentElement.dataset.theme === "dark" ? "light" : "dark" }) },
     { id: "side", label: "Afficher / masquer la barre latérale", hint: "Ctrl+B", icon: I.sidebar, run: () => setSidebar((v) => !v) },
     { id: "settings", label: "Réglages", hint: "Ctrl+,", icon: I.settings, run: () => setModal("settings") },
+    { id: "help", label: "Aide : raccourcis et commandes", hint: "F1", icon: I.info, run: () => setHelp(true) },
   ];
 
   const groups = useMemo(() => {
@@ -491,6 +517,16 @@ export function App() {
         <p class="muted">Projet <b>{basename(state.session!.workspace)}</b> · {state.mode_label}{state.model ? ` · ${state.model}` : ""}.
           {!state.configured && <> <button class="link" onClick={() => setModal("connections")}>Configurer une connexion</button> pour commencer.</>}</p>
       ) : null}
+      {state.open && detected.filter((a) => a.id !== state.mode).length > 0 && (
+        <div class={`quick ${state.configured ? "" : "strong"}`}>
+          <span>{state.configured ? "Autres agents détectés sur cet ordinateur :" : "Agents détectés sur cet ordinateur : un clic pour les utiliser"}</span>
+          <div class="quick-list">
+            {detected.filter((a) => a.id !== state.mode).map((a) => (
+              <button key={a.id} class="btn" onClick={() => quickConnect(a.id, a.label)}><span class="ico">{I.agent}</span> Utiliser {a.label}</button>
+            ))}
+          </div>
+        </div>
+      )}
       {state.open ? (
         <div class="explain">
           <div><span class="ico">{I.folder}</span><b>Dossier de travail</b><span>L'IA crée ses fichiers dans <code>{state.session!.workspace}</code>. Chaque écriture vous est montrée avant d'être faite.</span></div>
@@ -550,7 +586,7 @@ export function App() {
           <span class="brand"><span class="ico">{I.eclipse}</span> Eclipse</span>
           <button class="icon-btn" title="Masquer la barre latérale" onClick={() => setSidebar(false)}><span class="ico">{I.sidebar}</span></button>
         </div>
-        <button class="new" onClick={newDiscussion} disabled={busy} title={`Crée un dossier de travail dans ${info?.discussions_dir ?? "~/Projets/Eclipse"}`}><span class="ico">{I.plus}</span> Nouvelle discussion</button>
+        <button class="new" onClick={newDiscussion} disabled={busy} title={`Crée un dossier de travail dans ${info?.discussions_dir ?? "~/Projets/Eclipse"}`}><span class="ico">{I.plus}</span> Nouvelle discussion<kbd class="side-kbd">Ctrl+N</kbd></button>
         <button class="new ghost" onClick={() => { setState({ ...state, open: false }); setItems([]); }} disabled={busy}><span class="ico">{I.folder}</span> Ouvrir un projet…</button>
         <div class="side-search"><span class="ico">{I.search}</span><input placeholder="Rechercher" value={filter} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} /></div>
         <div class="side-list">
@@ -583,7 +619,8 @@ export function App() {
         </div>
         <div class="side-bottom">
           <button class="side-btn" onClick={() => setModal("connections")} disabled={!state.open}><span class="ico">{I.plug}</span> Connexions</button>
-          <button class="side-btn" onClick={() => setModal("settings")}><span class="ico">{I.settings}</span> Réglages</button>
+          <button class="side-btn" onClick={() => setModal("settings")}><span class="ico">{I.settings}</span> Réglages<kbd class="side-kbd">Ctrl+,</kbd></button>
+          <button class="side-btn" onClick={() => setHelp(true)}><span class="ico">{I.info}</span> Aide<kbd class="side-kbd">F1</kbd></button>
         </div>
       </nav>
 
@@ -643,6 +680,7 @@ export function App() {
                 onPaste={(e) => { const fs = Array.from(e.clipboardData?.files ?? []); if (fs.length) { e.preventDefault(); attach(fs); } }}
                 onInput={(e) => { const t = e.target as HTMLTextAreaElement; setText(t.value); updateSuggest(t.value, t.selectionStart ?? t.value.length); t.style.height = "auto"; t.style.height = `${Math.min(t.scrollHeight, 280)}px`; }}
                 onBlur={() => setTimeout(() => setSug(null), 150)}
+                onFocus={() => { if (state.open) api.files().then((r) => setFiles(r.files)).catch(() => undefined); }}
                 onKeyDown={(e) => {
                   if (sug) {
                     if (e.key === "ArrowDown") { e.preventDefault(); setSug({ ...sug, sel: (sug.sel + 1) % sug.items.length }); return; }
@@ -736,6 +774,8 @@ export function App() {
       {palette && <Palette commands={commands} onClose={() => setPalette(false)} />}
       {changesOpen && <ChangesModal ask={ask} onClose={() => setChangesOpen(false)}
         onReverted={(n) => { say(`${n} fichier(s) restauré(s).`); setRefreshKey((k) => k + 1); }} />}
+      {help && <HelpModal onClose={() => setHelp(false)}
+        commands={[...Object.entries(slash).map(([name, v]) => ({ name, desc: v.desc })), ...promptCmds.filter((c) => !(c.name in slash)).map((c) => ({ name: c.name, desc: c.description }))]} />}
       {dialog && <Dialog spec={dialog} onDone={() => setDialog(null)} />}
       {dragOver && <div class="drop-hint"><span class="ico">{I.clip}</span> Déposez pour joindre</div>}
       {toast && <div class="toast" role="status">{toast}</div>}

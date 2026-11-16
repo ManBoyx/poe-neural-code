@@ -50,6 +50,7 @@ def page(browser, server):
     pg = browser.new_page(viewport={"width": 1400, "height": 900}, color_scheme="dark")
     errors: list[str] = []
     pg.on("pageerror", lambda e: errors.append(str(e)))
+    pg.on("console", lambda m: errors.append(m.text) if "Content Security Policy" in m.text else None)
     pg.goto(f"{server['url']}/#token={server['token']}")
     pg.get_by_text("Que voulez-vous faire").wait_for(timeout=10_000)
     yield pg
