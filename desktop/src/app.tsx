@@ -30,10 +30,17 @@ function fromTranscript(t: TranscriptItem[]): Item[] {
   return t.map((x) => (x.kind === "tool" ? { ...x } : { kind: x.kind, text: x.text })) as Item[];
 }
 
-function group(ts: number): string {
-  const d = new Date(ts * 1000), now = new Date();
-  const days = Math.floor((new Date(now.toDateString()).getTime() - new Date(d.toDateString()).getTime()) / 86400000);
-  return days <= 0 ? "Aujourd'hui" : days === 1 ? "Hier" : days < 7 ? "7 derniers jours" : days < 30 ? "30 derniers jours" : "Plus ancien";
+function loadList(k: string): string[] {
+  try { const v = JSON.parse(localStorage.getItem(k) ?? "[]"); return Array.isArray(v) ? v.filter((x) => typeof x === "string") : []; } catch { return []; }
+}
+function saveList(k: string, v: string[]) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* stockage indisponible */ } }
+function ago(ts: number): string {
+  const s = Date.now() / 1000 - ts;
+  if (s < 60) return "maintenant";
+  if (s < 3600) return `${Math.floor(s / 60)} min`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h`;
+  if (s < 7 * 86400) return `${Math.floor(s / 86400)} j`;
+  return new Date(ts * 1000).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
 }
 
 export function App() {
@@ -244,7 +251,7 @@ export function App() {
     catch (e: any) { say(e.message); }
   };
   const resume = async (id: string) => {
-    if (state.session?.id === id) return;
+    if (state.open && state.session?.id === id) return;
     try { await api.open({ resume: id }); await loadConversation(); refreshInfo(); }
     catch (e: any) { say(e.message); }
   };
@@ -498,16 +505,51 @@ export function App() {
     { id: "help", label: "Aide : raccourcis et commandes", hint: "F1", icon: I.info, run: () => setHelp(true) },
   ];
 
-  const groups = useMemo(() => {
+  const [sideTab, setSideTab] = useState<"sessions" | "projects">("sessions");
+  const [pins, setPins] = useState<string[]>(() => loadList("eclipse.pins"));
+  const [tabs, setTabs] = useState<string[]>(() => loadList("eclipse.tabs"));
+  useEffect(() => saveList("eclipse.pins", pins), [pins]);
+  useEffect(() => saveList("eclipse.tabs", tabs), [tabs]);
+  // La conversation ouverte a toujours son onglet (8 au plus, les plus anciens sortent)
+  useEffect(() => {
+    const id = state.session?.id;
+    if (state.open && id && !tabs.includes(id)) setTabs((t) => [...t, id].slice(-8));
+  }, [state.open, state.session?.id]);
+  const togglePin = (id: string) => setPins((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const goHome = () => { setState({ ...state, open: false }); setItems([]); };
+  const closeTab = (id: string) => {
+    const rest = tabs.filter((t) => t !== id);
+    setTabs(rest);
+    if (state.open && state.session?.id === id) {
+      const next = rest[rest.length - 1];
+      if (next) resume(next); else goHome();
+    }
+  };
+  const byId = useMemo(() => new Map((info?.sessions ?? []).map((s) => [s.id, s])), [info]);
+  const match = (s: Info["sessions"][number]) => {
     const f = filter.trim().toLowerCase();
+    return !f || s.title.toLowerCase().includes(f) || s.workspace.toLowerCase().includes(f);
+  };
+  const pinned = (info?.sessions ?? []).filter((s) => pins.includes(s.id) && match(s));
+  // Sessions regroupées par projet (dossier de travail), le plus récent en premier
+  const groups = useMemo(() => {
     const out = new Map<string, Info["sessions"]>();
     for (const s of info?.sessions ?? []) {
-      if (f && !(s.title.toLowerCase().includes(f) || s.workspace.toLowerCase().includes(f))) continue;
-      const g = group(s.updated);
+      if (pins.includes(s.id) || !match(s)) continue;
+      const g = basename(s.workspace);
       out.set(g, [...(out.get(g) ?? []), s]);
     }
     return [...out.entries()];
-  }, [info, filter]);
+  }, [info, filter, pins]);
+  const convRow = (s: Info["sessions"][number]) => (
+    <div key={s.id} class={`conv ${state.open && state.session?.id === s.id ? "on" : ""}`} role="button" tabIndex={0}
+      title={`${s.workspace}\nShift-clic : ${pins.includes(s.id) ? "désépingler" : "épingler"}`}
+      onClick={(e) => (e.shiftKey ? togglePin(s.id) : resume(s.id))} onKeyDown={(e) => e.key === "Enter" && resume(s.id)}>
+      <span class="conv-title">{s.title}</span>
+      <span class="conv-time">{ago(s.updated)}</span>
+      <button class="icon-btn del" title="Supprimer" onClick={(e) => { e.stopPropagation(); remove(s.id, s.title); }}><span class="ico">{I.trash}</span></button>
+    </div>
+  );
 
   const welcome = (
     <div class="welcome">
@@ -583,44 +625,67 @@ export function App() {
       {/* Barre latérale */}
       <nav class="sidebar" aria-label="Conversations">
         <div class="side-top">
+          <button class="icon-btn" title="Masquer la barre latérale (Ctrl+B)" onClick={() => setSidebar(false)}><span class="ico">{I.sidebar}</span></button>
           <span class="brand"><span class="ico">{I.eclipse}</span> Eclipse</span>
-          <button class="icon-btn" title="Masquer la barre latérale" onClick={() => setSidebar(false)}><span class="ico">{I.sidebar}</span></button>
         </div>
-        <button class="new" onClick={newDiscussion} disabled={busy} title={`Crée un dossier de travail dans ${info?.discussions_dir ?? "~/Projets/Eclipse"}`}><span class="ico">{I.plus}</span> Nouvelle discussion<kbd class="side-kbd">Ctrl+N</kbd></button>
-        <button class="new ghost" onClick={() => { setState({ ...state, open: false }); setItems([]); }} disabled={busy}><span class="ico">{I.folder}</span> Ouvrir un projet…</button>
-        <div class="side-search"><span class="ico">{I.search}</span><input placeholder="Rechercher" value={filter} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} /></div>
-        <div class="side-list">
-          {groups.map(([g, list]) => (
-            <div key={g}>
-              <div class="side-group">{g}</div>
-              {list.map((s) => (
-                <div key={s.id} class={`conv ${state.session?.id === s.id ? "on" : ""}`} onClick={() => resume(s.id)} role="button" tabIndex={0}
-                  onKeyDown={(e) => e.key === "Enter" && resume(s.id)}>
-                  <span class="conv-title">{s.title}</span>
-                  <span class="conv-dir">{basename(s.workspace)}</span>
-                  <button class="icon-btn del" title="Supprimer" onClick={(e) => { e.stopPropagation(); remove(s.id, s.title); }}><span class="ico">{I.trash}</span></button>
+        <div class="side-tabs" role="tablist">
+          <button role="tab" aria-selected={sideTab === "sessions"} class={sideTab === "sessions" ? "on" : ""} onClick={() => setSideTab("sessions")}>Sessions</button>
+          <button role="tab" aria-selected={sideTab === "projects"} class={sideTab === "projects" ? "on" : ""} onClick={() => setSideTab("projects")}>Projets</button>
+        </div>
+        {sideTab === "sessions" ? (
+          <>
+            <div class="side-menu">
+              <button class="new side-item" onClick={newDiscussion} disabled={busy} title={`Crée un dossier de travail dans ${info?.discussions_dir ?? "~/Projets/Eclipse"}`}><span class="ico">{I.plus}</span> Nouvelle discussion<kbd class="side-kbd">Ctrl+N</kbd></button>
+              <button class="side-item" onClick={goHome} disabled={busy}><span class="ico">{I.folder}</span> Ouvrir un projet…</button>
+              <button class={`side-item ${panel === "memory" ? "on" : ""}`} onClick={() => togglePanel("memory")} disabled={!state.open}><span class="ico">{I.brain}</span> Mémoire</button>
+              <button class={`side-item ${panel === "files" ? "on" : ""}`} onClick={() => togglePanel("files")} disabled={!state.open}><span class="ico">{I.files}</span> Fichiers</button>
+              <button class="side-item" onClick={() => setModal("connections")} disabled={!state.open}><span class="ico">{I.plug}</span> Connexions</button>
+            </div>
+            <div class="side-search"><span class="ico">{I.search}</span><input placeholder="Rechercher des sessions…" value={filter} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} /></div>
+            <div class="side-list">
+              <div class="side-sec"><span class="ico">{I.pinned}</span> Épinglées</div>
+              {pinned.length > 0 ? pinned.map(convRow) : <p class="side-hint"><span class="ico">{I.pin}</span> Shift-clic sur une conversation pour l'épingler</p>}
+              <div class="side-sec"><span class="ico">{I.chat}</span> Sessions</div>
+              {groups.map(([g, list]) => (
+                <div key={g}>
+                  <div class="side-group"><span class="ico">{I.folder}</span> {g}</div>
+                  {list.map(convRow)}
                 </div>
               ))}
-            </div>
-          ))}
-          {groups.length === 0 && hits.length === 0 && <p class="muted small pad">Aucune conversation.</p>}
-          {hits.length > 0 && (
-            <div>
-              <div class="side-group">Dans les messages</div>
-              {hits.map((h) => (
-                <div key={`h-${h.id}`} class={`conv hitconv ${state.session?.id === h.id ? "on" : ""}`} onClick={() => resume(h.id)} role="button" tabIndex={0}
-                  onKeyDown={(e) => e.key === "Enter" && resume(h.id)}>
-                  <span class="conv-title">{h.title}</span>
-                  <span class="conv-snippet">{h.snippet.replace(/^\[\w+\]\s*/, "")}</span>
+              {groups.length === 0 && hits.length === 0 && <p class="side-hint">Aucune session pour le moment</p>}
+              {hits.length > 0 && (
+                <div>
+                  <div class="side-group"><span class="ico">{I.search}</span> Dans les messages</div>
+                  {hits.map((h) => (
+                    <div key={`h-${h.id}`} class={`conv hitconv ${state.session?.id === h.id ? "on" : ""}`} onClick={() => resume(h.id)} role="button" tabIndex={0}
+                      onKeyDown={(e) => e.key === "Enter" && resume(h.id)}>
+                      <span class="conv-title">{h.title}</span>
+                      <span class="conv-snippet">{h.snippet.replace(/^\[\w+\]\s*/, "")}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
-          )}
-        </div>
+          </>
+        ) : (
+          <div class="side-list">
+            <div class="side-sec"><span class="ico">{I.folder}</span> Projets récents</div>
+            {isDesktop && <button class="side-item" onClick={pickFolder}><span class="ico">{I.plus}</span> Ouvrir un dossier…</button>}
+            {(info?.recent_dirs ?? []).map((d) => (
+              <button key={d} class={`side-item proj ${state.open && state.session?.workspace === d ? "on" : ""}`} onClick={() => openWorkspace(d)} title={d}>
+                <span class="ico">{I.folder}</span><span class="pi-name">{basename(d)}</span>
+                <span class="conv-time">{(info?.sessions ?? []).filter((x) => x.workspace === d).length}</span>
+              </button>
+            ))}
+            {(info?.recent_dirs ?? []).length === 0 && <p class="side-hint">Aucun projet ouvert pour le moment</p>}
+          </div>
+        )}
         <div class="side-bottom">
-          <button class="side-btn" onClick={() => setModal("connections")} disabled={!state.open}><span class="ico">{I.plug}</span> Connexions</button>
-          <button class="side-btn" onClick={() => setModal("settings")}><span class="ico">{I.settings}</span> Réglages<kbd class="side-kbd">Ctrl+,</kbd></button>
-          <button class="side-btn" onClick={() => setHelp(true)}><span class="ico">{I.info}</span> Aide<kbd class="side-kbd">F1</kbd></button>
+          <button class="icon-btn" title="Accueil" onClick={goHome}><span class="ico">{I.home}</span></button>
+          <span class="spacer" />
+          <button class="icon-btn" title="Commandes (Ctrl+K)" onClick={() => setPalette(true)}><span class="ico">{I.palette}</span></button>
+          <button class="icon-btn" title="Réglages (Ctrl+,)" onClick={() => setModal("settings")}><span class="ico">{I.settings}</span></button>
+          <button class="icon-btn" title="Aide (F1)" onClick={() => setHelp(true)}><span class="ico">{I.info}</span></button>
         </div>
       </nav>
 
@@ -630,18 +695,24 @@ export function App() {
         onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
         onDrop={(e) => { e.preventDefault(); setDragOver(false); if (e.dataTransfer?.files.length) attach(e.dataTransfer.files); }}>
         <header class="topbar">
-          {!sidebar && <button class="icon-btn" title="Afficher la barre latérale" onClick={() => setSidebar(true)}><span class="ico">{I.sidebar}</span></button>}
-          {state.open ? (
-            <>
-              <button class="title" onClick={rename} title="Renommer">{state.session?.title || "Nouvelle conversation"}</button>
-              <span class="chip" title={state.session?.workspace}><span class="ico">{I.folder}</span> {basename(state.session!.workspace)}</span>
-              <button class="icon-btn" title="Nouvelle conversation dans ce dossier (même mémoire)" disabled={busy} onClick={newConversation}><span class="ico">{I.plus}</span></button>
-            </>
-          ) : <span class="title muted">Eclipse</span>}
+          {!sidebar && <button class="icon-btn" title="Afficher la barre latérale (Ctrl+B)" onClick={() => setSidebar(true)}><span class="ico">{I.sidebar}</span></button>}
+          <div class="ctabs" role="tablist" aria-label="Conversations ouvertes">
+            {tabs.map((id) => {
+              const s = byId.get(id) ?? (state.session?.id === id ? { title: state.session.title, workspace: state.session.workspace } : null);
+              if (!s) return null;
+              const on = state.open && state.session?.id === id;
+              return (
+                <div key={id} role="tab" aria-selected={on} tabIndex={0} class={`ctab ${on ? "on" : ""}`} title={on ? "Double-clic : renommer" : s.workspace}
+                  onClick={() => resume(id)} onDblClick={on ? rename : undefined} onKeyDown={(e) => e.key === "Enter" && resume(id)}>
+                  {on && <span class="ctab-dot" />}
+                  <span class="ctab-title">{s.title && s.title !== "(sans titre)" ? s.title : "Nouvelle conversation"}</span>
+                  <button class="ctab-x" title="Fermer l'onglet" onClick={(e) => { e.stopPropagation(); closeTab(id); }}><span class="ico">{I.close}</span></button>
+                </div>
+              );
+            })}
+            <button class="icon-btn small" title="Nouvelle conversation dans ce dossier (même mémoire)" disabled={busy || !state.open} onClick={newConversation}><span class="ico">{I.plus}</span></button>
+          </div>
           <span class="spacer" />
-          <button class="icon-btn" title="Commandes (Ctrl+K)" onClick={() => setPalette(true)}><span class="ico">{I.palette}</span></button>
-          {!online && <span class="chip warn"><span class="ico">{I.warn}</span> moteur déconnecté</span>}
-          {isDesktop && <UpdatePill onOpen={() => setModal("update")} />}
           {state.open && (
             <>
               <button class="icon-btn" title="Annuler le dernier échange" disabled={busy} onClick={async () => { const r = await api.undo(); if (r.ok) setItems(fromTranscript(r.items)); else say("Rien à annuler."); }}><span class="ico">{I.undo}</span></button>
@@ -676,22 +747,6 @@ export function App() {
                     <button class="x" title="Retirer" onClick={() => setAttachments((xs) => xs.filter((_, j) => j !== i))}><span class="ico">{I.close}</span></button>
                   </span>))}</div>
               )}
-              <textarea ref={input} rows={1} value={text} placeholder={state.configured ? "Écrivez à Eclipse…   (Ctrl+K : commandes)" : "Configurez d'abord une connexion (Connexions)"}
-                onPaste={(e) => { const fs = Array.from(e.clipboardData?.files ?? []); if (fs.length) { e.preventDefault(); attach(fs); } }}
-                onInput={(e) => { const t = e.target as HTMLTextAreaElement; setText(t.value); updateSuggest(t.value, t.selectionStart ?? t.value.length); t.style.height = "auto"; t.style.height = `${Math.min(t.scrollHeight, 280)}px`; }}
-                onBlur={() => setTimeout(() => setSug(null), 150)}
-                onFocus={() => { if (state.open) api.files().then((r) => setFiles(r.files)).catch(() => undefined); }}
-                onKeyDown={(e) => {
-                  if (sug) {
-                    if (e.key === "ArrowDown") { e.preventDefault(); setSug({ ...sug, sel: (sug.sel + 1) % sug.items.length }); return; }
-                    if (e.key === "ArrowUp") { e.preventDefault(); setSug({ ...sug, sel: (sug.sel - 1 + sug.items.length) % sug.items.length }); return; }
-                    if ((e.key === "Enter" || e.key === "Tab") && !e.isComposing) { e.preventDefault(); pickSuggest(sug.items[sug.sel]); return; }
-                    if (e.key === "Escape") { e.preventDefault(); setSug(null); return; }
-                  }
-                  const sendKey = prefs.enterSends ? e.key === "Enter" && !e.shiftKey : e.key === "Enter" && (e.ctrlKey || e.metaKey);
-                  if (sendKey && !e.isComposing) { e.preventDefault(); send(); }
-                  if (e.key === "Escape" && busy) api.interrupt();
-                }} />
               {refs.length > 0 && (
                 <div class="refs">{refs.map((r) => (
                   <span key={r.path} class={`ref ${r.size === null ? "missing" : r.size > refLimit ? "cut" : ""}`}
@@ -702,36 +757,36 @@ export function App() {
               )}
               {sug && <Suggest items={sug.items} sel={sug.sel} onPick={pickSuggest} />}
               <div class="composer-bar">
-                <label class="icon-btn" title="Joindre une image ou un fichier texte (ou glissez-le dans la fenêtre, ou collez une capture)">
-                  <span class="ico">{I.clip}</span>
+                <label class="icon-btn attach" title="Joindre une image ou un fichier texte (ou glissez-le dans la fenêtre, ou collez une capture)">
+                  <span class="ico">{I.plus}</span>
                   <input type="file" multiple hidden accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.py,.js,.ts,.tsx,.json,.csv,.log,.html,.css,.rs,.kt,.java,.c,.cpp,.h,.go,.sh,.yml,.yaml,.toml,.xml,.sql"
                     onChange={(e) => { const t = e.target as HTMLInputElement; if (t.files) attach(t.files); t.value = ""; }} />
                 </label>
+                <textarea ref={input} rows={1} value={text} placeholder={state.configured ? "Écrivez à Eclipse…  (@ fichier, / commande)" : "Configurez d'abord une connexion (Connexions)"}
+                  onPaste={(e) => { const fs = Array.from(e.clipboardData?.files ?? []); if (fs.length) { e.preventDefault(); attach(fs); } }}
+                  onInput={(e) => { const t = e.target as HTMLTextAreaElement; setText(t.value); updateSuggest(t.value, t.selectionStart ?? t.value.length); t.style.height = "auto"; t.style.height = `${Math.min(t.scrollHeight, 280)}px`; }}
+                  onBlur={() => setTimeout(() => setSug(null), 150)}
+                  onFocus={() => { if (state.open) api.files().then((r) => setFiles(r.files)).catch(() => undefined); }}
+                  onKeyDown={(e) => {
+                    if (sug) {
+                      if (e.key === "ArrowDown") { e.preventDefault(); setSug({ ...sug, sel: (sug.sel + 1) % sug.items.length }); return; }
+                      if (e.key === "ArrowUp") { e.preventDefault(); setSug({ ...sug, sel: (sug.sel - 1 + sug.items.length) % sug.items.length }); return; }
+                      if ((e.key === "Enter" || e.key === "Tab") && !e.isComposing) { e.preventDefault(); pickSuggest(sug.items[sug.sel]); return; }
+                      if (e.key === "Escape") { e.preventDefault(); setSug(null); return; }
+                    }
+                    const sendKey = prefs.enterSends ? e.key === "Enter" && !e.shiftKey : e.key === "Enter" && (e.ctrlKey || e.metaKey);
+                    if (sendKey && !e.isComposing) { e.preventDefault(); send(); }
+                    if (e.key === "Escape" && busy) api.interrupt();
+                  }} />
                 <div class="seg small">
                   {(state.agents ?? ["build", "plan"]).filter((a) => a === "build" || a === "plan" || a === state.session?.agent).map((a) => (
                     <button key={a} class={state.session?.agent === a ? "on" : ""} title={a === "plan" ? "Plan : lecture seule, aucune modification" : "Build : peut modifier et exécuter (avec autorisation)"}
                       onClick={async () => setState(await api.agent(a))}>{a === "build" ? "Build" : a === "plan" ? "Plan" : a}</button>
                   ))}
                 </div>
-                <button class={`toggle ${state.auto_edits ? "on" : ""}`} title="Modifications auto : les créations et modifications de fichiers DANS le dossier sont appliquées sans demander (les commandes demandent toujours)."
-                  onClick={async () => setState(await api.autoEdits(!state.auto_edits))}><span class="knob" /> Modifs auto</button>
-                <span class="spacer" />
-                {state.context && (state.context.window ? (
-                  <span class="ctx" title={`Contexte envoyé au dernier tour : ${state.context.used} / ${state.context.window} tokens. Au-delà d'un seuil, l'ancien fil est résumé automatiquement.`}>
-                    <span class="ctx-bar"><span style={{ width: `${Math.min(100, (state.context.used / state.context.window) * 100)}%` }} /></span>
-                    {kfmt(state.context.used)} / {kfmt(state.context.window)}
-                  </span>
-                ) : state.context.used ? <span class="ctx" title="Tokens du dernier tour">{kfmt(state.context.used)} tok</span> : null)}
-                {effort && (
-                  <select class="select" title="Effort du modèle" value={String(effort.current ?? "")}
-                    onChange={async (e) => { const v = (e.target as HTMLSelectElement).value; setState(await api.effort(v || null)); }}>
-                    <option value="">effort : défaut</option>
-                    {effort.choices.map((c) => <option key={c} value={c}>effort : {c}</option>)}
-                  </select>
-                )}
                 <div class="model-wrap">
-                  <button class="model-btn" onClick={() => setPicker(!picker)} title="Modèle">
-                    <span class="muted">{state.mode_label}</span> {state.model || "choisir un modèle"} <span class="ico small">{I.chevron}</span>
+                  <button class="model-btn" onClick={() => setPicker(!picker)} title={`Modèle (${state.mode_label})`}>
+                    <span class="mb-prov">{state.mode_label}</span>{(state.model || !(state.is_cli || state.mode === "claude")) && <span class="mb-sep"> · </span>}{state.model || (state.is_cli || state.mode === "claude" ? "" : "choisir un modèle")} <span class="ico small">{I.chevron}</span>
                   </button>
                   {picker && <ModelPicker state={state} onClose={() => setPicker(false)}
                     onPick={async (m) => { setPicker(false); try { setState(await api.model(m)); } catch (e: any) { say(e.message); } }} />}
@@ -739,11 +794,10 @@ export function App() {
                 {busy ? (
                   <button class="send stop" title="Arrêter (Échap)" onClick={() => api.interrupt()}><span class="ico">{I.stop}</span></button>
                 ) : (
-                  <button class="send" title="Envoyer" disabled={!text.trim() && attachments.length === 0} onClick={send}><span class="ico">{I.send}</span></button>
+                  <button class="send" title="Envoyer (Entrée)" disabled={!text.trim() && attachments.length === 0} onClick={send}><span class="ico">{I.arrowUp}</span></button>
                 )}
               </div>
             </div>
-            <p class="disclaimer">{state.auto_edits ? "Modifications de fichiers appliquées automatiquement dans le dossier ; les commandes vous sont toujours montrées avant exécution." : "Les commandes et modifications de fichiers vous sont toujours montrées avant d'être exécutées."}</p>
           </div>
         )}
       </main>
@@ -762,6 +816,34 @@ export function App() {
           {panel === "usage" && (usage ? <UsageBody u={usage} /> : <p class="muted pad">Chargement…</p>)}
         </aside>
       )}
+
+      <footer class="statusbar">
+        <span class={`sb ${online ? "ok" : "warn"}`} title={online ? "Moteur Eclipse local (127.0.0.1)" : "Le moteur ne répond pas"}><span class="ico">{I.server}</span> {online ? "Moteur prêt" : "Moteur déconnecté"}</span>
+        {state.open && <span class="chip" title={state.session?.workspace}><span class="ico">{I.folder}</span> {basename(state.session!.workspace)}</span>}
+        {state.open && <span class="sb" title="Fournisseur">{state.mode_label}</span>}
+        <span class="spacer" />
+        {state.open && (
+          <>
+            <button class={`toggle ${state.auto_edits ? "on" : ""}`} title="Modifications auto : les créations et modifications de fichiers DANS le dossier sont appliquées sans demander. Les commandes vous sont toujours montrées avant exécution."
+              onClick={async () => setState(await api.autoEdits(!state.auto_edits))}><span class="knob" /> Modifs auto</button>
+            {state.context && (state.context.window ? (
+              <span class="ctx" title={`Contexte envoyé au dernier tour : ${state.context.used} / ${state.context.window} tokens. Au-delà d'un seuil, l'ancien fil est résumé automatiquement.`}>
+                <span class="ctx-bar"><span style={{ width: `${Math.min(100, (state.context.used / state.context.window) * 100)}%` }} /></span>
+                {kfmt(state.context.used)} / {kfmt(state.context.window)}
+              </span>
+            ) : state.context.used ? <span class="ctx" title="Tokens du dernier tour">{kfmt(state.context.used)} tok</span> : null)}
+            {effort && (
+              <select class="select" title="Effort du modèle" value={String(effort.current ?? "")}
+                onChange={async (e) => { const v = (e.target as HTMLSelectElement).value; setState(await api.effort(v || null)); }}>
+                <option value="">effort : défaut</option>
+                {effort.choices.map((c) => <option key={c} value={c}>effort : {c}</option>)}
+              </select>
+            )}
+          </>
+        )}
+        {isDesktop && <UpdatePill onOpen={() => setModal("update")} />}
+        <span class="sb">v{info?.version ?? state.version}</span>
+      </footer>
 
       {modal === "connections" && <ConnectionsModal onClose={() => setModal("")}
         onConnected={(s, msg) => { setState(s); setModal(""); say(msg); if (!s.model && !s.is_cli) setPicker(true); }} />}

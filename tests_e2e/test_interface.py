@@ -82,7 +82,7 @@ def test_theme_clair(page):
     page.keyboard.type("thème")
     page.keyboard.press("Enter")
     expect(page.locator("html")).to_have_attribute("data-theme", "light")
-    expect(page.locator("body")).to_have_css("background-color", "rgb(251, 250, 248)")
+    expect(page.locator("body")).to_have_css("background-color", "rgb(251, 251, 252)")
 
 
 def test_panne_du_moteur_affiche_la_banniere(page, server):
@@ -288,3 +288,27 @@ def test_accueil_propose_les_agents_detectes(page):
     quick.get_by_role("button", name="Utiliser Claude Code").click()
     expect(page.locator(".toast")).to_contain_text("Claude Code sélectionné")
     expect(page.locator(".model-btn")).to_contain_text("Claude Code")
+
+
+# --- Disposition « onglets + barre latérale à sections » ---------------------------------------------------------------
+
+def test_onglets_epinglage_et_projets(page, server):
+    page.locator("textarea").fill("Bonjour")
+    page.keyboard.press("Enter")
+    page.get_by_role("button", name="Autoriser une fois").click()
+    tab = page.locator(".ctab.on")
+    expect(tab).to_contain_text("Bonjour")  # onglet de la conversation ouverte
+    expect(page.locator(".statusbar")).to_contain_text("Moteur prêt")
+    # Shift-clic : épinglée, puis visible sous « Épinglées » (et plus dans la liste du projet)
+    page.locator(".conv", has_text="Bonjour").first.click(modifiers=["Shift"])
+    expect(page.locator(".side-hint", has_text="Shift-clic")).to_have_count(0)
+    expect(page.locator(".conv", has_text="Bonjour")).to_have_count(1)
+    # nouvelle conversation dans le même dossier : deuxième onglet ; fermer l'actif ramène au premier
+    page.get_by_title("Nouvelle conversation dans ce dossier").click()
+    expect(page.locator(".ctab")).to_have_count(2)
+    page.locator(".ctab.on .ctab-x").click()
+    expect(page.locator(".ctab")).to_have_count(1)
+    expect(page.locator(".ctab.on")).to_contain_text("Bonjour")
+    # onglet Projets : le dossier courant est listé
+    page.get_by_role("tab", name="Projets").click()
+    expect(page.locator(".side-item.proj.on")).to_contain_text("projet")

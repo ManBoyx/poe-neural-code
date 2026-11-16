@@ -11,10 +11,12 @@ export type Item =
   | { kind: "tool"; id: string; name: string; args: Record<string, unknown>; output: string | null; ok: boolean | null; diff?: string }
   | { kind: "note"; text: string; level: "info" | "warn" | "error" | "ok" };
 
-const TOOL_LABEL: Record<string, string> = {
-  read_file: "Lecture", list_dir: "Dossier", search_files: "Recherche", write_file: "Écriture", edit_file: "Modification",
-  delete_file: "Suppression", run_command: "Commande", todo_write: "Tâches", web_fetch: "Page web", ask_helper: "Consultation",
-  memory_search: "Mémoire", memory_load: "Mémoire", memory_note: "Mémoire", skill: "Skill",
+// Libellés au passé (étape terminée) et au présent (en cours), affichés sur une seule ligne discrète
+const TOOL_LABEL: Record<string, [string, string]> = {
+  read_file: ["Lu", "Lit"], list_dir: ["Listé", "Liste"], search_files: ["Recherché", "Recherche"], write_file: ["Écrit", "Écrit"],
+  edit_file: ["Modifié", "Modifie"], delete_file: ["Supprimé", "Supprime"], run_command: ["Exécuté", "Exécute"], todo_write: ["Tâches", "Tâches"],
+  web_fetch: ["Page lue", "Lit la page"], ask_helper: ["Consulté", "Consulte"], memory_search: ["Mémoire", "Mémoire"],
+  memory_load: ["Mémoire", "Mémoire"], memory_note: ["Noté", "Note"], skill: ["Skill", "Skill"],
 };
 
 function toolSummary(name: string, args: Record<string, unknown>): string {
@@ -44,14 +46,15 @@ function ToolCard({ it }: { it: Extract<Item, { kind: "tool" }> }) {
   const [open, setOpen] = useState(false);
   const running = it.ok === null && it.output === null;
   const state = running ? "running" : it.ok ? "ok" : "fail";
-  const hasBody = Boolean(it.output || it.diff);
+  const hasBody = Boolean(it.output);
+  const label = TOOL_LABEL[it.name]?.[running ? 1 : 0] ?? it.name;
   return (
     <div class={`tool ${state}`}>
       <button class="tool-head" onClick={() => hasBody && setOpen(!open)} aria-expanded={open}>
         <span class="ico tool-ico">{TOOL_ICON[it.name] ?? (it.name.startsWith("mcp__") ? I.plug : I.tools)}</span>
-        <span class="tool-name">{TOOL_LABEL[it.name] ?? it.name}</span>
+        <span class="tool-name">{label}</span>
         <span class="tool-sum">{toolSummary(it.name, it.args)}</span>
-        <span class="tool-state">{running ? <span class="spinner" /> : <span class="ico">{it.ok ? I.check : I.error}</span>}</span>
+        {running ? <span class="spinner" /> : !it.ok && <span class="ico tool-state">{I.error}</span>}
         {hasBody && <span class={`ico chev ${open ? "open" : ""}`}>{I.chevronR}</span>}
       </button>
       {it.diff && <DiffView diff={it.diff} />}
@@ -64,7 +67,7 @@ function Thinking({ it }: { it: Extract<Item, { kind: "thinking" }> }) {
   const [open, setOpen] = useState(false);
   return (
     <div class="thinking">
-      <button onClick={() => setOpen(!open)}><span class="ico">{I.thinking}</span> {it.live ? "Réflexion en cours…" : "Réflexion"} <span class={`ico chev ${open ? "open" : ""}`}>{I.chevronR}</span></button>
+      <button onClick={() => setOpen(!open)} aria-expanded={open}>{it.live ? "Réfléchit…" : "A réfléchi"} <span class={`ico chev ${open ? "open" : ""}`}>{I.chevronR}</span></button>
       {open && <div class="thinking-body">{it.text}</div>}
     </div>
   );
