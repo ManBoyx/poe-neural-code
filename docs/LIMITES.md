@@ -76,3 +76,10 @@
 - **Windows non testé** (code sans dépendance POSIX ; arrêt d'arbre via `taskkill`).
 - Multi-fournisseur, passerelle, multi-comptes, gestion des clés : volontairement hors périmètre.
 - Les agents tournent un tour à la fois ; pas de tâches d'arrière-plan simultanées (les réservations les prépareraient).
+
+## Commandes toujours refusées (0.3.0)
+La liste noire (formatage de disque, `rm -rf` sur le système ou le dossier personnel, écriture directe sur un disque,
+arrêt de l'ordinateur…) s'applique aux commandes passées par les outils d'Eclipse, y compris en mode bypass total.
+Elle ne s'applique PAS aux agents délégués (OpenCode, Codex…), qui exécutent leurs propres outils : leurs permissions
+restent les leurs. C'est une protection complémentaire, pas un bac à sable : une commande destructrice formulée
+autrement peut encore passer, d'où la confirmation manuelle qui reste la règle.
