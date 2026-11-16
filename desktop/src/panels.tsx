@@ -19,14 +19,23 @@ export function Bar({ value, tone }: { value: number | null; tone?: "time" }) {
 }
 
 export function Modal({ title, icon, onClose, children, wide }: { title: string; icon: string; onClose: () => void; children: preact.ComponentChildren; wide?: boolean }) {
+  const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
+    // Focus clavier : dans la fenêtre à l'ouverture, rendu à l'élément d'origine à la fermeture
+    const previous = document.activeElement as HTMLElement | null;
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     addEventListener("keydown", k);
-    return () => removeEventListener("keydown", k);
+    requestAnimationFrame(() => {
+      const el = box.current;
+      if (el && !el.contains(document.activeElement)) {
+        (el.querySelector<HTMLElement>("[autofocus], input, textarea, select, .modal-body button, button") ?? el).focus();
+      }
+    });
+    return () => { removeEventListener("keydown", k); previous?.focus?.(); };
   }, []);
   return (
     <div class="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div class={`modal ${wide ? "wide" : ""}`} role="dialog" aria-label={title}>
+      <div ref={box} tabIndex={-1} class={`modal ${wide ? "wide" : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <header><span class="ico">{icon}</span><h2>{title}</h2><button class="icon-btn" onClick={onClose} title="Fermer"><span class="ico">{I.close}</span></button></header>
         <div class="modal-body">{children}</div>
       </div>

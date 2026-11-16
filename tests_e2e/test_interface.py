@@ -123,8 +123,7 @@ def test_moteur_absent_puis_relance(browser, server):
 # --- Étape B ---------------------------------------------------------------------------------------------------------
 
 def test_arobase_autocompletion_et_fichier_tronque(page, server):
-    (server["project"] / "gros.txt").write_text("x" * 50_000, encoding="utf-8")
-    page.get_by_title("Fichiers du dossier").click()  # rafraîchit la liste des fichiers
+    (server["project"] / "gros.txt").write_text("x" * 50_000, encoding="utf-8")  # créé APRÈS l'ouverture
     box = page.locator("textarea")
     box.click()
     page.keyboard.type("Regarde @gro")
@@ -257,3 +256,35 @@ def test_mise_a_jour_refusee_si_signature_invalide(browser, server):
     dlg.get_by_role("button", name="Installer").click()
     expect(dlg.locator(".err")).to_contain_text("signature invalide")
     expect(dlg.get_by_role("button", name="Plus tard")).to_be_enabled()
+
+
+# --- Étape E ---------------------------------------------------------------------------------------------------------
+
+def test_aide_f1_et_raccourcis_affiches(page):
+    expect(page.locator(".new kbd")).to_have_text("Ctrl+N")
+    page.keyboard.press("F1")
+    dlg = page.locator(".modal", has_text="Aide : raccourcis et commandes")
+    expect(dlg).to_contain_text("Ctrl+K")
+    expect(dlg).to_contain_text("/diff")
+    expect(dlg).to_contain_text("/review")
+    page.keyboard.press("Escape")
+    expect(dlg).to_have_count(0)
+
+
+def test_focus_clavier_dans_les_fenetres(page):
+    box = page.locator("textarea")
+    box.focus()
+    page.keyboard.press("Control+,")
+    expect(page.locator(".modal :focus")).to_have_count(1)  # le focus est dans la fenêtre
+    page.keyboard.press("Escape")
+    expect(box).to_be_focused()  # puis il revient à la saisie
+    # (wait_for_function est inutilisable ici : la CSP stricte de l'interface interdit l'évaluation de texte, c'est voulu)
+
+
+def test_accueil_propose_les_agents_detectes(page):
+    quick = page.locator(".quick")
+    expect(quick).to_contain_text("Utiliser Claude Code")
+    expect(quick).to_contain_text("Utiliser OpenCode")
+    quick.get_by_role("button", name="Utiliser Claude Code").click()
+    expect(page.locator(".toast")).to_contain_text("Claude Code sélectionné")
+    expect(page.locator(".model-btn")).to_contain_text("Claude Code")

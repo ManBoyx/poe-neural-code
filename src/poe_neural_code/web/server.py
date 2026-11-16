@@ -869,6 +869,16 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
     return app
 
 
+# Interface en mode navigateur (`eclipse web`) : CSP stricte, pas d'intégration dans un cadre, pas de fuite de l'adresse.
+BROWSER_SECURITY_HEADERS = {
+    "Content-Security-Policy": ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; "
+                                "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"),
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
 class _Guard:
     """Jeton, Host et CORS (middleware ASGI pur : compatible avec le flux SSE)."""
 
@@ -898,10 +908,14 @@ class _Guard:
             if not secrets.compare_digest(supplied, self.token):
                 return await JSONResponse({"error": "jeton invalide"}, status_code=401, headers=cors)(scope, receive, send)
 
+        extra = dict(cors)
+        if not path.startswith("/api/"):  # interface servie en mode navigateur : mêmes restrictions que l'application
+            extra.update(BROWSER_SECURITY_HEADERS)
+
         async def send_with_cors(message):
-            if message["type"] == "http.response.start" and cors:
+            if message["type"] == "http.response.start" and extra:
                 message.setdefault("headers", [])
-                message["headers"] = list(message["headers"]) + [(k.encode(), v.encode()) for k, v in cors.items()]
+                message["headers"] = list(message["headers"]) + [(k.encode(), v.encode()) for k, v in extra.items()]
             await send(message)
         return await self.app(scope, receive, send_with_cors)
 
