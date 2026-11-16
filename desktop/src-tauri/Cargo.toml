@@ -1,6 +1,6 @@
 [package]
 name = "eclipse-desktop"
-version = "0.2.0"
+version = "0.3.0"
 description = "Eclipse Desktop : interface graphique du moteur Eclipse"
 authors = ["ManBoyx"]
 license-file = "../../LICENSE"

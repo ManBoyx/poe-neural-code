@@ -1,9 +1,31 @@
 # Journal des versions
 
-## Non publié
-### Applications
-- Application desktop (Tauri 2) : onglets de terminal pour le moteur Eclipse et les shells, avec PowerShell 7,
-  Windows PowerShell, cmd, WSL et Git Bash sous Windows. Police Nerd Font embarquée, copier-coller et raccourcis adaptés à chaque système.
+## 0.3.0 — 2026-11-16
+### Eclipse Desktop : application de chat (le CLI garde son interface terminal)
+- Interface graphique façon application de chat : conversations par dossier, fil avec Markdown nettoyé et code coloré,
+  étapes d'outils dépliables avec diffs, cartes d'autorisation (une fois, pour la session, refuser), choix du modèle et
+  de l'effort, modes Build/Plan, thèmes sombre et clair. Le moteur tourne en arrière-plan sur 127.0.0.1 avec un jeton ;
+  `eclipse web` ouvre la même interface dans le navigateur.
+- « Nouvelle discussion » : un dossier de travail est créé automatiquement (`~/Projets/Eclipse/…`, réglable).
+- Panneaux Mémoire (notes par type, recherche, modifier, épingler, oublier), Fichiers (aperçu, fichiers modifiés)
+  et Consommation (dont « tokens évités », estimation avec sa méthode affichée).
+- `@fichier` avec autocomplétion et avertissement de troncature ; commandes `/` (équivalents du CLI et
+  commandes-prompts comme /review ou /fix) ; palette Ctrl+K ; aide F1 ; pièces jointes (bouton, glisser-déposer,
+  collage d'une capture) ; export Markdown ; recherche dans le contenu des conversations.
+- Diff global des fichiers modifiés depuis le début de la conversation et « Tout annuler » (confirmation),
+  y compris dans les dossiers sans Git (dépôt fantôme dans les données d'Eclipse).
+- Fiabilité : écran de démarrage, bannière et « Relancer le moteur » si le moteur tombe, journaux avec rotation
+  (« Ouvrir les logs »), tests de bout en bout de l'interface avant chaque compilation.
+### Agents et mémoire
+- Tous les fournisseurs reçoivent le guide d'économie de tokens d'Eclipse (mémoire, lecture par plages, compactage).
+- OpenCode : lancé en `--standalone` dans le bon dossier (il travaillait auparavant dans le dossier du service
+  OpenCode en arrière-plan) et branché sur la mémoire d'Eclipse par MCP (vérifié avec un modèle gratuit).
+- Mémoire : doublons exacts refusés, notes modifiables avec historique, notes épinglées toujours fournies à l'IA.
+### Sécurité
+- Commandes toujours refusées, quel que soit le mode (formatage de disque, suppression du système ou du dossier
+  personnel, écriture directe sur un disque, arrêt de l'ordinateur…).
+- CSP stricte dans l'application et désormais aussi en mode navigateur ; contrastes WCAG AA.
+### Applications et distribution
 - Paquets Linux AppImage, .deb, .rpm ; Windows : installateur NSIS, MSI et version portable.
 - Mises à jour depuis GitHub, canaux stable et bêta. Avant d'installer : journal des changements affiché,
   empreinte SHA-256 contrôlée et signature vérifiée (liée au numéro de version). Toute vérification qui échoue entraîne un refus.

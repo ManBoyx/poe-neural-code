@@ -1,7 +1,8 @@
 # Eclipse
 
-Terminal de programmation avec agents IA (Claude Code, Poe, OpenCode, Codex, fournisseurs compatibles OpenAI) :
-mémoire de projet, budgets locaux, MCP, et vos shells dans la même fenêtre. Linux, Windows et Android.
+Application de programmation avec agents IA (Claude Code, Poe, OpenCode, Codex, fournisseurs compatibles OpenAI) :
+conversations par projet, chaque modification montrée avant d'être appliquée, mémoire de projet qui économise les
+tokens, budgets locaux, MCP. Linux, Windows et Android (terminal SSH).
 
 Ce dépôt ne contient **que les versions publiées** (binaires, sommes de contrôle, signatures). Le code source est privé.
 
