@@ -6,6 +6,7 @@ export const I = {
   diff: "\uEAE1", export: "\uEAC2", tools: "\uEB6D", plug: "\uEB2D", key: "\uEB11", graph: "\uEB03", sidebar: "\uEBF3", copy: "\uEBCC",
   undo: "\uEAE2", pin: "\uEB2B", pinned: "\uEBA0", brain: "\u{F09D1}", clip: "\u{F03E2}", retry: "\uEB37", files: "\uEAF0", fileCode: "\uEAE9",
   history: "\uEA82", palette: "\uEB63", image: "\u{F0976}", database: "\uEACE", newFile: "\uEA7F", thinking: "\uEA61", download: "\uEAC2", lock: "\uEA75", agent: "\uEC20", web: "\uEB01", todo: "\uEAB3",
+  home: "\uEB06", filter: "\uEAF1", arrowUp: "\uEAA1", dot: "\uEA71", server: "\uEBA2",
 };
 
 export const TOOL_ICON: Record<string, string> = {
