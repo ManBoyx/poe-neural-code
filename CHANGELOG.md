@@ -1,7 +1,42 @@
 # Journal des versions
 
-## Non publié
-### Connexions
+## 4.0.0 — non publiée
+### Correction : détection des agents installés
+- Lancée depuis le menu du bureau (AppImage, raccourci .desktop), l'application ne voyait plus que Gemini CLI : elle
+  héritait du PATH court de la session graphique, sans `~/.local/bin` (Claude Code) ni `~/.opencode/bin` (OpenCode).
+  Eclipse cherche désormais dans le PATH du processus, le PATH de votre shell de connexion (lu une fois, délai maximal
+  4 s), les dossiers d'installation courants (npm global, nvm, fnm, pnpm, bun, volta, ~/.local/bin, ~/.opencode/bin,
+  ~/.claude/local, ~/.kiro, ~/.cargo/bin, /usr/local/bin…) et un chemin indiqué à la main. Les agents sont lancés avec
+  ce PATH complété (un script Node trouve `node`). Chaque agent est détecté séparément : un délai ou un plantage sur
+  l'un n'empêche jamais les autres. Aucun résultat de détection n'est mis en cache.
+- Claude Code (mode intégré), les agents délégués, la fusion et `/free` utilisent la même recherche.
+### Connexions en 3 blocs (`/connect` dans le CLI, écran Connexions du desktop)
+1. Agents installés sur cet ordinateur : Claude Code, OpenCode, Gemini CLI, Codex CLI, Kiro CLI, Aider, Goose,
+   Qwen Code, Cursor CLI, GitHub Copilot CLI, Amp, Crush, Droid, Cline CLI (table de données facile à compléter).
+   Pour chacun : installé ou non, chemin, version, source ; les absents sont grisés avec la raison, jamais cachés.
+   « Détecter à nouveau » (`/detect`), chemin manuel (`/agent-path ID CHEMIN`, `eclipse agent-path`). Un agent absent
+   ne peut pas être sélectionné. Seuls Claude Code et OpenCode sont vérifiés en réel ; les autres préréglages viennent
+   de leur documentation et sont étiquetés « NON vérifiées ».
+2. Fournisseurs par clé d'API : provenance de la clé affichée (trousseau ou variable d'environnement, jamais la clé),
+   « Changer la clé », « Oublier ».
+3. Serveurs locaux compatibles : LM Studio (http://localhost:1234/v1), Ollama, ou toute URL ; détection s'ils
+   tournent, modèles chargés, « Tester la connexion ». Une adresse distante doit être en https.
+- `/doctor` affiche, pour chaque agent, le chemin trouvé (et sa cible si c'est un lien) ou la raison précise de l'échec.
+### Effort : rapide, normal, profond
+- Mêmes niveaux dans le CLI (`/effort rapide|normal|profond`) et le desktop (sélecteur dans la zone de saisie),
+  traduits vers les valeurs réelles du modèle actif (rapide → low, normal → medium, profond → high, sinon la plus
+  basse, celle du milieu, la plus haute). Effort par défaut réglable (`/effort par-defaut NIVEAU`, Réglages du
+  desktop, `default_effort` dans `/config`), appliqué quand l'effort n'a pas été choisi pour le modèle.
+### Desktop : commandes du CLI
+- Les 39 commandes du CLI absentes du desktop y sont ajoutées : exécutées par le moteur (`/doctor`, `/context`,
+  `/status`, `/detect`, `/agent-path`, `/fusion`, `/permissions`, `/bypass`, `/limit`, `/define-token`, `/rate`,
+  `/spent`, `/todo`, `/system`, `/skills`, `/plugins`, `/mcp`, `/reload`, `/add-dir`, `/verify`, `/free`, `/init`,
+  `/options`, `/provider`, `/agents`, `/disconnect`…) ou par l'interface (`/sessions`, `/themes`, `/config`,
+  `/update`, `/sidebar`, `/details`, `/timeline`, `/attach`, `/login`). `/editor` et `/exit` sont sans objet dans
+  une fenêtre et le disent. Les actions sensibles (bypass, approbation d'un plugin) demandent confirmation.
+- L'aide (F1) liste toutes les commandes avec leur usage.
+
+### Connexions (déjà présentes avant la 4.0.0, jamais publiées)
 - OpenCode Zen et OpenCode Go par clé d'API (`/connect` dans le CLI, Connexions dans l'application desktop ;
   variable `OPENCODE_API_KEY` possible). Seuls les modèles au format OpenAI sont proposés (16 pour Zen, 20 pour Go
   aujourd'hui) ; les modèles gratuits de Zen restent réservés à OpenCode (`/free`), comme l'exige OpenCode.

@@ -9,20 +9,33 @@ import socket
 import sys
 
 os.environ["PNC_HOME"] = sys.argv[1]
+os.environ["ECLIPSE_AGENT_SCAN"] = "path"  # jamais le shell ni les dossiers réels de la machine de test
 
 import uvicorn  # noqa: E402
 
 from poe_neural_code.config import Config, save_config  # noqa: E402
 from poe_neural_code.provider.base import TextDelta, ThinkingDelta, ToolCall  # noqa: E402
 from poe_neural_code.web.server import Hub, build_app  # noqa: E402
-from tests.conftest import FakeProvider  # noqa: E402
-from poe_neural_code import cli_agents  # noqa: E402
-from poe_neural_code.web import server as web_server  # noqa: E402
+from tests.conftest import MODEL, FakeProvider  # noqa: E402
+from poe_neural_code.provider.base import ModelInfo, ParamSpec  # noqa: E402
 
-# Détection simulée : Claude Code et OpenCode « installés », quel que soit l'ordinateur qui lance les tests.
+MODEL_EFFORT = ModelInfo("m-effort", context_length=100_000, max_output=8000, prompt_price=1e-6, completion_price=3e-6, supports_tools=True,
+                         params=[ParamSpec("reasoning_effort", "enum", ["low", "medium", "high"], "medium")])
+from poe_neural_code import cli_agents, connections  # noqa: E402
+
+# Détection simulée : Claude Code et OpenCode « installés », quel que soit l'ordinateur qui lance les tests (jamais lancés : faux chemins).
 _FAKE = {"claude", "opencode"}
-web_server.detect = lambda: [cli_agents.Detected(a, f"/faux/{a.binary}" if a.id in _FAKE else None, "")
-                             for a in cli_agents.all_adapters()]
+
+
+def _fake_detect(with_version=False, **_kw):
+    return [cli_agents.Detected(a, f"/faux/{a.binary}", "1.0.0" if with_version else "", source="PATH") if a.id in _FAKE
+            else cli_agents.Detected(a, None, reason=f"« {a.binary} » introuvable dans 3 dossiers (PATH)") for a in cli_agents.all_adapters()]
+
+
+connections.detect = _fake_detect
+import poe_neural_code.diagnostics as _diag  # noqa: E402
+_diag.detect = _fake_detect
+cli_agents.find_binary = lambda aid, config=None: f"/faux/{aid}" if aid in _FAKE else None
 
 TOKEN = "jeton-e2e"
 ANSWER = ("Voici ce que contient le projet :\n\n- `README.md` : la présentation\n\n"
@@ -38,7 +51,11 @@ def turns():
 async def main(project: str):
     save_config(Config(model="m1", discussions_dir=os.path.join(sys.argv[1], "discussions")))
     script = turns()
-    hub = Hub(provider_factory=lambda: FakeProvider(script))
+    class Provider(FakeProvider):  # deux modèles : m1 (sans effort) et m-effort (low/medium/high)
+        async def list_models(self):
+            return [MODEL, MODEL_EFFORT]
+
+    hub = Hub(provider_factory=lambda: Provider(script))
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]

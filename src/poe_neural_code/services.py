@@ -94,11 +94,11 @@ class Services:
     def delegated_runner(self) -> DelegatedRunner:
         aid = self.mode[4:]
         if aid not in self.delegated:
-            import shutil
+            from .cli_agents import find_binary
             a = get_adapter(aid)
             if a is None:
                 raise KeyError(aid)
-            r = DelegatedRunner(self.config, self.budget, self.memory, self.ctx, self.session, self._emit or (lambda e: None), a, shutil.which(a.binary))
+            r = DelegatedRunner(self.config, self.budget, self.memory, self.ctx, self.session, self._emit or (lambda e: None), a, find_binary(aid, self.config))
             r.ext = self.ext
             if aid == "opencode":
                 # OpenCode garde ses outils de fichiers et accède à la mémoire d'Eclipse (MCP local, jeton, 3 outils seulement).

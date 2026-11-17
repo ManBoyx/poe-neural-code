@@ -25,10 +25,13 @@ class Command:
     usage: str = ""
 
 
+INIT_PROMPT = ("Analyse ce projet (structure, langages, commandes de build/test, conventions) puis crée ou mets à jour le fichier AGENTS.md à la racine "
+               "avec des consignes concises et utiles pour un agent de programmation. S'il existe déjà, améliore-le sans perdre son contenu utile.")
+
 B = Command
 BUILTINS: list[Command] = [
     # --- celles d'OpenCode ---
-    B("connect", "Connecter un fournisseur (clé d'API) ou un agent IA installé (Claude Code, OpenCode, Gemini CLI, Codex, Kiro…)", keybind=""),
+    B("connect", "Connexions en 3 blocs : agents installés (détection auto), fournisseurs par clé d'API, serveurs locaux (LM Studio, Ollama, URL)", keybind=""),
     B("disconnect", "Oublier la clé d'un fournisseur : /disconnect ID", usage="/disconnect ID"),
     B("compact", "Compacter la session (résumé vérifiable, archives conservées)", ("summarize",), "ctrl+x c"),
     B("editor", "Rédiger le message dans l'éditeur externe ($EDITOR)", keybind="ctrl+x e"),
@@ -50,7 +53,8 @@ BUILTINS: list[Command] = [
     B("mode", "Changer de mode : /mode NOM", usage="/mode build|plan|NOM"),
     B("provider", "Changer de fournisseur ou d'agent : /provider ID (poe, openrouter, claude, opencode…)", usage="/provider ID"),
     B("fusion", "Mode fusion : le modèle actif peut consulter d'autres modèles/agents disponibles (ex. Claude Code → Kiro, OpenCode, une API)", usage="/fusion [on|off|list|add ID|remove ID]"),
-    B("effort", "Niveau d'effort/raisonnement du modèle actif (Ctrl+T pour alterner)", ("variant",), "ctrl+t", usage="/effort [niveau|défaut]"),
+    B("effort", "Effort du modèle actif : rapide, normal, profond (ou valeur exacte du modèle) ; /effort par-defaut NIVEAU pour toutes les conversations",
+      ("variant",), "ctrl+t", usage="/effort [rapide|normal|profond|défaut|VALEUR] · /effort par-defaut NIVEAU"),
     B("permissions", "Modes de permission : ask (tout confirmer) · edits (modifications acceptées) · bypass (aucune confirmation)", ("perm",), "ctrl+x p", usage="/permissions ask|edits|bypass"),
     B("bypass", "Bypass permissions : plus aucune confirmation (confirmation requise pour l'activer) ; /bypass off pour revenir", usage="/bypass [on|all|off]"),
     B("options", "Tous les réglages du modèle actif (effort, recherche web, réflexion…)", ("params",), usage="/options"),
@@ -86,6 +90,9 @@ BUILTINS: list[Command] = [
     B("login", "Se connecter à un fournisseur (= /connect)"),
     B("logout", "Oublier la clé d'un fournisseur (= /disconnect)", usage="/logout ID"),
     B("attach", "Joindre une image ou un fichier : /attach CHEMIN (ou @chemin dans le message)", usage="/attach CHEMIN"),
+    # --- 4.0.0 ---
+    B("detect", "Détecter à nouveau les agents installés (chemin, version, source ou raison de l'échec)"),
+    B("agent-path", "Indiquer à la main l'exécutable d'un agent : /agent-path ID CHEMIN (vide : détection automatique)", usage="/agent-path ID [CHEMIN]"),
 ]
 
 # Commandes « prompt » intégrées (remplaçables par une commande personnalisée du même nom)

@@ -292,7 +292,7 @@ export const SHORTCUTS: [string, string][] = [
   ["Ctrl+Entrée", "Enregistrer une note modifiée (panneau Mémoire)"], ["Ctrl+V", "Coller une capture d'écran comme pièce jointe"],
 ];
 
-export function HelpModal({ commands, onClose }: { commands: { name: string; desc: string }[]; onClose: () => void }) {
+export function HelpModal({ commands, onClose }: { commands: { name: string; desc: string; usage?: string; na?: boolean }[]; onClose: () => void }) {
   return (
     <Modal title="Aide : raccourcis et commandes" icon={I.info} onClose={onClose} wide>
       <h3>Raccourcis clavier</h3>
@@ -301,7 +301,7 @@ export function HelpModal({ commands, onClose }: { commands: { name: string; des
       </tbody></table>
       <h3>Commandes « / »</h3>
       <table class="help-table"><tbody>
-        {commands.map((c) => <tr key={c.name}><td><code>/{c.name}</code></td><td>{c.desc}</td></tr>)}
+        {commands.map((c) => <tr key={c.name} class={c.na ? "na" : ""}><td><code>/{c.name}</code></td><td>{c.desc}{c.usage && <div class="usage-line"><code>{c.usage}</code></div>}</td></tr>)}
       </tbody></table>
       <p class="muted small">Les commandes et les modifications de fichiers vous sont montrées avant d'être exécutées (sauf « Modifs auto » pour les fichiers).
         Certaines commandes sont toujours refusées (formatage de disque, suppression du système ou du dossier personnel, arrêt de l'ordinateur…).</p>

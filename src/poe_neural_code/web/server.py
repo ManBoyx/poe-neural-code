@@ -33,10 +33,10 @@ from starlette.staticfiles import StaticFiles
 from .. import __version__, credentials, variants
 from ..agent import (AssistantDelta, AssistantMessage, DiffShown, Paused, StatusEvent, ThinkingEvent, ToolFinished,
                      ToolRequested, TurnDone, UsageEvent)
-from ..cli_agents import detect
+from .. import connections as CX
 from ..logs import get_logger, logs_dir, redact
 from ..config import load_config, save_config
-from ..providers import all_specs, get_spec, has_credentials
+from ..providers import get_spec, has_credentials
 from ..services import Services, create_services
 from ..session import delete_session, list_sessions
 
@@ -339,7 +339,10 @@ class Hub:
             "configured": sv.is_cli or sv.provider.configured(),
             "model": self.current_model(), "models": models,
             "effort": None if not effort else {"name": effort.name, "choices": list(effort.choices), "default": effort.default,
-                                               "current": sv.current_options().get(effort.name)},
+                                               "current": sv.current_options().get(effort.name),
+                                               "level": variants.level_of(effort, sv.current_options().get(effort.name)),
+                                               "levels": {lv: variants.level_value(effort, lv) for lv in variants.LEVELS}},
+            "default_effort": sv.config.default_effort,
             "agents": sorted(sv.ext.modes.keys()) if getattr(sv.ext, "modes", None) else ["build", "plan"],
             "permissions": sv.ctx.permissions.mode, "auto_edits": sv.ctx.permissions.mode == "edits", "todos": self.todos(),
             "ref_limit": REF_LIMIT,
@@ -373,13 +376,12 @@ class Hub:
                                          for k, w in _windows(info).items()]}
         return out
 
-    def connections(self) -> dict:
-        agents = [{"id": "claude" if d.adapter.id == "claude" else f"cli:{d.adapter.id}", "label": d.adapter.label,
-                   "installed": d.installed, "path": d.path, "note": d.adapter.verified} for d in detect()]
-        apis = [{"id": f"api:{s.id}", "label": s.label, "key_required": s.key_required,
-                 "has_key": (not s.key_required) or has_credentials(s), "note": s.verified} for s in all_specs()]
-        return {"agents": agents, "apis": apis, "storage": credentials.storage_kind(),
-                "current": self.sv.mode if self.sv else None}
+    def connections(self, versions: bool = False, refresh: bool = False) -> dict:
+        """3 blocs : agents installés, fournisseurs par clé d'API, serveurs locaux (sans sondage réseau : voir /api/local_servers)."""
+        cfg = self.sv.config if self.sv else None
+        locals_ = [{"id": f"api:{s.id}", "provider": s.id, "label": s.label, "url": s.base_url, "custom": s.custom} for s in CX.local_specs()]
+        return {"agents": CX.agents(versions, refresh, cfg), "apis": CX.apis(), "locals": locals_, "search": CX.search_summary(),
+                "storage": credentials.storage_kind(), "current": self.sv.mode if self.sv else None}
 
     def set_model(self, name: str) -> None:
         sv = self.sv
@@ -404,8 +406,17 @@ class Hub:
         sv = self.sv
         kind, _, ident = target.partition(":")
         if target == "claude" or kind == "cli":
+            from ..cli_agents import find_binary, get_adapter
+            aid = "claude" if target == "claude" else ident
+            a = get_adapter(aid)
+            if a is None:
+                return False, f"agent inconnu : {aid}"
+            path = await asyncio.to_thread(find_binary, aid, sv.config)
+            if not path:
+                return False, f"{a.label} est introuvable sur cet ordinateur : installez-le ou indiquez le chemin de son exécutable."
             sv.set_mode(target)
-            return True, f"{sv.mode_label} sélectionné"
+            mem = "mémoire d'Eclipse branchée par MCP" if a.memory == "mcp" else "notes du projet transmises (pas de mémoire MCP vérifiée pour cet agent)"
+            return True, f"{a.label} sélectionné ({path}) · dossier : {sv.ctx.workspace.root} · {mem}"
         spec = get_spec(ident)
         if spec is None:
             return False, f"fournisseur inconnu : {ident}"
@@ -440,7 +451,7 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         dirs = list(dict.fromkeys([s["workspace"] for s in sess]))[:12]
         return JSONResponse({"version": __version__, "sessions": sess, "recent_dirs": dirs, "home": str(Path.home()),
                              "discussions_dir": str(discussions_root()),
-                             "theme": cfg.theme, "current": hub.sv.session.id if hub.sv else None})
+                             "theme": cfg.theme, "default_effort": cfg.default_effort, "current": hub.sv.session.id if hub.sv else None})
 
     async def state(_request):
         return JSONResponse(hub.state())
@@ -451,8 +462,28 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
     async def usage(_request):
         return need_open() or JSONResponse(hub.usage())
 
-    async def connections(_request):
-        return JSONResponse(hub.connections())
+    async def connections(request):
+        q = request.query_params
+        return JSONResponse(await asyncio.to_thread(hub.connections, q.get("versions") == "1", q.get("refresh") == "1"))
+
+    async def local_servers(_request):
+        return JSONResponse({"servers": await CX.local_servers()})
+
+    async def agent_path(request):
+        d = await body(request)
+        ok, msg, det = await asyncio.to_thread(CX.set_agent_path, str(d.get("agent", "")), str(d.get("path") or ""), hub.sv.config if hub.sv else None)
+        return JSONResponse({"ok": ok, "message": msg, "agent": det}) if ok else bad(msg)
+
+    async def add_server(request):
+        d = await body(request)
+        ok, msg, spec = CX.add_server(str(d.get("name", "")), str(d.get("url", "")), d.get("key_required"))
+        if not ok:
+            return bad(msg)
+        return JSONResponse({"ok": True, "message": msg, "id": f"api:{spec.id}", "key_required": spec.key_required})
+
+    async def forget_key(request):
+        ok, msg = CX.forget_key(str((await body(request)).get("provider", "")))
+        return JSONResponse({"ok": ok, "message": msg})
 
     async def open_(request):
         d = await body(request)
@@ -478,10 +509,15 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
             if v and not Path(v).expanduser().is_absolute():
                 return bad("chemin absolu attendu (ex. /home/vous/Projets/Eclipse)")
             cfg.discussions_dir = v or None
+        if "default_effort" in d:
+            lv = variants.LEVEL_ALIASES.get(str(d.get("default_effort") or "").strip().lower(), "défaut")
+            cfg.default_effort = lv
+            if hub.sv is not None:
+                hub.sv.config.default_effort = lv
         save_config(cfg)
         if hub.sv is not None and "discussions_dir" in d:
             hub.sv.config.discussions_dir = cfg.discussions_dir
-        return JSONResponse({"discussions_dir": str(discussions_root())})
+        return JSONResponse({"discussions_dir": str(discussions_root()), "default_effort": cfg.default_effort})
 
     async def memory(request):
         if (r := need_open()):
@@ -685,6 +721,20 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         hub.turn = asyncio.get_running_loop().create_task(hub.run_turn(text))
         return JSONResponse({"ok": True, "shown": f"/{c.name} {args}".strip()})
 
+    async def slash_list(_request):
+        from . import slash
+        return JSONResponse({"commands": slash.catalog(), "engine": list(slash.ENGINE)})
+
+    async def slash_run(request):
+        if (r := need_open()):
+            return r
+        from . import slash
+        d = await body(request)
+        res = await slash.run(hub, str(d.get("name", "")).lstrip("/").lower(), str(d.get("args") or ""), bool(d.get("confirmed")))
+        if res.get("state"):
+            res["state"] = hub.state()
+        return JSONResponse(res)
+
     async def edit_last(_request):
         if (r := need_open()):
             return r
@@ -772,8 +822,10 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         if p is None:
             return bad("ce modèle ne propose pas de réglage d'effort")
         v = (await body(request)).get("value")
+        if isinstance(v, str) and v.strip().lower() in variants.LEVEL_ALIASES:
+            v = variants.level_value(p, v)  # rapide / normal / profond → valeur réelle du modèle
         try:
-            hub.sv.set_option(p.name, None if v in (None, "", "default") else variants.coerce(p, str(v)))
+            hub.sv.set_option(p.name, None if v in (None, "", "default", "défaut") else variants.coerce(p, str(v)))
         except ValueError as e:
             return bad(str(e))
         return JSONResponse(hub.state())
@@ -842,6 +894,8 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         Route("/", index),
         Route("/api/info", info), Route("/api/state", state), Route("/api/transcript", get_transcript), Route("/api/usage", usage),
         Route("/api/connections", connections), Route("/api/open", open_, methods=["POST"]),
+        Route("/api/local_servers", local_servers), Route("/api/agent_path", agent_path, methods=["POST"]),
+        Route("/api/add_server", add_server, methods=["POST"]), Route("/api/forget_key", forget_key, methods=["POST"]),
         Route("/api/sessions/{sid}", remove, methods=["DELETE"]), Route("/api/new_discussion", new_discussion, methods=["POST"]),
         Route("/api/settings", settings, methods=["POST"]), Route("/api/memory", memory),
         Route("/api/memory/{iid:int}", forget, methods=["DELETE"]),
@@ -851,6 +905,7 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         Route("/api/changes", changes), Route("/api/changes/revert", revert_all, methods=["POST"]),
         Route("/api/export", export, methods=["GET", "POST"]), Route("/api/search", search),
         Route("/api/commands", commands_list), Route("/api/command", command, methods=["POST"]),
+        Route("/api/slash", slash_list), Route("/api/slash", slash_run, methods=["POST"]),
         Route("/api/edit", edit_last, methods=["POST"]), Route("/api/compact", compact, methods=["POST"]),
         Route("/api/fork", fork, methods=["POST"]), Route("/api/prompt", prompt, methods=["POST"]),
         Route("/api/interrupt", interrupt, methods=["POST"]), Route("/api/permission", permission, methods=["POST"]),

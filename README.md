@@ -69,7 +69,7 @@ la commande complète ou le diff, avec avertissements, avant votre accord.
 ### Commandes slash — toutes celles d'OpenCode (doc officielle) + celles d'Eclipse
 | OpenCode | Raccourci | Rôle |
 |---|---|---|
-| `/connect` | | choisir/vérifier le fournisseur (Poe, Claude Code) |
+| `/connect` | | connexions en 3 blocs : agents installés, clés d'API, serveurs locaux |
 | `/compact` (`/summarize`) | Ctrl+X C | compacter la session (résumé vérifiable, archives conservées) |
 | `/editor` | Ctrl+X E | rédiger dans `$EDITOR` |
 | `/exit` (`/quit`, `/q`) | Ctrl+X Q | quitter |
@@ -84,11 +84,13 @@ la commande complète ou le diff, avec avertissements, avant votre accord.
 | `/thinking` | | afficher/masquer la réflexion (n'active pas le raisonnement : voir Ctrl+T) |
 | `/update` | | versions d'Eclipse et de Claude Code |
 
-Propres à Eclipse : `/agents` `/mode NOM` (Tab / Maj+Tab) · `/provider ID` · `/effort` (**Ctrl+T**) `/options` · `/permissions` `/bypass` (Ctrl+X P) · `/fusion` · `/usage` (Ctrl+X I) · `/status` · `/sidebar` · `/details` ·
+Propres à Eclipse : `/agents` `/mode NOM` (Tab / Maj+Tab) · `/provider ID` · `/effort rapide|normal|profond` (**Ctrl+T**, `/effort par-defaut NIVEAU`) `/options` · `/detect` · `/agent-path ID CHEMIN` · `/doctor` · `/context` · `/permissions` `/bypass` (Ctrl+X P) · `/fusion` · `/usage` (Ctrl+X I) · `/status` · `/sidebar` · `/details` ·
 `/timeline` · `/copy` · `/rename` · `/skills` · `/plugins` · `/mcp` · `/memory` · `/verify` · `/todo` · `/define-token` · `/claude-limit` · `/rate` · `/spent` · `/reload`.
 Autres touches : Échap interrompre · Ctrl+P palette · Ctrl+C vider/quitter · PgHaut/PgBas · F2 modèle récent.
 
 ## Réglages selon le modèle actif (effort, recherche web, réflexion…)
+Effort simple, identique dans le CLI et le desktop : **rapide**, **normal**, **profond**, traduits vers les valeurs réelles du modèle (low, medium, high, ou à défaut
+la plus basse, celle du milieu, la plus haute). Effort par défaut : `/effort par-defaut NIVEAU` ou Réglages du desktop. Le desktop accepte aussi les commandes `/` du CLI (F1 pour la liste).
 `/options` (ou Ctrl+T pour l'effort) : la liste vient du **catalogue du fournisseur pour le modèle choisi** (ex. Poe : `reasoning_effort`, `web_search`,
 `enable_thinking`, `thinking_budget`, `verbosity`… avec leurs valeurs permises et défauts) ; rien n'est supposé. Les valeurs choisies sont envoyées dans le corps de
 la requête (si l'API les refuse en 400, la requête est renvoyée sans elles, avec avertissement). Claude Code : `--effort low|medium|high|xhigh|max` + `/model haiku|sonnet|opus`.
@@ -104,11 +106,19 @@ la requête (si l'API les refuse en 400, la requête est renvoyée sans elles, a
 - **Commandes personnalisées** : `.eclipse|.opencode|.claude/commands/*.md` (+ globales) avec `$ARGUMENTS`, `$1…$9`, en-tête `description`, `agent`, `model` (`fournisseur/modèle#variante`).
   Les commandes intégrées ne sont jamais écrasées. `AGENTS.md` (ou `CLAUDE.md`) du projet est ajouté au prompt comme consigne, jamais comme permission.
 
-## Connexions : n'importe quel agent installé ou fournisseur par clé d'API (`/connect`)
-`/connect` (ou `eclipse agents`, `eclipse providers`, `eclipse login ID`) détecte automatiquement les agents IA installés sur l'ordinateur et propose les fournisseurs API.
+## Connexions en 3 blocs (`/connect` dans le CLI, Connexions dans le desktop)
+1. **Agents installés sur cet ordinateur**, détectés automatiquement : installé ou non, chemin, version, source (les absents sont grisés, jamais cachés).
+2. **Fournisseurs par clé d'API** : la clé va dans le trousseau du système ; les variables d'environnement restent prises en compte.
+3. **Serveurs locaux compatibles** : LM Studio (`http://localhost:1234/v1`), Ollama, ou toute URL compatible OpenAI ; détectés s'ils tournent, avec leurs modèles chargés.
+
+Détection des agents : PATH du processus, PATH de votre shell de connexion, dossiers d'installation courants (npm global, nvm, fnm, pnpm, bun, `~/.local/bin`,
+`~/.opencode/bin`…) et chemin manuel. Une application lancée depuis le menu du bureau voit donc les mêmes agents que le terminal. `/detect` relance la détection,
+`/agent-path ID CHEMIN` (ou `eclipse agent-path ID CHEMIN`) impose un exécutable, `/doctor` donne pour chaque agent le chemin trouvé ou la raison de l'échec.
+Ajouter un agent : une ligne dans la table `PRESETS` de `cli_agents.py`, ou `<données>/agents.json`.
+
 Tous passent par la **maîtrise des tokens d'Eclipse** (journal mesuré/estimé, limite avant et pendant le tour, alertes, pause, interruption).
-- **Agents installés** : *Claude Code* (intégration complète : outils d'Eclipse, aperçu, confirmation), *OpenCode* (testé en réel), *Gemini CLI*, *Codex*, *Kiro*
-  (préréglages non vérifiés, étiquetés) et vos propres agents via `<données>/agents.json`. **Mode délégué** pour les agents autres que Claude Code : l'agent exécute ses PROPRES
+- **Agents installés** : *Claude Code* (intégration complète : outils d'Eclipse, aperçu, confirmation), *OpenCode* (testé en réel, mémoire d'Eclipse par MCP), *Gemini CLI*, *Codex CLI*, *Kiro CLI*,
+  *Aider*, *Goose*, *Qwen Code*, *Cursor CLI*, *GitHub Copilot CLI*, *Amp*, *Crush*, *Droid*, *Cline CLI* (préréglages non vérifiés, étiquetés) et vos propres agents via `<données>/agents.json`. **Mode délégué** pour les agents autres que Claude Code : l'agent exécute ses PROPRES
   outils (Eclipse ne peut pas en prévisualiser les commandes — annoncé), tokens mesurés si l'agent les donne sinon **estimés**, mode `plan` transmis si l'agent a une option lecture seule.
 - **API par clé** : Poe, OpenRouter, OpenCode Zen et OpenCode Go (modèles au format OpenAI ; les gratuits de Zen restent réservés à OpenCode, via `/free`), OpenAI, Anthropic (API), Google Gemini, Mistral, Groq, DeepSeek, xAI, Together, Ollama et LM Studio (locaux), ou toute adresse compatible OpenAI
   (« Autre fournisseur »). Vous saisissez la clé (masquée) ; elle est vérifiée puis stockée dans le trousseau du système (Secret Service/KWallet sous Linux, Gestionnaire d'identification sous Windows) ; sans trousseau disponible, elle n'est pas enregistrée (jamais en clair) : utilisez alors la variable d'environnement du fournisseur. Les modèles

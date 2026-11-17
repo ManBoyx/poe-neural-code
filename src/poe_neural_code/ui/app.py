@@ -25,7 +25,7 @@ from textual.widgets import Input, Label, OptionList, Static, TabbedContent, Tab
 from textual.widgets.option_list import Option
 
 from .. import __version__, credentials, variants
-from ..cli_agents import detect, get_adapter
+from ..cli_agents import detect, find_binary, get_adapter
 from .. import fusion as F
 from ..providers import ProviderSpec, all_specs, get_spec, has_credentials, save_custom
 from ..agent import (AssistantDelta, AssistantMessage, DiffShown, Paused, StatusEvent, ThinkingEvent, ToolFinished, ToolRequested, TurnDone, UsageEvent)
@@ -54,8 +54,7 @@ LOGO = r"""
  ██╔══╝  ██║     ██║     ██║██╔═══╝ ╚════██║██╔══╝
  ███████╗╚██████╗███████╗██║██║     ███████║███████╗
  ╚══════╝ ╚═════╝╚══════╝╚═╝╚═╝     ╚══════╝╚══════╝"""
-INIT_PROMPT = ("Analyse ce projet (structure, langages, commandes de build/test, conventions) puis crée ou mets à jour le fichier AGENTS.md à la racine "
-               "avec des consignes concises et utiles pour un agent de programmation. S'il existe déjà, améliore-le sans perdre son contenu utile.")
+from ..extensions.commands import INIT_PROMPT  # noqa: E402  (partagé avec le desktop)
 CLAUDE_ALIASES = ["haiku", "sonnet", "opus"]
 LEADER_KEYS = {"p": "permissions", "i": "usage", "n": "new", "l": "sessions", "m": "models", "t": "themes", "b": "sidebar", "e": "editor", "x": "export", "c": "compact", "u": "undo",
                "r": "redo", "a": "agents", "g": "timeline", "h": "details", "y": "copy", "q": "exit", "s": "status"}
@@ -723,7 +722,7 @@ class WorkScreen(Screen):
             items: list = []
             if sv.mode == "cli:opencode":  # liste réelle des modèles d'OpenCode (gratuits en tête)
                 self.toast("Lecture des modèles d'OpenCode…")
-                exe = shutil.which("opencode")
+                exe = find_binary("opencode", sv.config)
                 try:
                     proc = await asyncio.create_subprocess_exec(exe, "models", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
                     out, _ = await asyncio.wait_for(proc.communicate(), 40)
@@ -984,35 +983,100 @@ class WorkScreen(Screen):
     async def cmd_update(self, arg):
         lines = [f"Eclipse {__version__} (installation locale — aucun canal de mise à jour publié : `git pull` + `pip install -e .` si vous suivez le dépôt)"]
         try:
-            r = subprocess.run([self.sv.config.claude_bin, "--version"], capture_output=True, text=True, timeout=10)
+            r = subprocess.run([find_binary("claude", self.sv.config) or self.sv.config.claude_bin, "--version"], capture_output=True, text=True, timeout=10)
             lines.append(f"Claude Code : {r.stdout.strip() or r.stderr.strip()}  (mise à jour : `claude update` dans un terminal)")
         except Exception:  # noqa: BLE001
             lines.append("Claude Code : introuvable")
         await self.app.push_screen_wait(InfoScreen("Versions", Text("\n".join(lines))))
 
     async def cmd_connect(self, arg):
-        """Connexions : fournisseurs API (clé d'API) et agents IA détectés sur l'ordinateur."""
+        """Connexions en 3 blocs : agents installés (détection automatique), fournisseurs par clé d'API, serveurs locaux compatibles."""
+        from .. import connections as CX
         sv = self.sv
-        items: list[tuple[str, str, str]] = []
-        found = detect()
-        for d in sorted(found, key=lambda d: not d.installed):
-            a = d.adapter
-            st = f"détecté {I.get('ok')} {d.path}" if d.installed else "non installé"
-            items.append(((I.get("agent") + " " if d.installed else I.get("circle_open") + " ") + a.label + ("  (agent installé)" if d.installed else ""), f"cli:{a.id}", f"{st} · {a.verified}"))
-        for s in all_specs():
-            st = (f"clé enregistrée {I.get('ok')}" if has_credentials(s) else "clé à saisir") if s.key_required else "local, sans clé"
-            items.append((s.label + "  (API)", f"api:{s.id}", f"{st} · {s.verified}"))
-        items.append((I.get("provider") + " Autre fournisseur (URL compatible OpenAI)…", "__custom__", "nom + adresse + clé"))
-        v = await self.app.push_screen_wait(PickerScreen("Connexions — agents installés et fournisseurs API", items, current=("api:" + sv.mode) if not sv.is_cli else sv.mode,
-                                                         hint="Entrée : se connecter · les clés sont stockées dans " + credentials.storage_kind()))
-        if not v:
+        refresh = False
+        while True:
+            if refresh:
+                self.toast("Détection des agents…")
+            det, locs = await asyncio.gather(asyncio.to_thread(CX.agents, False, refresh, sv.config), CX.local_servers())
+            refresh = False
+            items: list = [("1 · AGENTS INSTALLÉS SUR CET ORDINATEUR  (détection automatique, rien à saisir)", None, "")]
+            for d in det:
+                if d["installed"]:
+                    items.append((f"{I.get('agent')} {d['label']}", d["id"], f"{I.get('ok')} {d['path']} · trouvé via : {d['source']} · {d['note']}"))
+                else:
+                    items.append((f"{I.get('circle_open')} {d['label']}  — non installé", "path:" + d["agent"], f"{d['reason']} · Entrée : indiquer son chemin"))
+            items.append((f"{I.get('retry')} Détecter à nouveau", "__redetect__", "relit le PATH de votre shell et les dossiers d'installation (/detect)"))
+            items.append((f"{I.get('folder')} Indiquer le chemin d'un agent…", "__path__", "exécutable choisi à la main, prioritaire sur la détection"))
+            items.append(("2 · FOURNISSEURS PAR CLÉ D'API", None, ""))
+            for a in CX.apis():
+                st = f"{I.get('ok')} clé : {a['key_source']}" if a["has_key"] else "clé à saisir"
+                items.append((f"{I.get('key')} {a['label']}", a["id"], f"{st} · {a['note']}"))
+            items.append((f"{I.get('provider')} Autre fournisseur (adresse https + clé)…", "__custom__", "nom + adresse compatible OpenAI + clé"))
+            items.append(("3 · SERVEURS LOCAUX COMPATIBLES", None, ""))
+            for srv in locs:
+                if srv["running"]:
+                    st = f"{I.get('ok')} actif · " + (f"{len(srv['models'])} modèle(s) : " + ", ".join(srv["models"][:3]) if srv["models"] else "aucun modèle chargé")
+                else:
+                    st = srv["error"]
+                items.append((f"{I.get('network')} {srv['label']}", srv["id"], f"{srv['url']} · {st}"))
+            items.append((f"{I.get('network')} Ajouter un serveur compatible OpenAI (URL)…", "__local__", "ex. http://localhost:8080/v1 · aucune clé pour une adresse locale"))
+            v = await self.app.push_screen_wait(PickerScreen("Connexions", items, current=("api:" + sv.mode) if not sv.is_cli else sv.mode,
+                                                             hint="Entrée : utiliser · clés stockées dans " + credentials.storage_kind()))
+            if not v:
+                return
+            if v == "__redetect__":
+                refresh = True
+                continue
+            if v == "__path__" or v.startswith("path:"):
+                await self._agent_path(v[5:] if v.startswith("path:") else "")
+                continue
+            if v == "__custom__":
+                return await self._connect_custom()
+            if v == "__local__":
+                return await self._connect_custom(local=True)
+            kind, _, ident = v.partition(":")
+            if v == "claude" or kind == "cli":
+                return await self.cmd_provider(v)
+            return await self._connect_api(ident)
+
+    async def _agent_path(self, aid: str) -> None:
+        from ..cli_agents import all_adapters
+        from .. import connections as CX
+        if not aid:
+            aid = await self.app.push_screen_wait(PickerScreen("Quel agent ?", [(a.label, a.id, " / ".join(a.binaries)) for a in all_adapters()]))
+            if not aid:
+                return
+        cur = self.sv.config.agent_paths.get(aid, "")
+        raw = await self.app.push_screen_wait(TextPromptScreen(f"Chemin de l'exécutable ({aid}) — vide : détection automatique", cur))
+        if raw is None:
             return
-        if v == "__custom__":
-            return await self._connect_custom()
-        kind, _, ident = v.partition(":")
-        if kind == "cli":
-            return await self.cmd_provider(ident)
-        await self._connect_api(ident)
+        ok, msg, _ = await asyncio.to_thread(CX.set_agent_path, aid, raw, self.sv.config)
+        self.note(msg, "ok" if ok else "error")
+
+    async def cmd_detect(self, arg):
+        """/detect : relance la détection des agents (chemin, version, source)."""
+        from .. import connections as CX
+        self.toast("Détection des agents…")
+        det = await asyncio.to_thread(CX.agents, True, True, self.sv.config)
+        lines = []
+        for d in det:
+            if d["installed"]:
+                lines.append(f"{I.get('ok')} {d['label']:20} {d['path']}  {d['version'] or d['version_error']}  (via {d['source']})")
+            else:
+                lines.append(f"{I.get('circle_open')} {d['label']:20} non installé — {d['reason']}")
+        await self.app.push_screen_wait(InfoScreen("Agents détectés", Text("\n".join(lines) + "\n\nChemin manuel : /agent-path ID CHEMIN")))
+        self.refresh_panels()
+
+    async def cmd_agent_path(self, arg):
+        """/agent-path ID [CHEMIN] : chemin d'un agent indiqué à la main (vide : retour à la détection automatique)."""
+        from .. import connections as CX
+        aid, _, path = (arg or "").partition(" ")
+        if not aid:
+            return await self._agent_path("")
+        if not path.strip():
+            return await self._agent_path(aid)
+        ok, msg, _ = await asyncio.to_thread(CX.set_agent_path, aid, path, self.sv.config)
+        self.note(msg, "ok" if ok else "error")
 
     async def _connect_api(self, pid: str, new_key: str | None = None) -> None:
         sv = self.sv
@@ -1033,18 +1097,21 @@ class WorkScreen(Screen):
             if not sv.session.model:
                 await self.pick_model()
 
-    async def _connect_custom(self) -> None:
-        name = await self.app.push_screen_wait(TextPromptScreen("Nom court du fournisseur (ex. monserveur)"))
-        if not name:
+    async def _connect_custom(self, local: bool = False) -> None:
+        from .. import connections as CX
+        url = await self.app.push_screen_wait(TextPromptScreen(
+            "Adresse du serveur compatible OpenAI" + (" (ex. http://localhost:1234/v1)" if local else " (https://…/v1)"), "http://localhost:" if local else "https://"))
+        if not url:
             return
-        url = await self.app.push_screen_wait(TextPromptScreen("Adresse de base de l'API compatible OpenAI (ex. https://exemple.com/v1)"))
-        if not url or not url.startswith(("http://", "https://")):
-            self.note("Adresse invalide (http:// ou https:// attendu).", "error")
+        name = await self.app.push_screen_wait(TextPromptScreen("Nom affiché (ex. monserveur)"))
+        if name is None:
             return
-        local = url.startswith(("http://localhost", "http://127.0.0.1"))
-        pid = "".join(ch for ch in name.lower() if ch.isalnum() or ch in "-_") or "custom"
-        save_custom(ProviderSpec(pid, name, url, f"{pid.upper().replace('-', '_')}_API_KEY", key_required=not local, custom=True))
-        await self._connect_api(pid)
+        ok, msg, spec = CX.add_server(name, url)
+        if not ok:
+            self.note(msg, "error")
+            return
+        self.note(msg, "ok")
+        await self._connect_api(spec.id)
 
     async def cmd_disconnect(self, arg):
         spec = get_spec(arg) if arg else None
@@ -1101,24 +1168,48 @@ class WorkScreen(Screen):
             await self.cmd_mode(v)
 
     async def cmd_effort(self, arg):
-        """/effort : niveau d'effort du modèle ACTIF (valeurs lues du catalogue ; Claude Code : low…max)."""
+        """/effort : rapide / normal / profond (traduits vers les valeurs RÉELLES du modèle actif), ou une valeur exacte du catalogue.
+        /effort par-defaut NIVEAU : effort appliqué quand il n'a pas été choisi pour le modèle (même réglage que le desktop)."""
         sv = self.sv
+        a = (arg or "").strip()
+        if a.split(" ")[0].lower() in ("par-defaut", "par-défaut", "pardefaut", "default-level"):
+            lv = a.partition(" ")[2].strip() or "défaut"
+            try:
+                from ..config import Config
+                sv.config.default_effort = Config(default_effort=lv).default_effort
+            except Exception:  # noqa: BLE001
+                self.note("Niveau par défaut : défaut, rapide, normal ou profond.", "error")
+                return
+            save_config(sv.config)
+            self.toast(f"Effort par défaut → {sv.config.default_effort}")
+            self.refresh_panels()
+            return
         p = variants.effort_param(sv.model_params())
         if not p:
             self.note(f"{sv.model_key or 'ce modèle'} ne propose pas de réglage d'effort (voir /options pour ses autres réglages).", "warn")
             return
-        if not arg:
+        if not a:
             cur = sv.current_options().get(p.name)
-            items = [("défaut du modèle", "__default__", f"défaut : {p.default}" if p.default else "valeur par défaut du fournisseur")] + [(c, c, "") for c in p.choices]
-            v = await self.app.push_screen_wait(PickerScreen(f"Effort — {p.name} ({sv.model_key})", items, current=cur or "__default__"))
+            items = [("défaut du modèle", "__default__", f"défaut : {p.default}" if p.default else "valeur par défaut du fournisseur")]
+            items += [(f"{lv}", lv, f"→ {variants.level_value(p, lv)}") for lv in variants.LEVELS]
+            items += [(c, c, "valeur exacte du modèle") for c in p.choices]
+            v = await self.app.push_screen_wait(PickerScreen(f"Effort — {p.name} ({sv.model_key}) · par défaut : {sv.config.default_effort}", items,
+                                                             current=variants.level_of(p, cur) or cur or "__default__"))
             if v is None:
                 return
-            arg = "défaut" if v == "__default__" else v
+            a = "défaut" if v == "__default__" else v
         try:
-            sv.set_option(p.name, None if arg in ("défaut", "default") else variants.coerce(p, arg))
-            self.toast(f"Effort ({p.name}) → {arg}")
+            if a.lower() in ("défaut", "default"):
+                val = None
+            elif a.lower() in variants.LEVEL_ALIASES:
+                val = variants.level_value(p, a)
+            else:
+                val = variants.coerce(p, a)
+            sv.set_option(p.name, val)
+            lv = variants.level_of(p, val)
+            self.toast(f"Effort ({p.name}) → {val if val is not None else 'défaut'}" + (f" ({lv})" if lv and lv != a else ""))
         except ValueError as ex:
-            self.note(f"Valeur invalide : {ex}", "error")
+            self.note(f"Valeur invalide : {ex} · ou rapide, normal, profond", "error")
         self.refresh_panels()
 
     async def cmd_permissions(self, arg):
@@ -1605,7 +1696,7 @@ class WorkScreen(Screen):
         sv = self.sv
         while True:
             data = sv.config.model_dump()
-            skip = {"recent_models", "favorite_models", "cli_models", "fusion_helpers", "last_alert_level"}
+            skip = {"recent_models", "favorite_models", "cli_models", "fusion_helpers", "last_alert_level", "agent_paths"}
             items = [(f"{k} = {json_short(v)}", k, (Config.model_fields[k].description or "")) for k, v in data.items() if k not in skip]
             key = await self.app.push_screen_wait(PickerScreen("Réglages (Entrée : modifier)", items))
             if not key:

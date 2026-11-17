@@ -42,8 +42,9 @@ export function DiffView({ diff }: { diff: string }) {
   );
 }
 
-function ToolCard({ it }: { it: Extract<Item, { kind: "tool" }> }) {
-  const [open, setOpen] = useState(false);
+function ToolCard({ it, details = false }: { it: Extract<Item, { kind: "tool" }>; details?: boolean }) {
+  const [open, setOpen] = useState(details);
+  useEffect(() => setOpen(details), [details]);
   const running = it.ok === null && it.output === null;
   const state = running ? "running" : it.ok ? "ok" : "fail";
   const hasBody = Boolean(it.output);
@@ -95,9 +96,9 @@ export function PermissionCard({ p, onDecide }: { p: PermissionEvent; onDecide: 
   );
 }
 
-export function Thread({ items, pending, busy, onDecide, empty, onRetry, showThinking = true }: {
+export function Thread({ items, pending, busy, onDecide, empty, onRetry, showThinking = true, showDetails = false }: {
   items: Item[]; pending: PermissionEvent[]; busy: boolean; onDecide: (id: string, d: "once" | "session" | "deny") => void; empty: preact.ComponentChildren;
-  onRetry?: () => void; showThinking?: boolean;
+  onRetry?: () => void; showThinking?: boolean; showDetails?: boolean;
 }) {
   const lastAssistant = items.reduce((acc, it, i) => (it.kind === "assistant" ? i : acc), -1);
   const ref = useRef<HTMLDivElement>(null);
@@ -135,7 +136,7 @@ export function Thread({ items, pending, busy, onDecide, empty, onRetry, showThi
         {items.length === 0 && !busy ? empty : null}
         {items.map((it, i) => {
           switch (it.kind) {
-            case "user": return <div key={i} class="msg user"><div class="bubble">{it.text}</div></div>;
+            case "user": return <div key={i} id={`msg-${i}`} class="msg user"><div class="bubble">{it.text}</div></div>;
             case "assistant": return (
               <div key={i} class={`msg assistant ${it.live ? "live" : ""}`}>
                 <Markdown text={it.text} />
@@ -147,7 +148,7 @@ export function Thread({ items, pending, busy, onDecide, empty, onRetry, showThi
                 )}
               </div>);
             case "thinking": return showThinking ? <Thinking key={i} it={it} /> : null;
-            case "tool": return <ToolCard key={it.id || i} it={it} />;
+            case "tool": return <ToolCard key={it.id || i} it={it} details={showDetails} />;
             case "note": return <div key={i} class={`note ${it.level}`}><span class="ico">{it.level === "error" ? I.error : it.level === "warn" ? I.warn : I.info}</span>{it.text}</div>;
           }
         })}

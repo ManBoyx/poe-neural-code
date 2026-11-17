@@ -221,7 +221,8 @@ def test_effort_command_picker_and_direct_levels(tmp_path):
             assert app.sv.current_options()["reasoning_effort"] == "low"
             await say(pilot, app, "/effort")
             assert await until(pilot, lambda: type(app.screen).__name__ == "PickerScreen")
-            assert [v for _, v, _ in app.screen.items] == ["__default__", "low", "medium", "high"] and app.screen.current == "low"
+            assert [v for _, v, _ in app.screen.items] == ["__default__", "rapide", "normal", "profond", "low", "medium", "high"]
+            assert app.screen.current == "rapide"  # low = niveau « rapide » pour ce modèle
             app.screen.query_one("#picker-filter").value = "medium"
             await pilot.pause(0.2)
             await pilot.press("enter")

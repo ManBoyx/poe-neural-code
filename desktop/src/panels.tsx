@@ -1,6 +1,6 @@
 // Panneaux et fenêtres : consommation, connexions, sélecteur de modèle, réglages (dont mises à jour).
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { api, isDesktop, openLogs, type Connections, type State, type Usage } from "./api";
+import { api, isDesktop, openLogs, type AgentInfo, type ApiInfo, type Connections, type LocalServer, type State, type Usage } from "./api";
 import { I } from "./icons";
 
 const fmt = (n: number) => new Intl.NumberFormat("fr-FR").format(Math.round(n));
@@ -163,70 +163,184 @@ export function ModelPicker({ state, onPick, onClose }: { state: State; onPick: 
   );
 }
 
-// --- Connexions ----------------------------------------------------------------------------------------------------
+// --- Connexions : 3 blocs (agents installés · clés d'API · serveurs locaux) --------------------------------------------
 export function ConnectionsModal({ onClose, onConnected }: { onClose: () => void; onConnected: (s: State, msg: string) => void }) {
   const [c, setC] = useState<Connections | null>(null);
-  const [askKey, setAskKey] = useState<{ id: string; label: string } | null>(null);
+  const [servers, setServers] = useState<LocalServer[] | null>(null);
+  const [askKey, setAskKey] = useState<{ id: string; label: string; replace?: boolean } | null>(null);
+  const [pathFor, setPathFor] = useState<AgentInfo | null>(null);
+  const [addSrv, setAddSrv] = useState<"" | "local" | "remote">("");
   const [key, setKey] = useState("");
+  const [field, setField] = useState("");
+  const [field2, setField2] = useState("");
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  useEffect(() => { api.connections().then(setC).catch((e) => setError(String(e.message))); }, []);
+  const [info, setInfo] = useState("");
+
+  const load = async (refresh = false) => {
+    setError("");
+    try {
+      const fast = await api.connections({ refresh });
+      setC(fast);
+      api.connections({ versions: true }).then((full) => setC((cur) => cur ? { ...cur, agents: full.agents } : full)).catch(() => undefined);
+    } catch (e: any) { setError(String(e.message)); }
+  };
+  const probe = () => { setServers(null); api.localServers().then((r) => setServers(r.servers)).catch((e) => setError(String(e.message))); };
+  useEffect(() => { load(); probe(); }, []);
 
   const go = async (id: string, label: string, k?: string) => {
-    setBusy(id); setError("");
+    setBusy(id); setError(""); setInfo("");
     try {
       const r = await api.connect(id, k);
       if (r.need_key) { setAskKey({ id, label }); return; }
       if (!r.ok) { setError(r.message || "connexion refusée"); return; }
+      setKey(""); setAskKey(null);
       onConnected(r.state!, r.message || `${label} connecté`);
     } catch (e: any) { setError(e.message); } finally { setBusy(""); }
   };
+  const savePath = async (agent: AgentInfo, path: string) => {
+    setBusy("path"); setError("");
+    try {
+      const r = await api.agentPath(agent.agent, path);
+      setInfo(r.message); setPathFor(null); await load();
+    } catch (e: any) { setError(e.message); } finally { setBusy(""); }
+  };
+  const forget = async (a: ApiInfo) => {
+    try { const r = await api.forgetKey(a.provider); setInfo(r.message); await load(); } catch (e: any) { setError(e.message); }
+  };
+  const addServer = async () => {
+    setBusy("add"); setError("");
+    try {
+      const r = await api.addServer(field2, field);
+      setAddSrv(""); setField(""); setField2(""); await load(); probe();
+      if (r.key_required) setAskKey({ id: r.id, label: field2 || field }); else setInfo(r.message);
+    } catch (e: any) { setError(e.message); } finally { setBusy(""); }
+  };
+  const back = () => { setAskKey(null); setPathFor(null); setAddSrv(""); setKey(""); setError(""); };
 
+  let body: preact.ComponentChildren;
+  if (!c) body = <p class="muted">Chargement…</p>;
+  else if (askKey) body = (
+    <form class="keyform" onSubmit={(e) => { e.preventDefault(); if (key.trim()) go(askKey.id, askKey.label, key.trim()); }}>
+      <p>Clé d'API <b>{askKey.label}</b>. Elle est vérifiée auprès du fournisseur, puis stockée dans {c.storage}. Elle n'est jamais affichée ni écrite en clair.</p>
+      <input type="password" autocomplete="off" spellcheck={false} placeholder="Collez votre clé d'API" value={key} onInput={(e) => setKey((e.target as HTMLInputElement).value)} autoFocus />
+      {error && <p class="err">{error}</p>}
+      <div class="row-end"><button type="button" class="btn" onClick={back}>Retour</button><button class="btn primary" disabled={!key.trim() || !!busy}>{busy ? "Vérification…" : "Se connecter"}</button></div>
+    </form>
+  );
+  else if (pathFor) body = (
+    <form class="keyform" onSubmit={(e) => { e.preventDefault(); savePath(pathFor, field); }}>
+      <p>Chemin de l'exécutable de <b>{pathFor.label}</b> ({pathFor.binaries.join(" ou ")}). Il est prioritaire sur la détection automatique.</p>
+      <input class="text mono" spellcheck={false} placeholder="/home/vous/.local/bin/…" value={field} onInput={(e) => setField((e.target as HTMLInputElement).value)} autoFocus />
+      {error && <p class="err">{error}</p>}
+      <div class="row-end">
+        <button type="button" class="btn" onClick={back}>Retour</button>
+        <button type="button" class="btn" onClick={() => savePath(pathFor, "")} disabled={!!busy}>Détection automatique</button>
+        <button class="btn primary" disabled={!field.trim() || !!busy}>Enregistrer</button>
+      </div>
+    </form>
+  );
+  else if (addSrv) body = (
+    <form class="keyform" onSubmit={(e) => { e.preventDefault(); addServer(); }}>
+      <p>{addSrv === "local" ? "Serveur compatible OpenAI sur cet ordinateur ou le réseau local (aucune clé pour une adresse locale)."
+        : "Fournisseur compatible OpenAI distant : adresse https, la clé vous sera demandée ensuite."}</p>
+      <input class="text mono" spellcheck={false} placeholder={addSrv === "local" ? "http://localhost:8080/v1" : "https://exemple.com/v1"} value={field}
+        onInput={(e) => setField((e.target as HTMLInputElement).value)} autoFocus />
+      <input class="text" spellcheck={false} placeholder="Nom affiché (facultatif)" value={field2} onInput={(e) => setField2((e.target as HTMLInputElement).value)} />
+      {error && <p class="err">{error}</p>}
+      <div class="row-end"><button type="button" class="btn" onClick={back}>Retour</button><button class="btn primary" disabled={!field.trim() || !!busy}>Ajouter</button></div>
+    </form>
+  );
+  else body = (
+    <>
+      {error && <p class="err">{error}</p>}
+      {info && <p class="ok-msg">{info}</p>}
+      <section class="conn-block" aria-label="Agents installés">
+        <div class="conn-head">
+          <h3><span class="num">1</span> Agents installés sur cet ordinateur</h3>
+          <button class="btn small" onClick={() => { setC(null); load(true); }} title="Relit le PATH de votre shell et les dossiers d'installation"><span class="ico">{I.retry}</span> Détecter à nouveau</button>
+        </div>
+        <p class="muted small">Détection automatique, rien à saisir. L'agent choisi travaille dans le dossier de la conversation ; la mémoire d'Eclipse lui est branchée (par MCP quand c'est vérifié).</p>
+        <div class="conn-list">
+          {c.agents.map((a) => (
+            <div key={a.id} class={`conn-row ${a.installed ? "" : "off"} ${c.current === a.id ? "on" : ""}`} title={a.installed ? a.note : a.reason}>
+              <span class="ico">{I.agent}</span>
+              <div class="conn-main">
+                <span class="conn-name">{a.label}{a.version && <span class="conn-ver"> {a.version}</span>}</span>
+                <span class="conn-detail mono">{a.installed ? `${a.path} · via ${a.source}` : `non installé — ${a.reason}`}</span>
+                {a.installed && (a.memory === "mcp" ? <span class="conn-tag">mémoire Eclipse par MCP</span> : <span class="conn-tag muted">notes du projet transmises</span>)}
+              </div>
+              <span class="conn-state">{c.current === a.id ? "actif" : a.installed ? "détecté" : "non installé"}</span>
+              <button class="btn small" onClick={() => { setField(a.path ?? ""); setPathFor(a); }}>Chemin…</button>
+              <button class="btn small primary" disabled={!a.installed || !!busy || c.current === a.id} onClick={() => go(a.id, a.label)}>{busy === a.id ? "…" : "Utiliser"}</button>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section class="conn-block" aria-label="Fournisseurs par clé d'API">
+        <div class="conn-head"><h3><span class="num">2</span> Fournisseurs par clé d'API</h3>
+          <button class="btn small" onClick={() => { setField("https://"); setAddSrv("remote"); }}>Autre fournisseur…</button></div>
+        <p class="muted small">Clés stockées dans {c.storage}, jamais en clair. Les variables d'environnement (ex. OPENROUTER_API_KEY) restent prises en compte.</p>
+        <div class="conn-list">
+          {c.apis.map((a) => (
+            <div key={a.id} class={`conn-row ${c.current === a.provider ? "on" : ""}`} title={a.note}>
+              <span class="ico">{I.key}</span>
+              <div class="conn-main">
+                <span class="conn-name">{a.label}</span>
+                <span class="conn-detail">{a.has_key ? `clé : ${a.key_source}` : `clé à saisir${a.key_env ? ` (ou variable ${a.key_env})` : ""}`}{a.notes ? ` · ${a.notes}` : ""}</span>
+              </div>
+              <span class="conn-state">{busy === a.id ? "connexion…" : c.current === a.provider ? "actif" : a.has_key ? "clé enregistrée" : ""}</span>
+              {a.key_source === "trousseau" ? <button class="btn small" onClick={() => forget(a)}>Oublier</button> : <span />}
+              <button class="btn small" onClick={() => setAskKey({ id: a.id, label: a.label, replace: true })}>{a.has_key ? "Changer la clé" : "Saisir la clé"}</button>
+              <button class="btn small primary" disabled={!!busy} onClick={() => go(a.id, a.label)}>Utiliser</button>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section class="conn-block" aria-label="Serveurs locaux">
+        <div class="conn-head"><h3><span class="num">3</span> Serveurs locaux compatibles</h3>
+          <span><button class="btn small" onClick={probe}>Tester la connexion</button> <button class="btn small" onClick={() => { setField("http://localhost:"); setAddSrv("local"); }}>Ajouter une URL…</button></span></div>
+        <p class="muted small">LM Studio (http://localhost:1234/v1), Ollama (http://localhost:11434/v1) ou tout serveur compatible OpenAI. Détectés s'ils tournent.</p>
+        <div class="conn-list">
+          {(servers ?? c.locals).map((s) => (
+            <div key={s.id} class={`conn-row ${servers && !s.running ? "off" : ""} ${c.current === s.provider ? "on" : ""}`}>
+              <span class="ico">{I.server}</span>
+              <div class="conn-main">
+                <span class="conn-name">{s.label}</span>
+                <span class="conn-detail mono">{s.url}</span>
+                <span class="conn-detail">{!servers ? "test en cours…" : s.running ? (s.models?.length ? `actif · ${s.models.length} modèle(s) chargé(s) : ${s.models.slice(0, 4).join(", ")}` : "actif · aucun modèle chargé") : s.error}</span>
+              </div>
+              <span class="conn-state">{c.current === s.provider ? "actif" : servers ? (s.running ? "en marche" : "arrêté") : ""}</span>
+              <span />
+              <button class="btn small primary" disabled={!!busy || (servers !== null && !s.running)} onClick={() => go(s.id, s.label)}>Utiliser</button>
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+  return <Modal title="Connexions" icon={I.plug} onClose={onClose} wide>{body}</Modal>;
+}
+
+// --- Fenêtre d'information (réponse d'une commande « / ») ---------------------------------------------------------
+export function InfoModal({ title, text, onClose }: { title: string; text: string; onClose: () => void }) {
   return (
-    <Modal title="Connexions" icon={I.plug} onClose={onClose} wide>
-      {!c ? <p class="muted">Chargement…</p> : askKey ? (
-        <form class="keyform" onSubmit={(e) => { e.preventDefault(); if (key.trim()) go(askKey.id, askKey.label, key.trim()); }}>
-          <p>Clé d'API <b>{askKey.label}</b>. Elle est vérifiée auprès du fournisseur, puis stockée dans {c.storage}. Elle n'est jamais affichée ni écrite en clair.</p>
-          <input type="password" autocomplete="off" spellcheck={false} placeholder="Collez votre clé d'API" value={key} onInput={(e) => setKey((e.target as HTMLInputElement).value)} autoFocus />
-          {error && <p class="err">{error}</p>}
-          <div class="row-end"><button type="button" class="btn" onClick={() => { setAskKey(null); setKey(""); }}>Retour</button><button class="btn primary" disabled={!key.trim() || !!busy}>{busy ? "Vérification…" : "Se connecter"}</button></div>
-        </form>
-      ) : (
-        <>
-          {error && <p class="err">{error}</p>}
-          <h3>Agents installés sur cet ordinateur</h3>
-          <p class="muted small">Utilisent votre abonnement (Claude Code, Codex…) : la consommation est gérée par l'abonnement.</p>
-          <div class="conn-grid">
-            {c.agents.map((a) => (
-              <button key={a.id} class={`conn ${c.current === a.id ? "on" : ""}`} disabled={!a.installed || !!busy} onClick={() => go(a.id, a.label)} title={a.note}>
-                <span class="ico">{I.agent}</span><span class="conn-name">{a.label}</span>
-                <span class="conn-state">{c.current === a.id ? "actif" : a.installed ? "détecté" : "non installé"}</span>
-              </button>
-            ))}
-          </div>
-          <h3>Fournisseurs par clé d'API</h3>
-          <div class="conn-grid">
-            {c.apis.map((a) => (
-              <button key={a.id} class={`conn ${c.current === a.id.slice(4) ? "on" : ""}`} disabled={!!busy} onClick={() => go(a.id, a.label)} title={a.note}>
-                <span class="ico">{a.key_required ? I.key : I.plug}</span><span class="conn-name">{a.label}</span>
-                <span class="conn-state">{busy === a.id ? "connexion…" : c.current === a.id.slice(4) ? "actif" : !a.key_required ? "local" : a.has_key ? "clé enregistrée" : "clé à saisir"}</span>
-              </button>
-            ))}
-          </div>
-          <p class="muted small">Stockage des clés : {c.storage}.</p>
-        </>
-      )}
+    <Modal title={title} icon={I.info} onClose={onClose} wide>
+      <pre class="info-text">{text}</pre>
     </Modal>
   );
 }
 
 // --- Réglages -------------------------------------------------------------------------------------------------------
-export interface Prefs { theme: "system" | "dark" | "light"; fontSize: number; enterSends: boolean; showThinking: boolean }
-export const DEFAULT_PREFS: Prefs = { theme: "system", fontSize: 15, enterSends: true, showThinking: true };
+export interface Prefs { theme: "system" | "dark" | "light"; fontSize: number; enterSends: boolean; showThinking: boolean; showDetails?: boolean }
+export const DEFAULT_PREFS: Prefs = { theme: "system", fontSize: 15, enterSends: true, showThinking: true, showDetails: false };
+export const EFFORT_LABEL: Record<string, string> = { "défaut": "Défaut du modèle", rapide: "Rapide", normal: "Normal", profond: "Profond" };
 
-export function SettingsModal({ prefs, setPrefs, version, onClose, updates, discussionsDir, onSaveDir }: {
+export function SettingsModal({ prefs, setPrefs, version, onClose, updates, discussionsDir, onSaveDir, defaultEffort, onSaveEffort }: {
   prefs: Prefs; setPrefs: (p: Prefs) => void; version: string; onClose: () => void; updates: preact.ComponentChildren;
-  discussionsDir: string; onSaveDir: (d: string) => Promise<string | null>;
+  discussionsDir: string; onSaveDir: (d: string) => Promise<string | null>; defaultEffort: string; onSaveEffort: (lv: string) => Promise<string | null>;
 }) {
   const [dir, setDir] = useState(discussionsDir);
   const [dirMsg, setDirMsg] = useState("");
@@ -242,6 +356,11 @@ export function SettingsModal({ prefs, setPrefs, version, onClose, updates, disc
       <div class="field"><label>Entrée envoie le message</label>
         <input type="checkbox" checked={prefs.enterSends} onChange={(e) => setPrefs({ ...prefs, enterSends: (e.target as HTMLInputElement).checked })} />
         <span class="muted small">{prefs.enterSends ? "Maj+Entrée pour aller à la ligne" : "Ctrl+Entrée pour envoyer"}</span></div>
+      <div class="field"><label>Effort par défaut</label>
+        <div class="seg">{Object.entries(EFFORT_LABEL).map(([lv, lab]) => (
+          <button key={lv} class={defaultEffort === lv ? "on" : ""} onClick={async () => { const err = await onSaveEffort(lv); setDirMsg(err ?? `Effort par défaut : ${lab}.`); }}>{lab}</button>
+        ))}</div>
+        <span class="muted small">appliqué quand l'effort n'a pas été choisi pour le modèle (même réglage que le CLI)</span></div>
       <div class="field"><label>Dossier des nouvelles discussions</label>
         <input class="text" value={dir} onInput={(e) => setDir((e.target as HTMLInputElement).value)} spellcheck={false} />
         <button class="btn" onClick={async () => { const err = await onSaveDir(dir); setDirMsg(err ?? "Enregistré."); }}>Enregistrer</button></div>
