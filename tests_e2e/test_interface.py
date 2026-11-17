@@ -312,3 +312,74 @@ def test_onglets_epinglage_et_projets(page, server):
     # onglet Projets : le dossier courant est listé
     page.get_by_role("tab", name="Projets").click()
     expect(page.locator(".side-item.proj.on")).to_contain_text("projet")
+
+
+# --- 4.0.0 : Connexions en 3 blocs, commandes du CLI, effort ---------------------------------------------------------
+
+def test_connexions_trois_blocs_agents_grises_et_chemin_manuel(page):
+    page.get_by_role("button", name="Connexions").first.click()
+    dlg = page.locator(".modal", has_text="Agents installés sur cet ordinateur")
+    expect(dlg).to_be_visible()
+    expect(dlg).to_contain_text("Fournisseurs par clé d'API")
+    expect(dlg).to_contain_text("Serveurs locaux compatibles")
+    agents = dlg.locator("section[aria-label='Agents installés'] .conn-row")
+    expect(agents).to_have_count(14)
+    claude = agents.filter(has_text="Claude Code")
+    expect(claude).to_contain_text("/faux/claude")
+    expect(claude).to_contain_text("1.0.0")  # versions chargées dans un second temps
+    kiro = agents.filter(has_text="Kiro CLI")
+    expect(kiro).to_have_class("conn-row off ")  # grisé, jamais caché
+    expect(kiro).to_contain_text("non installé")
+    expect(kiro.get_by_role("button", name="Utiliser")).to_be_disabled()
+    expect(dlg.locator("section[aria-label='Serveurs locaux'] .conn-row", has_text="LM Studio")).to_contain_text("http://localhost:1234/v1")
+    kiro.get_by_role("button", name="Chemin…").click()
+    form = page.locator(".keyform")
+    form.locator("input").fill("/n/existe/pas")
+    form.get_by_role("button", name="Enregistrer").click()
+    expect(form.locator(".err")).to_contain_text("n'existe pas")
+    form.get_by_role("button", name="Retour").click()
+    dlg.get_by_role("button", name="Détecter à nouveau").click()
+    expect(page.locator("section[aria-label='Agents installés'] .conn-row")).to_have_count(14)
+    page.locator("section[aria-label='Agents installés'] .conn-row", has_text="OpenCode").get_by_role("button", name="Utiliser").click()
+    expect(page.locator(".toast")).to_contain_text("OpenCode sélectionné")
+    expect(page.locator(".model-btn")).to_contain_text("OpenCode")
+
+
+def test_commandes_du_cli_dans_le_desktop(page):
+    box = page.locator("textarea")
+    box.fill("/doctor")
+    page.keyboard.press("Escape")
+    page.keyboard.press("Enter")
+    info = page.locator(".modal", has_text="Diagnostic (/doctor)")
+    expect(info).to_contain_text("Agent : Claude Code", timeout=20_000)  # /doctor teste aussi le réseau (Poe, OpenRouter)
+    expect(info).to_contain_text("Agent : Kiro CLI")
+    page.keyboard.press("Escape")
+    box.fill("/bypass")
+    page.keyboard.press("Escape")
+    page.keyboard.press("Enter")
+    confirm = page.locator(".modal", has_text="Activer le BYPASS")
+    expect(confirm).to_contain_text("sudo reste refusé")
+    confirm.get_by_role("button", name="Annuler").click()
+    expect(page.locator(".toast")).to_contain_text("Annulé")
+    page.keyboard.press("F1")
+    help_ = page.locator(".modal", has_text="Aide : raccourcis et commandes")
+    for name in ("/doctor", "/detect", "/agent-path", "/fusion", "/limit", "/effort", "/timeline", "/sessions"):
+        expect(help_).to_contain_text(name)
+    expect(help_).to_contain_text("/agent-path ID [CHEMIN]")  # usage affiché
+    page.keyboard.press("Escape")
+
+
+def test_effort_dans_la_zone_de_saisie_et_reglage_par_defaut(page, server):
+    page.locator(".model-btn").click()
+    page.get_by_text("m-effort").first.click()
+    sel = page.locator(".composer .effort-sel")
+    expect(sel).to_be_visible()
+    expect(sel.locator("option")).to_have_count(4)
+    sel.select_option("profond")
+    expect(sel).to_have_value("profond")
+    expect(page.locator(".statusbar select")).to_have_value("high")  # même réglage, valeur réelle du modèle
+    page.keyboard.press("Control+,")
+    st = page.locator(".modal", has_text="Effort par défaut")
+    st.get_by_role("button", name="Rapide").click()
+    expect(st).to_contain_text("Effort par défaut : Rapide.")
+    expect(st.get_by_role("button", name="Rapide")).to_have_class("on")

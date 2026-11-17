@@ -151,8 +151,11 @@ class Agent:
         return modes.get(self.session.agent) or BUILTIN["build"]
 
     def options(self) -> dict:
-        """Réglages propres au modèle actif (effort, recherche web…) choisis par l'utilisateur."""
-        return dict(self.session.model_options.get(self.session.model or "", {}))
+        """Réglages propres au modèle actif (effort, recherche web…) choisis par l'utilisateur, + l'effort par défaut des réglages."""
+        from .variants import effective
+        opts = dict(self.session.model_options.get(self.session.model or "", {}))
+        m = self.models.get(self.session.model or "")
+        return effective(m.params if m else [], opts, getattr(self.config, "default_effort", None))
 
     def _tool_specs(self) -> list[dict]:
         m = self.mode

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from .cli_agents import find_binary
 from .providers import get_spec, has_credentials
 
 OLLAMA_SUGGESTED = [("qwen2.5-coder:3b", "≈ 2 Go · code · rapide sur CPU"), ("qwen2.5-coder:7b", "≈ 4,7 Go · code · plus lent"),
@@ -31,7 +32,7 @@ class FreeSource:
 
 
 async def opencode_free_models(timeout: float = 40) -> list[str]:
-    exe = shutil.which("opencode")
+    exe = find_binary("opencode")
     if not exe:
         return []
     try:
@@ -67,7 +68,7 @@ async def sources() -> list[FreeSource]:
     oc, orf, (ol_up, ol_models) = await asyncio.gather(opencode_free_models(), openrouter_free_models(), ollama_status())
     out = []
     out.append(FreeSource("opencode", "OpenCode (sans compte)", bool(oc),
-                          f"{len(oc)} modèles gratuits" if oc else ("OpenCode non installé" if not shutil.which("opencode") else "liste indisponible"),
+                          f"{len(oc)} modèles gratuits" if oc else ("OpenCode non installé" if not find_binary("opencode") else "liste indisponible"),
                           "Choisir un modèle -free ; Eclipse pilote OpenCode en mode délégué", "aperçu des commandes impossible (OpenCode exécute ses outils) ; tokens estimés"))
     sp = get_spec("openrouter")
     tools = [m for m in orf if "tools" in (m.get("supported_parameters") or [])]

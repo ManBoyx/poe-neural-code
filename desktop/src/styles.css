@@ -257,6 +257,32 @@ button:disabled { cursor: default; opacity: .5; }
 .conn-state { font-size: .78rem; color: var(--muted); }
 .conn.on { border-color: var(--accent); background: var(--accent-soft); }
 .conn:hover:not(:disabled) { background: var(--hover); }
+.conn-block { margin-bottom: 18px; }
+.conn-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.conn-head h3 { margin: 6px 0 2px; display: flex; align-items: center; gap: 8px; }
+.conn-head .num { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: .78rem; }
+.conn-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.conn-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto auto; align-items: center; column-gap: 10px; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--raised); }
+.conn-row > .ico { color: var(--accent); }
+.conn-row.on { border-color: var(--accent); background: var(--accent-soft); }
+.conn-row.off { background: transparent; border-style: dashed; }
+.conn-row.off .conn-name, .conn-row.off > .ico { color: var(--muted); }
+.conn-main { display: flex; flex-direction: column; min-width: 0; }
+.conn-ver { font-weight: 400; color: var(--muted); font-size: .8rem; }
+.conn-detail { font-size: .78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conn-tag { font-size: .72rem; color: var(--accent); }
+.conn-tag.muted { color: var(--muted); }
+.btn.small { padding: 4px 10px; font-size: .8rem; border-radius: 8px; }
+.ok-msg { color: var(--green, var(--accent)); }
+.mono { font-family: "JetBrainsMono NF", monospace; }
+.keyform input.text { font-family: inherit; }
+.keyform input.text.mono { font-family: "JetBrainsMono NF", monospace; }
+.info-text { white-space: pre-wrap; font-family: "JetBrainsMono NF", monospace; font-size: .82rem; line-height: 1.5; margin: 0; }
+.select.effort-sel { font-size: .8rem; padding: 3px 6px; }
+.help-table .usage-line { color: var(--muted); font-size: .78rem; margin-top: 2px; }
+.modal-body form > p { white-space: pre-wrap; }
+.help-table tr.na td { color: var(--faint); }
 .keyform input { width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); margin: 8px 0; font-family: "JetBrainsMono NF", monospace; }
 .row-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .btn { padding: 7px 14px; border-radius: 9px; border: 1px solid var(--line); background: var(--raised); font-size: .9rem; }

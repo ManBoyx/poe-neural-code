@@ -18,7 +18,7 @@ import shutil
 from dataclasses import dataclass
 
 from . import budget as B
-from .cli_agents import build_command, get_adapter, parse_opencode_line
+from .cli_agents import agent_env, build_command, find_binary, get_adapter, parse_opencode_line
 from .memory.engine import estimate_tokens
 from .providers import build_provider, get_spec
 from .tools.base import Tool, ToolContext, ToolResult
@@ -65,13 +65,22 @@ def parse_helper(hid: str) -> Helper | None:
     return None
 
 
+def _locate(aid: str, cfg=None) -> str | None:
+    """Exécutable d'un agent : PATH du processus, sinon même recherche que /connect (shell, dossiers courants, chemin manuel)."""
+    a = get_adapter(aid)
+    name = (cfg.claude_bin if cfg else "claude") if aid == "claude" else (a.binary if a else None)
+    if not name:
+        return None
+    return shutil.which(name) or find_binary(aid, cfg)
+
+
 def status(h: Helper, cfg=None) -> tuple[bool, str]:
     """(utilisable ?, raison) — sans appel réseau."""
     if h.kind == "claude":
-        return (True, "installé") if shutil.which(cfg.claude_bin if cfg else "claude") else (False, "Claude Code introuvable")
+        return (True, "installé") if _locate("claude", cfg) else (False, "Claude Code introuvable")
     if h.kind == "cli":
         a = get_adapter(h.ref)
-        return (True, "installé") if a and shutil.which(a.binary) else (False, f"« {a.binary if a else h.ref} » non installé")
+        return (True, "installé") if a and _locate(a.id, cfg) else (False, f"« {a.binary if a else h.ref} » non installé")
     spec = get_spec(h.ref.partition("/")[0])
     from .providers import has_credentials
     return (True, "clé enregistrée") if spec and has_credentials(spec) else (False, "clé absente (/connect)")
@@ -92,7 +101,7 @@ def prompt_text(config) -> str:
 
 
 async def _run_process(cmd: list[str], stdin_text: str | None, cwd: str, cancel: asyncio.Event, timeout: float, on_line) -> tuple[int | None, str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in ("POE_API_KEY",)}
+    env = agent_env(cmd[0], {k: v for k, v in os.environ.items() if k not in ("POE_API_KEY",)})
     proc = await asyncio.create_subprocess_exec(*PC.resolve_argv(cmd), cwd=cwd, env=env, stdin=asyncio.subprocess.PIPE if stdin_text is not None else asyncio.subprocess.DEVNULL,
                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, limit=32 * 1024 * 1024,
                                                 **PC.group_kwargs())
@@ -134,7 +143,7 @@ async def _run_process(cmd: list[str], stdin_text: str | None, cwd: str, cancel:
 
 async def ask_cli(h: Helper, prompt: str, cfg, ctx: ToolContext) -> HelperResult:
     a = get_adapter(h.ref)
-    binary = shutil.which(a.binary) if a else None
+    binary = _locate(a.id, cfg) if a else None
     if not a or not binary:
         raise RuntimeError(f"{h.label} n'est pas installé")
     cmd, stdin = build_command(a, binary, prompt, model=cfg.cli_models.get(a.id), plan=True)  # lecture seule quand l'agent le permet
@@ -163,7 +172,7 @@ async def ask_cli(h: Helper, prompt: str, cfg, ctx: ToolContext) -> HelperResult
 
 
 async def ask_claude(h: Helper, prompt: str, cfg, ctx: ToolContext) -> HelperResult:
-    binary = shutil.which(cfg.claude_bin)
+    binary = _locate("claude", cfg)
     if not binary:
         raise RuntimeError("Claude Code introuvable")
     cmd = [binary, "-p", "--output-format", "stream-json", "--verbose", "--tools", "", "--strict-mcp-config", "--permission-mode", "default",

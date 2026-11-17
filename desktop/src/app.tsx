@@ -1,8 +1,8 @@
 // Eclipse Desktop : barre latérale des conversations, fil de discussion, saisie, et réglages.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { api, connect, events, health, isDesktop, openLogs, restartEngine, type FileEntry, type Info, type PermissionEvent, type PromptCommand, type SearchResult, type State, type TranscriptItem, type Upload, type Usage } from "./api";
+import { api, connect, events, health, isDesktop, openLogs, restartEngine, type FileEntry, type Info, type PermissionEvent, type PromptCommand, type SearchResult, type SlashCommand, type State, type TranscriptItem, type Upload, type Usage } from "./api";
 import { I } from "./icons";
-import { ConnectionsModal, DEFAULT_PREFS, ModelPicker, SettingsModal, UsageBody, type Prefs } from "./panels";
+import { ConnectionsModal, DEFAULT_PREFS, EFFORT_LABEL, InfoModal, Modal, ModelPicker, SettingsModal, UsageBody, type Prefs } from "./panels";
 import { ChangesModal, Dialog, HelpModal, FilePreviewModal, FilesPanel, MemoryPanel, Palette, Suggest, type Command, type DialogSpec, type Suggestion } from "./side";
 import { Thread, type Item } from "./thread";
 import { UpdateDialog, UpdatePill, UpdateSettings, startUpdates } from "./updates";
@@ -71,6 +71,9 @@ export function App() {
   const [hits, setHits] = useState<SearchResult[]>([]);
   const [changesOpen, setChangesOpen] = useState(false);
   const [help, setHelp] = useState(false);
+  const [infoBox, setInfoBox] = useState<{ title: string; text: string } | null>(null);
+  const [slashCat, setSlashCat] = useState<SlashCommand[]>([]);
+  const [timeline, setTimeline] = useState(false);
   const [detected, setDetected] = useState<{ id: string; label: string }[]>([]);
   const [modal, setModal] = useState<"" | "connections" | "settings" | "update">("");
   const [picker, setPicker] = useState(false);
@@ -355,6 +358,7 @@ export function App() {
     if (phase !== "ready" || !state.open) { setFiles([]); setPromptCmds([]); return; }
     api.files().then((r) => setFiles(r.files)).catch(() => undefined);
     api.commands().then((r) => setPromptCmds(r.commands)).catch(() => undefined);
+    api.slashList().then((r) => setSlashCat(r.commands)).catch(() => undefined);
   }, [phase, state.session?.id, refreshKey]);
 
   // Agents installés sur l'ordinateur (Claude Code, OpenCode…) : proposés à l'accueil
@@ -376,6 +380,27 @@ export function App() {
     const t = setTimeout(() => api.search(q).then((r) => setHits(r.results)).catch(() => setHits([])), 300);
     return () => clearTimeout(t);
   }, [filter, phase]);
+
+  // Commandes du CLI exécutées par le moteur (mêmes règles ; les actions sensibles demandent confirmation ici)
+  const runEngine = async (name: string, args: string, confirmed = false): Promise<void> => {
+    try {
+      const r = await api.slash(name, args, confirmed);
+      if (r.need_confirm) {
+        const ok = await ask({ title: r.need_confirm.title, message: [r.need_confirm.body, r.need_confirm.warning].filter(Boolean).join("\n\n"), confirm: "Confirmer", danger: true });
+        if (ok) return runEngine(name, args, true);
+        say("Annulé : rien n'a changé.");
+        return;
+      }
+      if (r.state) { setState(r.state); refreshUsage(); }
+      if (r.open === "connections") setModal("connections");
+      if (r.turn) { setItems((xs) => [...xs, { kind: "user", text: r.shown || `/${name}` }]); setBusy(true); }
+      if (r.text) setInfoBox({ title: r.title || `/${name}`, text: r.text });
+      if (r.message) say(r.message);
+    } catch (e: any) { say(e.message); }
+  };
+  const cliDesc = (n: string, fallback: string) => slashCat.find((c) => c.name === n)?.description ?? fallback;
+  const engineCmd = (n: string, fallback: string, args = true) => ({ desc: cliDesc(n, fallback), args, run: (a: string) => runEngine(n, a) });
+  const THEMES: Record<string, Prefs["theme"]> = { sombre: "dark", dark: "dark", clair: "light", light: "light", "système": "system", systeme: "system", system: "system" };
 
   // Commandes « / » de l'application (équivalents des commandes du CLI) ; les commandes-prompts viennent du moteur
   const slash: Record<string, { desc: string; args?: boolean; run: (args: string) => void | Promise<void> }> = {
@@ -401,6 +426,49 @@ export function App() {
     thinking: { desc: "Afficher / masquer la réflexion du modèle", run: () => setPrefs({ ...prefs, showThinking: !prefs.showThinking }) },
     auto: { desc: "Modifications automatiques : activer / désactiver", run: async () => setState(await api.autoEdits(!state.auto_edits)) },
     help: { desc: "Aide : raccourcis et commandes", run: () => setHelp(true) },
+    // --- commandes du CLI exécutées par le moteur ---
+    effort: engineCmd("effort", "Effort : rapide, normal, profond ; /effort par-defaut NIVEAU"),
+    doctor: engineCmd("doctor", "Diagnostic : installation, clés, réseau, agents, MCP", false),
+    detect: engineCmd("detect", "Détecter à nouveau les agents installés", false),
+    "agent-path": engineCmd("agent-path", "Chemin d'un agent indiqué à la main : /agent-path ID CHEMIN"),
+    context: engineCmd("context", "Ce qui occupe le contexte du modèle", false),
+    status: engineCmd("status", "État : fournisseur, MCP, extensions", false),
+    mcp: engineCmd("mcp", "État des serveurs MCP", false),
+    skills: engineCmd("skills", "Lister les skills", false),
+    plugins: engineCmd("plugins", "Plugins : /plugins, /plugins trust NOM, /plugins untrust NOM"),
+    reload: engineCmd("reload", "Recharger skills, modes, plugins et commandes", false),
+    todo: engineCmd("todo", "Todo : add TEXTE | doing N | done N | clear"),
+    system: engineCmd("system", "Consignes personnelles : /system set|project|clear"),
+    fusion: engineCmd("fusion", "Mode fusion : consulter d'autres assistants"),
+    permissions: engineCmd("permissions", "Permissions : ask | edits | bypass"),
+    bypass: engineCmd("bypass", "Bypass des permissions : /bypass [on|all|off]"),
+    limit: engineCmd("claude-limit", "Limite de tokens : /limit N [5h] | off"),
+    "claude-limit": engineCmd("claude-limit", "Limite de tokens : /claude-limit N [5h] | off"),
+    "define-token": engineCmd("define-token", "Budget local en points : /define-token POINTS [période] | off"),
+    rate: engineCmd("rate", "Taux points/USD : /rate N"),
+    spent: engineCmd("spent", "Dépense saisie à la main : /spent N"),
+    "add-dir": engineCmd("add-dir", "Autoriser un dossier en plus du projet : /add-dir CHEMIN"),
+    verify: engineCmd("verify", "Vérifier un résumé contre ses sources : /verify ID"),
+    free: engineCmd("free", "Modèles gratuits disponibles", false),
+    init: engineCmd("init", "Créer ou mettre à jour AGENTS.md", false),
+    options: engineCmd("options", "Réglages du modèle actif : /options [NOM VALEUR]"),
+    provider: engineCmd("provider", "Changer de fournisseur ou d'agent : /provider ID"),
+    agents: engineCmd("agents", "Modes disponibles (build, plan, personnalisés)"),
+    disconnect: engineCmd("disconnect", "Oublier la clé d'un fournisseur : /disconnect ID"),
+    logout: engineCmd("disconnect", "Oublier la clé d'un fournisseur : /logout ID"),
+    login: { desc: cliDesc("login", "Se connecter à un fournisseur"), run: () => setModal("connections") },
+    // --- commandes du CLI gérées par l'interface ---
+    sessions: { desc: "Lister et changer de session (barre latérale)", run: () => { setSidebar(true); setSideTab("sessions"); setTimeout(() => (document.querySelector(".side-search input") as HTMLInputElement | null)?.focus(), 60); } },
+    themes: { desc: "Thème : /themes sombre | clair | système", args: true, run: (a) => { const t = THEMES[a.toLowerCase()]; if (t) setPrefs({ ...prefs, theme: t }); else setModal("settings"); } },
+    config: { desc: "Réglages d'Eclipse", run: () => setModal("settings") },
+    settings: { desc: "Réglages d'Eclipse", run: () => setModal("settings") },
+    update: { desc: "Mises à jour d'Eclipse", run: () => (isDesktop ? setModal("update") : say("Mises à jour : dans l'application desktop seulement.")) },
+    sidebar: { desc: "Afficher / masquer la barre latérale", run: () => setSidebar((v) => !v) },
+    details: { desc: "Afficher / masquer le détail des sorties d'outils", run: () => { setPrefs({ ...prefs, showDetails: !prefs.showDetails }); say(prefs.showDetails ? "Détails des outils masqués." : "Détails des outils affichés."); } },
+    timeline: { desc: "Aller à un message de la conversation", run: () => setTimeline(true) },
+    attach: { desc: "Joindre une image ou un fichier", run: () => (document.getElementById("attach-input") as HTMLInputElement | null)?.click() },
+    editor: { desc: "Sans objet ici : la zone de saisie est l'éditeur (Maj+Entrée pour aller à la ligne)", run: () => { input.current?.focus(); say("Dans l'application, la zone de saisie sert d'éditeur (Maj+Entrée : nouvelle ligne)."); } },
+    exit: { desc: "Sans objet ici : fermez la fenêtre pour quitter", run: () => say("Fermez la fenêtre pour quitter Eclipse (le moteur s'arrête avec elle).") },
   };
 
   const refLimit = state.ref_limit ?? 40000;
@@ -731,7 +799,7 @@ export function App() {
             <button class="btn primary" disabled={restarting} onClick={restart}>{restarting ? "Relance…" : isDesktop ? "Relancer le moteur" : "Réessayer"}</button>
           </div>
         )}
-        <Thread items={items} pending={pending} busy={busy} empty={welcome} onRetry={state.open ? retry : undefined} showThinking={prefs.showThinking}
+        <Thread items={items} pending={pending} busy={busy} empty={welcome} onRetry={state.open ? retry : undefined} showThinking={prefs.showThinking} showDetails={Boolean(prefs.showDetails)}
           onDecide={(id, d) => api.permission(id, d).catch((e) => say(e.message))} />
 
         {state.open && (
@@ -759,7 +827,7 @@ export function App() {
               <div class="composer-bar">
                 <label class="icon-btn attach" title="Joindre une image ou un fichier texte (ou glissez-le dans la fenêtre, ou collez une capture)">
                   <span class="ico">{I.plus}</span>
-                  <input type="file" multiple hidden accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.py,.js,.ts,.tsx,.json,.csv,.log,.html,.css,.rs,.kt,.java,.c,.cpp,.h,.go,.sh,.yml,.yaml,.toml,.xml,.sql"
+                  <input id="attach-input" type="file" multiple hidden accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.py,.js,.ts,.tsx,.json,.csv,.log,.html,.css,.rs,.kt,.java,.c,.cpp,.h,.go,.sh,.yml,.yaml,.toml,.xml,.sql"
                     onChange={(e) => { const t = e.target as HTMLInputElement; if (t.files) attach(t.files); t.value = ""; }} />
                 </label>
                 <textarea ref={input} rows={1} value={text} placeholder={state.configured ? "Écrivez à Eclipse…  (@ fichier, / commande)" : "Configurez d'abord une connexion (Connexions)"}
@@ -784,6 +852,15 @@ export function App() {
                       onClick={async () => setState(await api.agent(a))}>{a === "build" ? "Build" : a === "plan" ? "Plan" : a}</button>
                   ))}
                 </div>
+                {effort && (
+                  <select class="select effort-sel" aria-label="Effort" title={`Effort (${effort.name}) : rapide, normal ou profond, traduits vers les valeurs réelles du modèle`}
+                    value={effort.level ?? (effort.current == null ? "" : `v:${effort.current}`)}
+                    onChange={async (e) => { const v = (e.target as HTMLSelectElement).value; try { setState(await api.effort(v === "" ? null : v.startsWith("v:") ? v.slice(2) : v)); } catch (err: any) { say(err.message); } }}>
+                    <option value="">Effort : défaut{state.default_effort && state.default_effort !== "défaut" ? ` (${EFFORT_LABEL[state.default_effort] ?? state.default_effort})` : ""}</option>
+                    {(["rapide", "normal", "profond"] as const).map((lv) => <option key={lv} value={lv}>Effort : {EFFORT_LABEL[lv]}{effort.levels?.[lv] ? ` (${effort.levels[lv]})` : ""}</option>)}
+                    {effort.current != null && !effort.level && <option value={`v:${effort.current}`}>Effort : {String(effort.current)}</option>}
+                  </select>
+                )}
                 <div class="model-wrap">
                   <button class="model-btn" onClick={() => setPicker(!picker)} title={`Modèle (${state.mode_label})`}>
                     <span class="mb-prov">{state.mode_label}</span>{(state.model || !(state.is_cli || state.mode === "claude")) && <span class="mb-sep"> · </span>}{state.model || (state.is_cli || state.mode === "claude" ? "" : "choisir un modèle")} <span class="ico small">{I.chevron}</span>
@@ -849,7 +926,9 @@ export function App() {
         onConnected={(s, msg) => { setState(s); setModal(""); say(msg); if (!s.model && !s.is_cli) setPicker(true); }} />}
       {modal === "settings" && <SettingsModal prefs={prefs} setPrefs={setPrefs} version={info?.version ?? ""} onClose={() => setModal("")} updates={<UpdateSettings />}
         discussionsDir={info?.discussions_dir ?? ""}
-        onSaveDir={async (d) => { try { await api.settings({ discussions_dir: d }); refreshInfo(); return null; } catch (e: any) { return e.message; } }} />}
+        onSaveDir={async (d) => { try { await api.settings({ discussions_dir: d }); refreshInfo(); return null; } catch (e: any) { return e.message; } }}
+        defaultEffort={state.default_effort ?? info?.default_effort ?? "défaut"}
+        onSaveEffort={async (lv) => { try { await api.settings({ default_effort: lv }); refreshInfo(); refreshState(); return null; } catch (e: any) { return e.message; } }} />}
       {modal === "update" && <UpdateDialog onClose={() => setModal("")} />}
       {picker && <div class="click-away" onMouseDown={() => setPicker(false)} />}
       {preview && <FilePreviewModal path={preview} onClose={() => setPreview(null)} />}
@@ -857,7 +936,19 @@ export function App() {
       {changesOpen && <ChangesModal ask={ask} onClose={() => setChangesOpen(false)}
         onReverted={(n) => { say(`${n} fichier(s) restauré(s).`); setRefreshKey((k) => k + 1); }} />}
       {help && <HelpModal onClose={() => setHelp(false)}
-        commands={[...Object.entries(slash).map(([name, v]) => ({ name, desc: v.desc })), ...promptCmds.filter((c) => !(c.name in slash)).map((c) => ({ name: c.name, desc: c.description }))]} />}
+        commands={[...Object.entries(slash).sort(([a], [b]) => a.localeCompare(b)).map(([name, v]) => ({ name, desc: v.desc, usage: slashCat.find((c) => c.name === name)?.usage ?? "", na: name === "editor" || name === "exit" })),
+          ...promptCmds.filter((c) => !(c.name in slash)).map((c) => ({ name: c.name, desc: c.description, usage: c.usage }))]} />}
+      {infoBox && <InfoModal title={infoBox.title} text={infoBox.text} onClose={() => setInfoBox(null)} />}
+      {timeline && (
+        <Modal title="Chronologie de la conversation" icon={I.history} onClose={() => setTimeline(false)}>
+          {items.some((x) => x.kind === "user") ? (
+            <div class="pal-list">{items.map((x, i) => x.kind === "user" && (
+              <button key={i} class="pal-item" onClick={() => { setTimeline(false); document.getElementById(`msg-${i}`)?.scrollIntoView({ block: "start" }); }}>
+                {(x as any).text.split("\n")[0].slice(0, 90)}
+              </button>))}</div>
+          ) : <p class="muted">Aucun message dans cette conversation.</p>}
+        </Modal>
+      )}
       {dialog && <Dialog spec={dialog} onDone={() => setDialog(null)} />}
       {dragOver && <div class="drop-hint"><span class="ico">{I.clip}</span> Déposez pour joindre</div>}
       {toast && <div class="toast" role="status">{toast}</div>}

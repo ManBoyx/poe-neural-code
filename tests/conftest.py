@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import pytest
 
@@ -11,6 +12,16 @@ from poe_neural_code.provider.base import Capabilities, Done, ModelInfo, TextDel
 @pytest.fixture(autouse=True)
 def _home(tmp_path, monkeypatch):
     monkeypatch.setenv("PNC_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("ECLIPSE_AGENT_SCAN", "path")  # détection des agents : PATH du test seulement (ni le shell ni le dossier personnel réels)
+    # Garde-fou : les VRAIS agents (Claude Code, OpenCode…) ne doivent jamais être lancés par un test (abonnement de l'utilisateur).
+    monkeypatch.setenv("PATH", os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep) if not _has_real_agent(d)))
+
+
+_AGENT_NAMES = ("claude", "opencode", "gemini", "codex", "kiro-cli", "aider", "goose", "qwen", "cursor-agent", "copilot", "amp", "crush", "droid", "cline")
+
+
+def _has_real_agent(d: str) -> bool:
+    return any(os.path.isfile(os.path.join(d, n)) for n in _AGENT_NAMES)
     monkeypatch.delenv("POE_API_KEY", raising=False)
 
 

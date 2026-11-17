@@ -60,9 +60,19 @@ async def doctor(sv, transport=None) -> list[Check]:
     poe, orr = await asyncio.gather(reach("https://api.poe.com/v1/models"), reach("https://openrouter.ai/api/v1/models"))
     out.append(Check("Réseau : Poe", "ok" if poe.startswith("HTTP 2") else "warn", poe))
     out.append(Check("Réseau : OpenRouter", "ok" if orr.startswith("HTTP 2") else "warn", orr))
-    for dct in detect(with_version=False):
+    from .cli_agents import shell_path
+    sdirs, serr = await asyncio.to_thread(shell_path, True)
+    out.append(Check("Recherche des agents", "warn" if serr else "ok",
+                     f"PATH du processus + PATH de votre shell ({len(sdirs)} dossiers) + dossiers d'installation courants"
+                     + (f" — shell : {serr}" if serr else "")))
+    for dct in await asyncio.to_thread(detect, True, config=sv.config):
+        a = dct.adapter
         if dct.installed:
-            out.append(Check(f"Agent : {dct.adapter.label}", "ok", f"{dct.path} · {dct.adapter.verified}"))
+            det = f"{dct.path}" + (f" → {dct.real_path}" if dct.real_path and dct.real_path != dct.path else "") + f" · trouvé via : {dct.source}"
+            det += f" · {dct.version}" if dct.version else (f" · {dct.version_error}" if dct.version_error else "")
+            out.append(Check(f"Agent : {a.label}", "warn" if (dct.version_error or dct.reason) else "ok", det + (f" · {dct.reason}" if dct.reason else "")))
+        else:
+            out.append(Check(f"Agent : {a.label}", "info", f"non installé — {dct.reason}"))
     for m in sv.mcp.status():
         out.append(Check(f"MCP : {m['name']}", "ok" if m["state"] == "connected" else "warn", f"{m['state']} ({m['tools']} outils) {m['error'] or ''}".strip()))
     pending = [p.name for p in sv.ext.plugins.plugins.values() if not p.trusted]

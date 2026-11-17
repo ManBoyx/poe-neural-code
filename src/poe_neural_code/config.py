@@ -5,7 +5,7 @@ Aucune gestion de clé API ici : le connecteur lit uniquement la variable d'envi
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .paths import data_dir
 
@@ -29,7 +29,9 @@ class Config(BaseModel):
     claude_bin: str = "claude"  # exécutable Claude Code (mode « claude »)
     claude_model: str | None = None  # alias ou id passé à --model (défaut : celui de Claude Code)
     claude_max_usd_per_turn: float | None = None  # --max-budget-usd, équivalent API indicatif
-    cli_models: dict[str, str] = Field(default_factory=dict)  # agent externe -> modèle (option --model de l'agent)
+    cli_models: dict[str, str] = Field(default_factory=dict)
+    agent_paths: dict[str, str] = Field(default_factory=dict)  # agent -> exécutable indiqué à la main (prioritaire sur la détection)
+    default_effort: str = "défaut"  # défaut | rapide | normal | profond : appliqué quand l'effort du modèle n'a pas été choisi  # agent externe -> modèle (option --model de l'agent)
     fusion_enabled: bool = False
     fusion_helpers: list[str] = Field(default_factory=list)  # ids : claude | cli:ID | api:FOURNISSEUR/MODELE
     fusion_max_calls: int = 3  # consultations max par tour
@@ -43,6 +45,16 @@ class Config(BaseModel):
     recent_models: list[str] = Field(default_factory=list)
     mcp_config: str | None = None  # chemin d'un mcp.json ; défaut : <données>/mcp.json
     recent_files: list[str] = Field(default_factory=list)
+
+    @field_validator("default_effort")
+    @classmethod
+    def _effort_level(cls, v: str) -> str:
+        v = (v or "défaut").strip().lower()
+        aliases = {"default": "défaut", "defaut": "défaut", "défaut": "défaut", "rapide": "rapide", "fast": "rapide", "normal": "normal",
+                   "moyen": "normal", "profond": "profond", "deep": "profond"}
+        if v not in aliases:
+            raise ValueError("valeurs permises : défaut, rapide, normal, profond")
+        return aliases[v]
 
 
 def _path():

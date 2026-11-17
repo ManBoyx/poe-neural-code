@@ -67,7 +67,8 @@ class PermissionScreen(ModalScreen[str]):
 
 
 class PickerScreen(ModalScreen[Any]):
-    """Sélecteur filtrable générique. items = [(libellé, valeur, détail)]. `on_highlight` permet un aperçu en direct (thèmes)."""
+    """Sélecteur filtrable générique. items = [(libellé, valeur, détail)] ; valeur None = titre de section (non sélectionnable,
+    masqué pendant un filtrage). `on_highlight` permet un aperçu en direct (thèmes)."""
     BINDINGS = [Binding("escape", "cancel", "Fermer")]
     DEFAULT_CSS = """
     PickerScreen { align: center middle; background: $background 60%; }
@@ -99,17 +100,25 @@ class PickerScreen(ModalScreen[Any]):
         ol = self.query_one("#picker-list", OptionList)
         ol.clear_options()
         ql = q.lower()
-        by_label = [it for it in self.items if ql in it[0].lower()]
-        by_detail = [it for it in self.items if it not in by_label and ql in it[2].lower()]
-        shown = by_label + by_detail  # les correspondances sur le libellé passent avant celles de la description
+        if ql:
+            items = [it for it in self.items if it[1] is not None]
+            by_label = [it for it in items if ql in it[0].lower()]
+            by_detail = [it for it in items if it not in by_label and ql in it[2].lower()]
+            shown = by_label + by_detail  # les correspondances sur le libellé passent avant celles de la description
+        else:
+            shown = list(self.items)
         for lab, val, det in shown:
+            if val is None:  # titre de section
+                ol.add_option(Option(Text(lab, style="bold reverse"), id=str(len(ol.options)), disabled=True))
+                continue
             t = Text(lab, style="bold")
             if det:
                 t.append("  " + det, style="dim")
             ol.add_option(Option(t, id=str(len(ol.options))))
         self._shown = shown
         if shown:
-            idx = 0 if q else next((i for i, (_, v, _) in enumerate(shown) if v == self.current), 0)
+            first = next((i for i, it in enumerate(shown) if it[1] is not None), 0)
+            idx = first if q else next((i for i, (_, v, _) in enumerate(shown) if v is not None and v == self.current), first)
             ol.highlighted = idx
 
     def on_input_changed(self, e: Input.Changed) -> None:
@@ -129,11 +138,12 @@ class PickerScreen(ModalScreen[Any]):
 
     def on_input_submitted(self, e: Input.Submitted) -> None:
         ol = self.query_one("#picker-list", OptionList)
-        if ol.highlighted is not None and self._shown:
+        if ol.highlighted is not None and self._shown and self._shown[ol.highlighted][1] is not None:
             self.dismiss(self._shown[ol.highlighted][1])
 
     def on_option_list_option_selected(self, e: OptionList.OptionSelected) -> None:
-        self.dismiss(self._shown[e.option_index][1])
+        if self._shown[e.option_index][1] is not None:
+            self.dismiss(self._shown[e.option_index][1])
 
     def on_option_list_option_highlighted(self, e: OptionList.OptionHighlighted) -> None:
         if self.on_hl and self._shown and e.option_index is not None and e.option_index < len(self._shown):

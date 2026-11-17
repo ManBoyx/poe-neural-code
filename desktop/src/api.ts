@@ -2,9 +2,10 @@
 // Application desktop : port et jeton fournis par Tauri. Navigateur (`eclipse web`) : jeton dans l'adresse (#token=…).
 
 export interface SessionSummary { id: string; title: string; workspace: string; updated: number; mode: string }
-export interface Info { version: string; sessions: SessionSummary[]; recent_dirs: string[]; home: string; theme: string; current: string | null; discussions_dir: string }
+export interface Info { version: string; sessions: SessionSummary[]; recent_dirs: string[]; home: string; theme: string; current: string | null; discussions_dir: string; default_effort?: string }
 export interface ModelEntry { id: string; free: boolean; context: number | null; tools: boolean; description: string }
-export interface Effort { name: string; choices: string[]; default: unknown; current: unknown }
+export type EffortLevel = "rapide" | "normal" | "profond";
+export interface Effort { name: string; choices: string[]; default: unknown; current: unknown; level?: EffortLevel | null; levels?: Record<EffortLevel, string | null> }
 export interface Todo { id: number; content: string; status: string }
 export interface PermissionRequest {
   tool: string; kind: string; summary: string; detail: string; destructive: boolean; outside: boolean; warnings: string[];
@@ -14,7 +15,7 @@ export interface State {
   open: boolean; version: string; busy?: boolean;
   session?: { id: string; title: string; workspace: string; agent: string };
   mode?: string; mode_label?: string; is_cli?: boolean; configured?: boolean;
-  model?: string | null; models?: ModelEntry[]; effort?: Effort | null; agents?: string[];
+  model?: string | null; models?: ModelEntry[]; effort?: Effort | null; default_effort?: string; agents?: string[];
   permissions?: string; todos?: Todo[]; pending_permissions?: PermissionEvent[];
   auto_edits?: boolean; context?: { used: number; window: number | null }; ref_limit?: number;
 }
@@ -44,10 +45,24 @@ export interface Usage {
   claude?: { model: string | null; cache_read_tokens: number; cost_usd_equiv: number;
     windows: { key: string; name: string; seconds: number | null; utilization: number | null; resets_at: number | null }[] };
 }
+export interface AgentInfo {
+  id: string; agent: string; label: string; installed: boolean; path: string | null; real_path: string; version: string; source: string;
+  reason: string; version_error: string; binaries: string[]; note: string; memory: string; custom: boolean;
+}
+export interface ApiInfo {
+  id: string; provider: string; label: string; key_required: boolean; has_key: boolean; key_source: string | null; key_env: string | null;
+  note: string; notes: string; custom: boolean; url: string;
+}
+export interface LocalServer { id: string; provider: string; label: string; url: string; custom: boolean; running?: boolean; models?: string[]; error?: string }
 export interface Connections {
-  agents: { id: string; label: string; installed: boolean; path: string | null; note: string }[];
-  apis: { id: string; label: string; key_required: boolean; has_key: boolean; note: string }[];
+  agents: AgentInfo[]; apis: ApiInfo[]; locals: LocalServer[];
+  search?: { path_dirs: number; shell_dirs: number; shell_error: string; total_dirs: number };
   storage: string; current: string | null;
+}
+export interface SlashCommand { name: string; description: string; usage: string; aliases: string[] }
+export interface SlashResult {
+  ok: boolean; message?: string; title?: string; text?: string; state?: State; turn?: boolean; shown?: string; open?: "connections";
+  need_confirm?: { title: string; body: string; warning: string };
 }
 
 export const isDesktop = typeof (window as any).__TAURI_INTERNALS__ !== "undefined";
@@ -126,10 +141,17 @@ export const api = {
   state: () => call<State>("GET", "/api/state"),
   transcript: () => call<{ items: TranscriptItem[] }>("GET", "/api/transcript"),
   usage: () => call<Usage>("GET", "/api/usage"),
-  connections: () => call<Connections>("GET", "/api/connections"),
+  connections: (opts: { versions?: boolean; refresh?: boolean } = {}) =>
+    call<Connections>("GET", `/api/connections?versions=${opts.versions ? 1 : 0}&refresh=${opts.refresh ? 1 : 0}`),
+  localServers: () => call<{ servers: LocalServer[] }>("GET", "/api/local_servers"),
+  agentPath: (agent: string, path: string) => call<{ ok: boolean; message: string; agent: AgentInfo | null }>("POST", "/api/agent_path", { agent, path }),
+  addServer: (name: string, url: string) => call<{ ok: boolean; message: string; id: string; key_required: boolean }>("POST", "/api/add_server", { name, url }),
+  forgetKey: (provider: string) => call<{ ok: boolean; message: string }>("POST", "/api/forget_key", { provider }),
+  slashList: () => call<{ commands: SlashCommand[]; engine: string[] }>("GET", "/api/slash"),
+  slash: (name: string, args: string, confirmed = false) => call<SlashResult>("POST", "/api/slash", { name, args, confirmed }),
   open: (b: { workspace?: string; resume?: string }) => call<State>("POST", "/api/open", b),
   newDiscussion: () => call<State>("POST", "/api/new_discussion", {}),
-  settings: (b: { discussions_dir?: string }) => call<{ discussions_dir: string }>("POST", "/api/settings", b),
+  settings: (b: { discussions_dir?: string; default_effort?: string }) => call<{ discussions_dir: string; default_effort: string }>("POST", "/api/settings", b),
   remove: (id: string) => call<{ deleted: boolean }>("DELETE", `/api/sessions/${encodeURIComponent(id)}`),
   prompt: (text: string, attachments: string[] = []) => call<{ ok: boolean }>("POST", "/api/prompt", { text, attachments }),
   memory: (q = "") => call<MemoryView>("GET", `/api/memory${q ? `?q=${encodeURIComponent(q)}` : ""}`),

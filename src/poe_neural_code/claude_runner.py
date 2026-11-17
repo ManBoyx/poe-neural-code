@@ -68,6 +68,7 @@ class ClaudeCodeRunner:
         self.config, self.budget, self.memory, self.ctx, self.session = config, budget, memory, ctx, session
         self.emit, self.bridge = emit, bridge
         self.claude_cmd = claude_cmd or [config.claude_bin]
+        self._fixed_cmd = claude_cmd is not None  # commande imposée (tests) : pas de recherche de l'exécutable
         self.info = ClaudeInfo()
         self._proc: asyncio.subprocess.Process | None = None
         self._busy = False
@@ -85,9 +86,16 @@ class ClaudeCodeRunner:
         extra = extra_system(self.ext, self.session.agent, self.ctx.workspace.root, self.config)
         return f"{SYSTEM_APPEND}\n\nProject root: {self.ctx.workspace.root}\n{PC.environment_note(PC.pick_shell(self.config.shell))}\n\n{extra}\n\n{pack.text}\n\n## Todo list\n{todo}"
 
+    def _argv0(self) -> list[str]:
+        """Exécutable de Claude Code : même recherche que /connect (PATH, PATH du shell, ~/.local/bin…, chemin manuel)."""
+        if self._fixed_cmd or self.claude_cmd != [self.config.claude_bin]:
+            return self.claude_cmd  # commande imposée (constructeur ou remplacée ensuite, ex. tests) : utilisée telle quelle, jamais remplacée
+        from .cli_agents import find_binary
+        return [find_binary("claude", self.config) or self.config.claude_bin]
+
     def _command(self, cfg_path: str, resume: bool, stream_input: bool = False) -> list[str]:
         c = self.config
-        cmd = [*self.claude_cmd, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+        cmd = [*self._argv0(), "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                *(["--input-format", "stream-json"] if stream_input else []),
                "--tools", "", "--strict-mcp-config", "--mcp-config", cfg_path,
                "--allowedTools", f"mcp__{SERVER_NAME}", "--permission-mode", "default", "--permission-prompts", "none",
@@ -98,7 +106,8 @@ class ClaudeCodeRunner:
             cmd += ["--session-id", self.session.claude_session_id]
         if c.claude_model:
             cmd += ["--model", c.claude_model]
-        eff = (self.session.model_options.get(MODEL_ID) or {}).get("effort")
+        from . import variants
+        eff = variants.effective(variants.claude_params(), self.session.model_options.get(MODEL_ID) or {}, c.default_effort).get("effort")
         if eff:
             cmd += ["--effort", str(eff)]
         if c.claude_max_usd_per_turn:
@@ -153,7 +162,8 @@ class ClaudeCodeRunner:
         resume = bool(self.session.claude_session_id)
         if not resume:
             self.session.claude_session_id = str(uuid.uuid4())
-        env = {k: v for k, v in os.environ.items() if k not in ("POE_API_KEY",)}
+        from .cli_agents import agent_env
+        env = agent_env(self._argv0()[0], {k: v for k, v in os.environ.items() if k not in ("POE_API_KEY",)})
         partial: dict[str, dict] = {}
         result: dict | None = None
         interrupted = False

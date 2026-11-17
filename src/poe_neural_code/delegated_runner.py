@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 from . import budget as B
 from .agent import AssistantDelta, AssistantMessage, Paused, StatusEvent, TurnDone, UsageEvent
-from .cli_agents import CliAdapter, build_command, parse_opencode_line
+from .cli_agents import CliAdapter, agent_env, build_command, parse_opencode_line
 from .config import Config
 from .logs import get_logger, redact
 from .memory.context import build_context
@@ -76,7 +76,7 @@ class DelegatedRunner:
     async def _turn(self, user_text: str) -> bool:
         a = self.adapter
         if not self.binary:
-            self.emit(StatusEvent(f"{a.label} introuvable sur cette machine (binaire « {a.binary} » absent du PATH).", "error"))
+            self.emit(StatusEvent(f"{a.label} introuvable sur cette machine (« {a.binary} » absent du PATH, du PATH de votre shell et des dossiers courants : /doctor pour le détail, chemin à indiquer dans Connexions).", "error"))
             return False
         sess_id = self.session.cli_sessions.get(a.id)
         prefix = "".join(n + "\n\n" for n in self.pending_context)
@@ -117,7 +117,7 @@ class DelegatedRunner:
                                      bypass=self.ctx.permissions.mode == "bypass", files=getattr(self, "_files", None))
         if self.ctx.permissions.mode == "bypass" and not plan:
             self.emit(StatusEvent(f"BYPASS : {'les confirmations de ' + a.label + ' sont désactivées (' + ' '.join(a.bypass_args) + ')' if a.bypass_args else a.label + ' n’a pas d’option bypass connue : ses propres confirmations restent actives'}.", "warn"))
-        env = {k: v for k, v in os.environ.items() if k not in ("POE_API_KEY",)}
+        env = agent_env(self.binary, {k: v for k, v in os.environ.items() if k not in ("POE_API_KEY",)})  # PATH complété (lancé depuis le menu)
         env.update(mcp_env)
         env["PWD"] = str(self.ctx.workspace.root)  # certains agents (OpenCode) prennent PWD, pas le dossier réel, comme dossier du projet
         try:

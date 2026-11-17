@@ -8,7 +8,7 @@ from datetime import datetime
 
 from . import __version__
 
-SUBCOMMANDS = {"run", "models", "sessions", "export", "stats", "usage", "skills", "plugins", "modes", "agents", "providers", "login", "free", "doctor", "serve", "web"}
+SUBCOMMANDS = {"run", "models", "sessions", "export", "stats", "usage", "skills", "plugins", "modes", "agents", "agent-path", "providers", "login", "free", "doctor", "serve", "web"}
 
 
 def _services(path: str = "."):
@@ -80,10 +80,22 @@ def cmd_list(args) -> int:
 def cmd_agents(args) -> int:
     """Agents IA détectés sur l'ordinateur (Claude Code, OpenCode, Gemini CLI, Codex, Kiro, personnalisés)."""
     from .cli_agents import detect
-    for d in detect(with_version=True):
+    for d in detect(with_version=True, refresh=True):
         a = d.adapter
-        print(f"{'[ok]' if d.installed else '[--]'} {a.label:14} {d.path or 'non installé':40} {d.version:20} {a.verified}")
+        if d.installed:
+            print(f"[ok] {a.label:20} {d.path:45} {d.version or d.version_error:28} trouvé via : {d.source}")
+        else:
+            print(f"[--] {a.label:20} non installé — {d.reason}")
+    print("\nChemin manuel : eclipse agent-path ID CHEMIN (ou /connect dans Eclipse).")
     return 0
+
+
+def cmd_agent_path(args) -> int:
+    """eclipse agent-path ID [CHEMIN] : chemin d'un agent indiqué à la main (prioritaire sur la détection)."""
+    from .connections import set_agent_path
+    ok, msg, _ = set_agent_path(args.id, args.path)
+    print(msg)
+    return 0 if ok else 1
 
 
 def cmd_providers(args) -> int:
@@ -208,6 +220,9 @@ def main(argv: list[str] | None = None) -> int:
             ap.add_argument("--bypass", action="store_true", help="aucune confirmation (sudo refusé ; destructif/hors projet : toujours confirmé)")
         elif sub in ("export", "login"):
             ap.add_argument("id")
+        elif sub == "agent-path":
+            ap.add_argument("id", help="agent : claude, opencode, gemini, codex, kiro, aider…")
+            ap.add_argument("path", nargs="?", default="", help="exécutable (vide : retour à la détection automatique)")
         elif sub in ("serve", "web"):
             ap.add_argument("path", nargs="?", help="projet à ouvrir directement")
             ap.add_argument("--port", type=int, default=0, help="port local (défaut : choisi automatiquement)")
@@ -217,9 +232,9 @@ def main(argv: list[str] | None = None) -> int:
         if sub in ("serve", "web"):
             from .web.server import serve
             return serve(port=a.port, open_browser=(sub == "web"), workspace=a.path, watch_stdin=a.watch_stdin)
-        return {"run": cmd_run, "models": cmd_models, "sessions": cmd_sessions, "export": cmd_export, "stats": cmd_stats, "usage": cmd_stats, "agents": cmd_agents, "providers": cmd_providers, "login": cmd_login, "free": cmd_free, "doctor": cmd_doctor}.get(sub, cmd_list)(a)
+        return {"run": cmd_run, "models": cmd_models, "sessions": cmd_sessions, "export": cmd_export, "stats": cmd_stats, "usage": cmd_stats, "agents": cmd_agents, "agent-path": cmd_agent_path, "providers": cmd_providers, "login": cmd_login, "free": cmd_free, "doctor": cmd_doctor}.get(sub, cmd_list)(a)
     ap = argparse.ArgumentParser(prog="eclipse", description="Eclipse (POE · Neural Code) — agent de programmation en terminal",
-                                 epilog="Sous-commandes : run, models, sessions, export, stats, usage, skills, plugins, modes, agents, providers, login, free, doctor, web (interface graphique dans le navigateur), serve (moteur d'Eclipse Desktop)")
+                                 epilog="Sous-commandes : run, models, sessions, export, stats, usage, skills, plugins, modes, agents, agent-path, providers, login, free, doctor, web (interface graphique dans le navigateur), serve (moteur d'Eclipse Desktop)")
     ap.add_argument("path", nargs="?", help="projet à ouvrir")
     ap.add_argument("--resume", metavar="ID", help="reprendre une session")
     ap.add_argument("--version", action="version", version=f"eclipse {__version__}")
