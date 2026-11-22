@@ -134,6 +134,12 @@ Planchers : `sudo` reste **toujours refusé** ; les actions **destructrices** ou
 un badge rouge « ⚠ BYPASS » reste affiché, et le mode **n'est jamais conservé** au redémarrage. Pour les agents externes délégués, Eclipse transmet leur option « sans confirmation » (OpenCode `--auto`, Gemini `yolo`)
 seulement en bypass et jamais en mode plan. En ligne de commande : `eclipse run --bypass …`.
 
+## Discussion Claude Code et Codex (`/cg`)
+
+Dans un projet ouvert, `/cg` crée une conversation Eclipse dans le même dossier. Choisissez Claude Code, Codex ou la coordination alternée. Les propositions, la répartition du travail et les rapports restent dans le fil quand vous reprenez la session. Les étapes de modification passent par les autorisations d’Eclipse.
+
+Le mode utilise les SDK Claude Agent et Codex, les exécutables Claude Code et Codex configurés dans `/connect`, et Node.js 18 ou plus récent. Le paquet Desktop embarque les modules SDK lors de sa construction. Si les modules manquent, Eclipse les installe avec npm dans son dossier de données au premier message de `/cg`. Ce premier démarrage nécessite un accès au registre npm.
+
 ## Mode fusion : un modèle qui en consulte d'autres (`/fusion`)
 Le modèle/agent **actif** peut s'aider d'autres assistants disponibles via l'outil `ask_helper` : *Claude Code qui consulte Kiro, OpenCode, Gemini CLI ou un modèle d'une API connectée*, etc. `/fusion` (sélecteur) ou
 `/fusion add cli:opencode | claude | api:openrouter/MODÈLE`, `/fusion on|off|list|max N`. Chaque consultation **montre le texte envoyé et demande confirmation** (il quitte l'application vers un autre fournisseur) ;

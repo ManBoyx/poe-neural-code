@@ -21,6 +21,27 @@ def test_nouvelle_discussion_cree_son_dossier(page, server):
     assert len(folders) == 1 and folders[0].startswith("discussion-")
 
 
+def test_cg_cree_un_onglet_et_conserve_les_rapports(page):
+    page.locator("textarea").fill("/cg")
+    page.keyboard.press("Enter")
+    expect(page.get_by_role("heading", name="Choisissez le moteur principal")).to_be_visible()
+    expect(page.get_by_role("tab")).to_have_count(2)
+    expect(page.get_by_role("button", name="Claude Code pilote", exact=False)).to_be_visible()
+    expect(page.get_by_role("button", name="Codex pilote", exact=False)).to_be_visible()
+    page.get_by_role("button", name="Collaboration", exact=False).click()
+    page.locator("textarea").fill("Analyse le projet ensemble")
+    page.keyboard.press("Enter")
+    expect(page.locator('.msg-source[data-agent="Claude Code"]').first).to_be_visible()
+    expect(page.locator('.msg-source[data-agent="Codex"]').first).to_be_visible()
+    expect(page.get_by_text("bilan", exact=True).last).to_be_visible()
+    expect(page.get_by_role("button", name="Arrêter", exact=False)).to_have_count(0)
+    page.get_by_role("tab").first.click()
+    expect(page.get_by_role("heading", name="Que voulez-vous faire ?")).to_be_visible()
+    page.get_by_role("tab", name="Analyse le projet ensemble").click()
+    expect(page.locator('.msg-source[data-agent="Claude Code"]').first).to_be_visible()
+    expect(page.locator('.msg-source[data-agent="Codex"]').first).to_be_visible()
+
+
 def test_message_carte_autorisation_puis_reponse(page, server):
     page.locator("textarea").fill("Que contient ce projet ?")
     page.keyboard.press("Enter")

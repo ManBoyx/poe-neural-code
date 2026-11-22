@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from pathlib import Path
 
-from .agent import Agent
+from .agent import Agent, AssistantMessage, CgProgress, TurnDone
 from .claude_bridge import EclipseBridge
 from .claude_runner import ClaudeCodeRunner
 from . import credentials, variants
@@ -29,7 +29,7 @@ from .provider.base import Provider
 from .provider.poe import PoeProvider
 from .session import Session
 from .tools.base import TodoList, ToolContext
-from .tools.permissions import Asker, PermissionManager
+from .tools.permissions import Asker, PermissionManager, PermissionRequest
 from .tools.registry import builtin_tools
 from .tools.workspace import Workspace
 
@@ -53,8 +53,12 @@ class Services:
     fusion_tool: Any = None
     api_id: str = "poe"  # identifiant du fournisseur API actuellement branché sur l'agent
     _emit: Any = None
+    cg_task: asyncio.Task | None = None
+    cg_progress: str = ""
 
     async def load_models(self) -> None:
+        if self.mode == "cg":
+            return
         try:
             self.models.clear()
             self.models.update({m.id: m for m in await self.provider.list_models()})
@@ -72,10 +76,12 @@ class Services:
     @property
     def is_cli(self) -> bool:
         """Un agent externe (Claude Code ou agent délégué) fait le travail : pas de catalogue de modèles ni de points."""
-        return self.mode == "claude" or self.mode.startswith("cli:")
+        return self.mode in ("claude", "cg") or self.mode.startswith("cli:")
 
     @property
     def mode_label(self) -> str:
+        if self.mode == "cg":
+            return "Claude Code et Codex"
         if self.mode == "claude":
             return "Claude Code"
         if self.mode.startswith("cli:"):
@@ -228,6 +234,72 @@ class Services:
         return n
 
     # ---------------------------------------------------------------- tour utilisateur (+ annuler / rétablir)
+    def interrupt_cg(self) -> None:
+        if self.cg_task is not None:
+            self.cg_task.cancel()
+
+    async def run_cg_turn(self, text: str, full: str) -> None:
+        from .cg import Discussion, NAMES, prepare_sdk
+        from .cli_agents import find_binary
+
+        conv = self.session.conversation_id
+
+        def report(agent: str, phase: str, content: str) -> None:
+            message = f"**{agent} · {phase}**\n\n{content}"
+            self.memory.archive_message(conv, "assistant", message, {"cg_author": agent, "cg_phase": phase})
+            if self._emit:
+                self._emit(AssistantMessage(content, author=agent, phase=phase))
+
+        def progress(text: str) -> None:
+            self.cg_progress = text
+            if self._emit:
+                self._emit(CgProgress(text))
+
+        async def approve(agent: str, task: str) -> bool:
+            if self.session.agent == "plan":
+                return False
+            return await self.ctx.permissions.authorize(PermissionRequest("cg", "write", f"{agent} · modifier le projet", task,
+                                                                         grant_key=f"cg:{agent}"))
+
+        interrupted = False
+        failed = False
+        self.cg_task = asyncio.current_task()
+        previous = self.memory.archive_rows(conv)
+        self.memory.archive_message(conv, "user", text)
+        turn_index = sum(row["role"] == "user" for row in previous)
+        if not turn_index and self.session.title == "Claude Code et Codex":
+            self.session.title = " ".join(text.split())[:60]
+        try:
+            lead = self.session.cg_lead
+            if not lead:
+                raise RuntimeError("Choisissez le moteur principal de cette discussion.")
+            progress("Vérification des connexions Claude Code et Codex")
+            binaries = {name: find_binary(name, self.config) for name in NAMES}
+            missing = [NAMES[name] for name, binary in binaries.items() if not binary]
+            if missing:
+                raise RuntimeError("Agent introuvable : " + ", ".join(missing) + ". Vérifiez les connexions Eclipse.")
+            bridge = await prepare_sdk(self.ctx.workspace.root, progress)
+            discussion = Discussion(self.ctx.workspace.root, binaries, None if lead == "both" else lead,
+                                    report=report, approve=approve, progress=progress, turn_index=turn_index, bridge=bridge)
+            history = []
+            for row in previous[-24:]:
+                if row["role"] == "user" or not history:
+                    history.append("")
+                history[-1] += f"{row['role']} : {row['content'][:3000]}\n"
+            discussion.history = history[-3:]
+            await discussion.turn(full)
+        except asyncio.CancelledError:
+            interrupted = True
+            report("Eclipse", "interruption", "Échange interrompu.")
+        except (RuntimeError, OSError) as exc:
+            failed = True
+            report("Eclipse", "erreur", str(exc))
+        finally:
+            self.cg_task = None
+            self.cg_progress = ""
+            if self._emit:
+                self._emit(TurnDone(interrupted, failed=failed))
+
     async def run_user_turn(self, text: str, attachments: list | None = None) -> None:
         full, _files = expand_refs(text, self.ctx.workspace.root)
         images = list(attachments or []) + [p for p in find_images(text, self.ctx.workspace.root) if p not in (attachments or [])]
@@ -237,7 +309,9 @@ class Services:
         if self.fusion_tool is not None:
             self.fusion_tool.calls = 0  # plafond de consultations : par tour
         await self.ext.plugins.fire("turn_start", {"text": text, "session": self.session.id})
-        if images:
+        if self.mode == "cg":
+            await self.run_cg_turn(text, full)
+        elif images:
             await self.runner.run_turn(full, attachments=images)
         else:
             await self.runner.run_turn(full)
@@ -306,7 +380,7 @@ class Services:
         for r in self.memory.archive_rows(self.session.conversation_id):
             self.memory.archive_message(conv, r["role"], r["content"], __import__("json").loads(r["meta"] or "{}"))
         s = Session.new(self.session.workspace, self.session.district_id, conv, self.session.model)
-        for k in ("mode", "agent", "model_options", "messages", "todos", "extra_dirs", "provider_models"):
+        for k in ("mode", "cg_lead", "agent", "model_options", "messages", "todos", "extra_dirs", "provider_models"):
             setattr(s, k, copy.deepcopy(getattr(self.session, k)))
         s.title = (self.session.title or self.session.id) + " (fork)"
         s.save()
@@ -340,7 +414,7 @@ def _shadow_dir(root: Path) -> Path:
 
 def create_services(workspace: str | Path, *, resume: str | None = None, provider: Provider | None = None,
                     asker: Asker | None = None, config: Config | None = None, memory: Memory | None = None,
-                    budget: Budget | None = None) -> Services:
+                    budget: Budget | None = None, cg: bool = False) -> Services:
     cfg = config or load_config()
     mem = memory or Memory()
     bud = budget or Budget()
@@ -359,6 +433,9 @@ def create_services(workspace: str | Path, *, resume: str | None = None, provide
     else:
         did = mem.ensure_district(ws.root.name, str(ws.root))
         sess = Session.new(str(ws.root), did, mem.new_conversation(did, "session"), cfg.model)
+        if cg:
+            sess.mode = "cg"
+            sess.title = "Claude Code et Codex"
     todos = TodoList()
     todos.replace(sess.todos) if sess.todos else None
     ctx = ToolContext(workspace=ws, config=cfg, permissions=PermissionManager(asker, cfg.auto_accept_edits), todos=todos,
@@ -370,7 +447,7 @@ def create_services(workspace: str | Path, *, resume: str | None = None, provide
     claude = ClaudeCodeRunner(cfg, bud, mem, ctx, sess, lambda e: None, bridge)
     ext = Extensions(ws.root)
     sv = Services(cfg, mem, bud, prov, sess, ctx, agent, mcp, claude, bridge, ext, Snapshots(ws.root, shadow_dir=_shadow_dir(ws.root)))
-    if sess.mode not in ("claude",) and not sess.mode.startswith("cli:"):
+    if sess.mode not in ("claude", "cg") and not sess.mode.startswith("cli:"):
         sv.api_id = sess.mode
         if provider is None and sess.mode != "poe" and get_spec(sess.mode):
             sv.provider = agent.provider = build_provider(get_spec(sess.mode))

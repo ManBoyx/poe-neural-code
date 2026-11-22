@@ -42,6 +42,7 @@ BUILTINS: list[Command] = [
     B("models", "Choisir le modèle (et ses réglages)", keybind="ctrl+x m"),
     B("model", "Choisir directement un modèle : /model NOM", usage="/model NOM"),
     B("new", "Nouvelle session", ("clear",), "ctrl+x n"),
+    B("cg", "Nouvelle discussion Claude Code et Codex"),
     B("redo", "Rétablir le message annulé (et les fichiers, via Git)", keybind="ctrl+x r"),
     B("sessions", "Lister/changer de session", ("resume", "continue"), "ctrl+x l"),
     B("themes", "Choisir le thème", keybind="ctrl+x t"),

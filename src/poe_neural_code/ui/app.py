@@ -28,7 +28,7 @@ from .. import __version__, credentials, variants
 from ..cli_agents import detect, find_binary, get_adapter
 from .. import fusion as F
 from ..providers import ProviderSpec, all_specs, get_spec, has_credentials, save_custom
-from ..agent import (AssistantDelta, AssistantMessage, DiffShown, Paused, StatusEvent, ThinkingEvent, ToolFinished, ToolRequested, TurnDone, UsageEvent)
+from ..agent import (AssistantDelta, AssistantMessage, CgProgress, DiffShown, Paused, StatusEvent, ThinkingEvent, ToolFinished, ToolRequested, TurnDone, UsageEvent)
 from ..config import load_config, save_config
 from ..extensions import commands as C
 from ..extensions.refs import fuzzy, list_files
@@ -408,6 +408,7 @@ class WorkScreen(Screen):
 
     def action_interrupt(self) -> None:
         if self.busy:
+            self.sv.interrupt_cg()
             self.sv.agent.interrupt()
             self.sv.claude.interrupt()
             self._activity = "interruption"
@@ -423,12 +424,15 @@ class WorkScreen(Screen):
             self.live_answer.append(e.text)
             self.chat().scroll_end(animate=False)
         elif isinstance(e, AssistantMessage):
+            text = f"**{e.author} · {e.phase}**\n\n{e.text}" if e.author else e.text
             if self.live_answer is not None:
-                self.live_answer.finish(e.text)
+                self.live_answer.finish(text)
             else:
-                self.add(AssistantAnswer(e.text))
+                self.add(AssistantAnswer(text))
             self.live_answer = None
             self.live_think = None
+        elif isinstance(e, CgProgress):
+            self._activity = e.text
         elif isinstance(e, ThinkingEvent):
             self._activity = "réflexion"
             if self.live_think is None:
@@ -465,11 +469,11 @@ class WorkScreen(Screen):
             self.live_answer = None
             self.note(I.get("pause") + " " + e.reason, "error")
         elif isinstance(e, TurnDone):
-            self._turn_done(e.interrupted)
+            self._turn_done(e.interrupted, e.failed)
         if isinstance(e, (UsageEvent, TurnDone, Paused, ToolFinished)):
             self.refresh_panels()
 
-    def _turn_done(self, interrupted: bool) -> None:
+    def _turn_done(self, interrupted: bool, failed: bool) -> None:
         self.busy = False
         self.live_answer = self.live_think = None
         self._activity = ""
@@ -481,7 +485,13 @@ class WorkScreen(Screen):
             din = sum(t1["tokens_in"].values()) - sum(t0["tokens_in"].values())
             dout = sum(t1["tokens_out"].values()) - sum(t0["tokens_out"].values())
             nature = "mesurés" if dm["measured"] and not dm["estimated"] else ("estimés" if dm["estimated"] and not dm["measured"] else "mesurés + estimés")
-            txt = Text((I.get("stop") + " interrompu" if interrupted else I.get("ok")) + f"  {el:.1f} s", style="#fbbf24" if interrupted else "#4ade80")
+            if failed:
+                label, color = I.get("error") + " Échec", "#f87171"
+            elif interrupted:
+                label, color = I.get("stop") + " interrompu", "#fbbf24"
+            else:
+                label, color = I.get("ok"), "#4ade80"
+            txt = Text(f"{label}  {el:.1f} s", style=color)
             if din or dout:
                 txt.append(f"  ·  ↓{din:,} ↑{dout:,} tok [{nature}]".replace(",", " "), style="dim")
             dp = {k: t1["points"][k] - t0["points"][k] for k in t1["points"]}
@@ -865,6 +875,18 @@ class WorkScreen(Screen):
 
     async def cmd_new(self, arg):
         await self.app.switch(str(self.sv.ctx.workspace.root), None)
+
+    async def cmd_cg(self, arg):
+        if self.busy:
+            self.note("Une réponse est en cours.", "warn")
+            return
+        lead = await self.app.push_screen_wait(PickerScreen("Nouvelle discussion Claude Code et Codex", [
+            ("Claude Code pilote", "claude", "Codex participe à l’exécution"),
+            ("Codex pilote", "codex", "Claude Code participe à l’exécution"),
+            ("Collaboration", "both", "Coordination alternée"),
+        ]))
+        if lead:
+            await self.app.switch(str(self.sv.ctx.workspace.root), None, cg_lead=lead)
 
     async def cmd_sessions(self, arg):
         ss = list_sessions()
@@ -1849,10 +1871,13 @@ class EclipseApp(App):
         else:
             self.push_screen(HomeScreen())
 
-    def open_project(self, path: str | None, resume: str | None) -> None:
+    def open_project(self, path: str | None, resume: str | None, *, cg_lead: str | None = None) -> None:
         cfg = load_config()
         try:
-            self.sv = create_services(path or ".", resume=resume, config=cfg, provider=self._provider)
+            self.sv = create_services(path or ".", resume=resume, config=cfg, provider=self._provider, cg=cg_lead is not None)
+            if cg_lead:
+                self.sv.session.cg_lead = cg_lead
+                self.sv.session.save()
         except Exception as e:  # noqa: BLE001
             self.notify(f"Ouverture impossible : {e}", severity="error")
             return
@@ -1860,11 +1885,11 @@ class EclipseApp(App):
             self.pop_screen()
         self.push_screen(WorkScreen(self.sv))
 
-    async def switch(self, path: str | None, resume: str | None) -> None:
+    async def switch(self, path: str | None, resume: str | None, *, cg_lead: str | None = None) -> None:
         old = self.sv
         if old:
             await old.close()
-        self.open_project(path, resume)
+        self.open_project(path, resume, cg_lead=cg_lead)
 
     async def action_quit(self) -> None:
         if self.sv:

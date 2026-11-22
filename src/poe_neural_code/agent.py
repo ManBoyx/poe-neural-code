@@ -49,6 +49,13 @@ class AssistantDelta:
 @dataclass
 class AssistantMessage:
     text: str
+    author: str | None = None
+    phase: str | None = None
+
+
+@dataclass
+class CgProgress:
+    text: str
 
 
 @dataclass
@@ -97,6 +104,7 @@ class Paused:
 @dataclass
 class TurnDone:
     interrupted: bool = False
+    failed: bool = False
 
 
 def msg_tokens(m: dict) -> int:
