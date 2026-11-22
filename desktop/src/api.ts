@@ -4,6 +4,7 @@
 export interface SessionSummary { id: string; title: string; workspace: string; updated: number; mode: string }
 export interface Info { version: string; sessions: SessionSummary[]; recent_dirs: string[]; home: string; theme: string; current: string | null; discussions_dir: string; default_effort?: string }
 export interface ModelEntry { id: string; free: boolean; context: number | null; tools: boolean; description: string }
+export type CgLead = "claude" | "codex" | "both";
 export type EffortLevel = "rapide" | "normal" | "profond";
 export interface Effort { name: string; choices: string[]; default: unknown; current: unknown; level?: EffortLevel | null; levels?: Record<EffortLevel, string | null> }
 export interface Todo { id: number; content: string; status: string }
@@ -14,6 +15,8 @@ export interface PermissionEvent { type: "permission"; id: string; request: Perm
 export interface State {
   open: boolean; version: string; busy?: boolean;
   session?: { id: string; title: string; workspace: string; agent: string };
+  cg_lead?: CgLead | null;
+  cg_progress?: string;
   mode?: string; mode_label?: string; is_cli?: boolean; configured?: boolean;
   model?: string | null; models?: ModelEntry[]; effort?: Effort | null; default_effort?: string; agents?: string[];
   permissions?: string; todos?: Todo[]; pending_permissions?: PermissionEvent[];
@@ -31,7 +34,8 @@ export interface SearchResult { id: string; title: string; workspace: string; sn
 export interface PromptCommand { name: string; description: string; kind: string; usage: string }
 export type Upload = { kind: "image"; path: string; name: string; size: number } | { kind: "text"; name: string; text: string; size: number };
 export type TranscriptItem =
-  | { kind: "user" | "assistant"; text: string }
+  | { kind: "user"; text: string }
+  | { kind: "assistant"; text: string; author?: string; phase?: string }
   | { kind: "tool"; id: string; name: string; args: Record<string, unknown>; output: string | null; ok: boolean | null };
 export interface Envelope {
   name: string; kind: string; period_s: number; renews_at: number | null; spent_points: number; total_points: number | null;
@@ -150,6 +154,7 @@ export const api = {
   slashList: () => call<{ commands: SlashCommand[]; engine: string[] }>("GET", "/api/slash"),
   slash: (name: string, args: string, confirmed = false) => call<SlashResult>("POST", "/api/slash", { name, args, confirmed }),
   open: (b: { workspace?: string; resume?: string }) => call<State>("POST", "/api/open", b),
+  cgLead: (lead: CgLead) => call<State>("POST", "/api/cg/lead", { lead }),
   newDiscussion: () => call<State>("POST", "/api/new_discussion", {}),
   settings: (b: { discussions_dir?: string; default_effort?: string }) => call<{ discussions_dir: string; default_effort: string }>("POST", "/api/settings", b),
   remove: (id: string) => call<{ deleted: boolean }>("DELETE", `/api/sessions/${encodeURIComponent(id)}`),

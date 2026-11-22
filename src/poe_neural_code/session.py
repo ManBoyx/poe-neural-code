@@ -22,6 +22,7 @@ class Session:
     messages: list[dict] = field(default_factory=list)  # fil récent au format fournisseur (borné à la sauvegarde)
     title: str = ""
     mode: str = "poe"  # poe | claude
+    cg_lead: str | None = None
     claude_session_id: str | None = None
     cli_sessions: dict = field(default_factory=dict)  # agent externe -> identifiant de session de l'agent
     provider_models: dict = field(default_factory=dict)  # fournisseur -> dernier modèle choisi

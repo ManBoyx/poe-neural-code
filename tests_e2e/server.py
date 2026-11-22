@@ -21,7 +21,7 @@ from poe_neural_code.provider.base import ModelInfo, ParamSpec  # noqa: E402
 
 MODEL_EFFORT = ModelInfo("m-effort", context_length=100_000, max_output=8000, prompt_price=1e-6, completion_price=3e-6, supports_tools=True,
                          params=[ParamSpec("reasoning_effort", "enum", ["low", "medium", "high"], "medium")])
-from poe_neural_code import cli_agents, connections  # noqa: E402
+from poe_neural_code import cg, cli_agents, connections  # noqa: E402
 
 # Détection simulée : Claude Code et OpenCode « installés », quel que soit l'ordinateur qui lance les tests (jamais lancés : faux chemins).
 _FAKE = {"claude", "opencode"}
@@ -35,7 +35,20 @@ def _fake_detect(with_version=False, **_kw):
 connections.detect = _fake_detect
 import poe_neural_code.diagnostics as _diag  # noqa: E402
 _diag.detect = _fake_detect
-cli_agents.find_binary = lambda aid, config=None: f"/faux/{aid}" if aid in _FAKE else None
+cli_agents.find_binary = lambda aid, config=None: f"/faux/{aid}" if aid in _FAKE or aid == "codex" else None
+
+
+async def fake_sdk_call(workspace, args, prompt="", **kwargs):
+    if args[0] == "check":
+        return "OK"
+    agent, _, _, response_format = args
+    if response_format == "plan":
+        return json.dumps({"first": "claude", "claude": {"task": "Analyser", "write": False},
+                           "codex": {"task": "Vérifier", "write": False}})
+    return f"Rapport de {cg.NAMES[agent]}"
+
+
+cg.sdk_call = fake_sdk_call
 
 TOKEN = "jeton-e2e"
 ANSWER = ("Voici ce que contient le projet :\n\n- `README.md` : la présentation\n\n"

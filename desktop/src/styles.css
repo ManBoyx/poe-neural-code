@@ -104,6 +104,10 @@ button:disabled { cursor: default; opacity: .5; }
 .msg.user { margin: 6px 0 4px; }
 .msg.user .bubble { padding: 9px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--user); white-space: pre-wrap; overflow-wrap: anywhere; }
 .msg.assistant { overflow-wrap: anywhere; }
+.msg-source { display: flex; gap: 8px; align-items: baseline; color: var(--muted); font-size: .83rem; margin-bottom: 6px; }
+.msg-source b { color: var(--text); }
+.msg-source[data-agent="Claude Code"] b { color: var(--amber); }
+.msg-source[data-agent="Codex"] b { color: var(--blue); }
 .msg.assistant.live .md > :last-child::after { content: ""; display: inline-block; width: .55em; height: 1em; margin-left: 2px; vertical-align: -2px; background: var(--accent); animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 .md > :first-child { margin-top: 0; }
@@ -433,3 +437,16 @@ input.text.wide { width: 100%; padding: 8px 10px; border: 1px solid var(--line);
 .quick-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 8px; }
 .quick-list .btn { display: inline-flex; gap: 8px; align-items: center; }
 .quick-list .ico { color: var(--accent); }
+
+.cg-welcome { max-width: 530px; }
+.cg-choices { display: grid; gap: 10px; margin-top: 24px; }
+.cg-choice {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 15px 18px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--accent-soft); color: var(--text); text-align: left; cursor: pointer;
+}
+.cg-choice:hover, .cg-choice:focus-visible { border-color: var(--accent); }
+.cg-choice:disabled { opacity: .7; cursor: wait; }
+.cg-choice b, .cg-choice .muted { display: block; }
+.cg-choice .muted { margin-top: 4px; font-size: .9rem; }
+.cg-choice .ico { color: var(--accent); }

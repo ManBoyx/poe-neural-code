@@ -19,6 +19,15 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   if (node.tagName === "A") { node.setAttribute("target", "_blank"); node.setAttribute("rel", "noopener noreferrer"); }
 });
 
+// Petit cache : un message terminé n'est parsé et nettoyé qu'une fois (même texte -> même HTML, donc même rendu).
+const cache = new Map<string, string>();
+const CACHE_MAX = 64;
+
 export function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(md.parse(text, { async: false }) as string, { ADD_ATTR: ["data-copy", "target"] });
+  const hit = cache.get(text);
+  if (hit !== undefined) return hit;
+  const html = DOMPurify.sanitize(md.parse(text, { async: false }) as string, { ADD_ATTR: ["data-copy", "target"] });
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
+  cache.set(text, html);
+  return html;
 }

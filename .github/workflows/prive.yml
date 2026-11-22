@@ -47,6 +47,7 @@ jobs:
       - name: Moteur et CLI (PyInstaller, paquet Python)
         run: |
           python -m pip install . pyinstaller
+          npm install --prefix src/poe_neural_code/cg_sdk --omit=optional --no-audit --no-fund
           pyinstaller --noconfirm --log-level WARN --distpath build/engine/dist --workpath build/engine/work packaging/engine/eclipse-engine.spec
           build/engine/dist/eclipse-engine/eclipse-engine --version
           packaging/cli/make-cli.sh "${{ needs.version.outputs.version }}"
@@ -97,6 +98,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install . pyinstaller
+          npm install --prefix src/poe_neural_code/cg_sdk --omit=optional --no-audit --no-fund
           pyinstaller --noconfirm --log-level WARN --distpath build/engine/dist --workpath build/engine/work packaging/engine/eclipse-engine.spec
           build/engine/dist/eclipse-engine/eclipse-engine.exe --version
           ./packaging/cli/make-cli.ps1 -Version "${{ needs.version.outputs.version }}"

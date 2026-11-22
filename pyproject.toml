@@ -24,6 +24,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "poe_neural_code.web" = ["static/*", "static/assets/*"]
+"poe_neural_code" = ["cg_sdk/*.mjs", "cg_sdk/package.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

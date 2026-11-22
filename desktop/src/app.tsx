@@ -1,6 +1,6 @@
 // Eclipse Desktop : barre latérale des conversations, fil de discussion, saisie, et réglages.
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { api, connect, events, health, isDesktop, openLogs, restartEngine, type FileEntry, type Info, type PermissionEvent, type PromptCommand, type SearchResult, type SlashCommand, type State, type TranscriptItem, type Upload, type Usage } from "./api";
+import { api, connect, events, health, isDesktop, openLogs, restartEngine, type CgLead, type FileEntry, type Info, type PermissionEvent, type PromptCommand, type SearchResult, type SlashCommand, type State, type TranscriptItem, type Upload, type Usage } from "./api";
 import { I } from "./icons";
 import { ConnectionsModal, DEFAULT_PREFS, EFFORT_LABEL, InfoModal, Modal, ModelPicker, SettingsModal, UsageBody, type Prefs } from "./panels";
 import { ChangesModal, Dialog, HelpModal, FilePreviewModal, FilesPanel, MemoryPanel, Palette, Suggest, type Command, type DialogSpec, type Suggestion } from "./side";
@@ -27,7 +27,7 @@ function loadPrefs(): Prefs {
 }
 
 function fromTranscript(t: TranscriptItem[]): Item[] {
-  return t.map((x) => (x.kind === "tool" ? { ...x } : { kind: x.kind, text: x.text })) as Item[];
+  return t.map((x) => ({ ...x }));
 }
 
 function loadList(k: string): string[] {
@@ -42,6 +42,12 @@ function ago(ts: number): string {
   if (s < 7 * 86400) return `${Math.floor(s / 86400)} j`;
   return new Date(ts * 1000).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
 }
+
+const CG_LEADS: { id: CgLead; title: string; description: string }[] = [
+  { id: "claude", title: "Claude Code pilote", description: "Claude répartit le travail et fait le bilan. Codex exécute sa part et vérifie le résultat." },
+  { id: "codex", title: "Codex pilote", description: "Codex répartit le travail et fait le bilan. Claude Code exécute sa part et vérifie le résultat." },
+  { id: "both", title: "Collaboration", description: "Les deux comparent leurs propositions et alternent la coordination." },
+];
 
 export function App() {
   const [phase, setPhase] = useState<"connecting" | "ready" | "failed">("connecting");
@@ -102,6 +108,9 @@ export function App() {
   // Un instantané d'état demandé AVANT un événement ne doit pas effacer ce que cet événement a apporté
   // (ex. une demande d'autorisation arrivée pendant la requête) : on compte les événements reçus.
   const evSeq = useRef(0);
+  const deltaBuf = useRef("");
+  const deltaRaf = useRef(0);
+  const deltaTimer = useRef(0);
   const refreshState = useCallback(async function refresh(authoritative = false, attempt = 0): Promise<State | null> {
     const seq = evSeq.current;
     try {
@@ -120,6 +129,7 @@ export function App() {
     } catch { return null; }
   }, []);
   const loadConversation = useCallback(async () => {
+    dropDelta();
     const s = await refreshState();
     if (!s) return;
     if (s.open) {
@@ -178,22 +188,44 @@ export function App() {
     return () => { clearInterval(hb); unsub.current?.(); };
   }, []);
 
+  // Les deltas de texte sont regroupés (au plus un rendu par image, ou tous les 120 ms si la fenêtre est masquée) ;
+  // tout autre événement vide d'abord le tampon pour garder l'ordre.
+  const flushDelta = () => {
+    if (deltaRaf.current) { cancelAnimationFrame(deltaRaf.current); deltaRaf.current = 0; }
+    if (deltaTimer.current) { clearTimeout(deltaTimer.current); deltaTimer.current = 0; }
+    const t = deltaBuf.current;
+    if (!t) return;
+    deltaBuf.current = "";
+    setItems((xs) => {
+      const last = xs[xs.length - 1];
+      if (last?.kind === "assistant" && last.live) return [...xs.slice(0, -1), { ...last, text: last.text + t }];
+      return [...xs.map((x) => (x.kind === "thinking" && x.live ? { ...x, live: false } : x)), { kind: "assistant", text: t, live: true }];
+    });
+  };
+  const dropDelta = () => {
+    deltaBuf.current = "";
+    if (deltaRaf.current) { cancelAnimationFrame(deltaRaf.current); deltaRaf.current = 0; }
+    if (deltaTimer.current) { clearTimeout(deltaTimer.current); deltaTimer.current = 0; }
+  };
   const onEvent = (e: any) => {
     evSeq.current += 1;
+    if (e.type === "delta") {
+      deltaBuf.current += e.text;
+      if (!deltaRaf.current) deltaRaf.current = requestAnimationFrame(() => { deltaRaf.current = 0; flushDelta(); });
+      if (!deltaTimer.current) deltaTimer.current = window.setTimeout(() => { deltaTimer.current = 0; flushDelta(); }, 120);
+      return;
+    }
+    flushDelta();
     switch (e.type) {
-      case "delta":
-        setItems((xs) => {
-          const last = xs[xs.length - 1];
-          if (last?.kind === "assistant" && last.live) return [...xs.slice(0, -1), { ...last, text: last.text + e.text }];
-          return [...xs.map((x) => (x.kind === "thinking" && x.live ? { ...x, live: false } : x)), { kind: "assistant", text: e.text, live: true }];
-        });
-        break;
       case "message":
         setItems((xs) => {
           const last = xs[xs.length - 1];
           if (last?.kind === "assistant" && last.live) return [...xs.slice(0, -1), { kind: "assistant", text: e.text || last.text }];
-          return e.text ? [...xs, { kind: "assistant", text: e.text }] : xs;
+          return e.text ? [...xs, { kind: "assistant", text: e.text, author: e.author, phase: e.phase }] : xs;
         });
+        break;
+      case "cg_progress":
+        setState((s) => ({ ...s, cg_progress: e.text }));
         break;
       case "thinking":
         setItems((xs) => {
@@ -234,6 +266,7 @@ export function App() {
         break;
       case "idle":
         setBusy(false);
+        setState((s) => ({ ...s, cg_progress: "" }));
         setRefreshKey((k) => k + 1);
         setItems((xs) => xs.map((x) => ((x.kind === "assistant" || x.kind === "thinking") && x.live ? { ...x, live: false } : x)));
         refreshInfo();
@@ -269,6 +302,23 @@ export function App() {
     try { await api.newDiscussion(); await loadConversation(); refreshInfo(); input.current?.focus(); }
     catch (e: any) { say(e.message); }
   };
+  const [choosingCg, setChoosingCg] = useState(false);
+  const newCg = async () => {
+    try {
+      const result = await api.slash("cg", "");
+      if (!result.ok) { say(result.message || "Impossible d’ouvrir la discussion."); return; }
+      setAttachments([]);
+      setPicker(false);
+      await loadConversation();
+      refreshInfo();
+    } catch (e: any) { say(e.message); }
+  };
+  const chooseCg = async (lead: CgLead) => {
+    setChoosingCg(true);
+    try { setState(await api.cgLead(lead)); requestAnimationFrame(() => input.current?.focus()); }
+    catch (e: any) { say(e.message); }
+    finally { setChoosingCg(false); }
+  };
   const newConversation = () => {
     if (state.open && state.session) openWorkspace(state.session.workspace);
   };
@@ -291,8 +341,10 @@ export function App() {
       say(`Commande inconnue : /${name} (tapez / pour la liste)`);
       return;
     }
+    if (state.mode === "cg" && !state.cg_lead) return;
     const texts = attachments.filter((a): a is Extract<Upload, { kind: "text" }> => a.kind === "text");
     const images = attachments.filter((a): a is Extract<Upload, { kind: "image" }> => a.kind === "image");
+    if (state.mode === "cg" && images.length) { say("Cette discussion accepte les messages et les fichiers texte."); return; }
     const fence = "`".repeat(3);
     const full = [t || "Voici les pièces jointes.", ...texts.map((a) => `\n\nFichier joint « ${a.name} » :\n${fence}\n${a.text}\n${fence}`)].join("");
     const shown = t + (attachments.length ? `${t ? "\n" : ""}[pièces jointes : ${attachments.map((a) => a.name).join(", ")}]` : "");
@@ -406,6 +458,7 @@ export function App() {
   const slash: Record<string, { desc: string; args?: boolean; run: (args: string) => void | Promise<void> }> = {
     new: { desc: "Nouvelle conversation dans ce dossier", run: newConversation },
     discussion: { desc: "Nouvelle discussion (nouveau dossier de travail)", run: newDiscussion },
+    cg: { desc: "Nouvelle discussion Claude Code et Codex", run: newCg },
     models: { desc: "Choisir le modèle", run: () => setPicker(true) },
     model: { desc: "Choisir un modèle : /model NOM", args: true, run: async (a) => { if (!a) return setPicker(true); try { setState(await api.model(a)); } catch (e: any) { say(e.message); } } },
     connect: { desc: "Connexions : agents installés et clés d'API", run: () => setModal("connections") },
@@ -541,7 +594,7 @@ export function App() {
   const commands: Command[] = [
     { id: "new", label: "Nouvelle discussion", hint: "Ctrl+N", icon: I.plus, run: newDiscussion, enabled: !busy },
     { id: "conv", label: "Nouvelle conversation dans ce dossier", icon: I.chat, run: newConversation, enabled: state.open && !busy },
-    { id: "open", label: "Ouvrir un projet…", icon: I.folder, run: () => { setState({ ...state, open: false }); setItems([]); }, enabled: !busy },
+    { id: "open", label: "Ouvrir un projet…", icon: I.folder, run: () => { setState({ ...state, open: false }); dropDelta(); setItems([]); }, enabled: !busy },
     { id: "model", label: "Changer de modèle", icon: I.agent, run: () => setPicker(true), enabled: state.open },
     { id: "conn", label: "Connexions (agents et clés d'API)", icon: I.plug, run: () => setModal("connections"), enabled: state.open },
     { id: "mem", label: "Mémoire du dossier", icon: I.brain, run: () => togglePanel("memory"), enabled: state.open },
@@ -576,15 +629,23 @@ export function App() {
   const [sideTab, setSideTab] = useState<"sessions" | "projects">("sessions");
   const [pins, setPins] = useState<string[]>(() => loadList("eclipse.pins"));
   const [tabs, setTabs] = useState<string[]>(() => loadList("eclipse.tabs"));
+  const tabSessions = useRef(new Map<string, NonNullable<State["session"]>>());
   useEffect(() => saveList("eclipse.pins", pins), [pins]);
   useEffect(() => saveList("eclipse.tabs", tabs), [tabs]);
   // La conversation ouverte a toujours son onglet (8 au plus, les plus anciens sortent)
   useEffect(() => {
-    const id = state.session?.id;
-    if (state.open && id && !tabs.includes(id)) setTabs((t) => [...t, id].slice(-8));
-  }, [state.open, state.session?.id]);
+    if (!state.open || !state.session) return;
+    const active = state.session;
+    tabSessions.current.set(active.id, active);
+    setTabs((current) => current.includes(active.id) ? current : [...current, active.id].slice(-8));
+  }, [state.open, state.session?.id, state.session?.title]);
+  useEffect(() => {
+    for (const id of tabSessions.current.keys()) {
+      if (id !== state.session?.id && !tabs.includes(id)) tabSessions.current.delete(id);
+    }
+  }, [tabs, state.session?.id]);
   const togglePin = (id: string) => setPins((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
-  const goHome = () => { setState({ ...state, open: false }); setItems([]); };
+  const goHome = () => { setState({ ...state, open: false }); dropDelta(); setItems([]); };
   const closeTab = (id: string) => {
     const rest = tabs.filter((t) => t !== id);
     setTabs(rest);
@@ -619,7 +680,23 @@ export function App() {
     </div>
   );
 
-  const welcome = (
+  const welcome = state.mode === "cg" ? (
+    <div class="welcome cg-welcome">
+      <div class="logo" aria-hidden="true"><span class="ico">{I.agent}</span></div>
+      <h1>{state.cg_lead ? "Claude Code et Codex" : "Choisissez le moteur principal"}</h1>
+      <p class="muted">Projet <b>{basename(state.session!.workspace)}</b></p>
+      {state.cg_lead ? <p class="muted">Décrivez votre tâche. Les deux agents vous présenteront leurs propositions et leurs rapports ici.</p> : (
+        <div class="cg-choices">
+          {CG_LEADS.map((choice) => (
+            <button key={choice.id} class="cg-choice" disabled={choosingCg} onClick={() => chooseCg(choice.id)}>
+              <span><b>{choice.title}</b><span class="muted">{choice.description}</span></span>
+              <span class="ico" aria-hidden="true">{I.chevronR}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : (
     <div class="welcome">
       <div class="logo"><span class="ico">{I.eclipse}</span></div>
       <h1>{state.open ? "Que voulez-vous faire ?" : "Bonjour"}</h1>
@@ -766,7 +843,7 @@ export function App() {
           {!sidebar && <button class="icon-btn" title="Afficher la barre latérale (Ctrl+B)" onClick={() => setSidebar(true)}><span class="ico">{I.sidebar}</span></button>}
           <div class="ctabs" role="tablist" aria-label="Conversations ouvertes">
             {tabs.map((id) => {
-              const s = byId.get(id) ?? (state.session?.id === id ? { title: state.session.title, workspace: state.session.workspace } : null);
+              const s = state.session?.id === id ? state.session : byId.get(id) ?? tabSessions.current.get(id);
               if (!s) return null;
               const on = state.open && state.session?.id === id;
               return (
@@ -799,10 +876,10 @@ export function App() {
             <button class="btn primary" disabled={restarting} onClick={restart}>{restarting ? "Relance…" : isDesktop ? "Relancer le moteur" : "Réessayer"}</button>
           </div>
         )}
-        <Thread items={items} pending={pending} busy={busy} empty={welcome} onRetry={state.open ? retry : undefined} showThinking={prefs.showThinking} showDetails={Boolean(prefs.showDetails)}
+        <Thread items={items} pending={pending} busy={busy} progress={state.cg_progress} empty={welcome} onRetry={state.open ? retry : undefined} showThinking={prefs.showThinking} showDetails={Boolean(prefs.showDetails)}
           onDecide={(id, d) => api.permission(id, d).catch((e) => say(e.message))} />
 
-        {state.open && (
+        {state.open && (state.mode !== "cg" || state.cg_lead) && (
           <div class="composer-wrap">
             {state.todos && state.todos.length > 0 && (
               <div class="todos">{state.todos.map((t) => <span key={t.id} class={`todo ${t.status}`}>{t.content}</span>)}</div>
@@ -861,13 +938,13 @@ export function App() {
                     {effort.current != null && !effort.level && <option value={`v:${effort.current}`}>Effort : {String(effort.current)}</option>}
                   </select>
                 )}
-                <div class="model-wrap">
+                {state.mode === "cg" ? <span class="model-btn">{CG_LEADS.find((choice) => choice.id === state.cg_lead)?.title}</span> : <div class="model-wrap">
                   <button class="model-btn" onClick={() => setPicker(!picker)} title={`Modèle (${state.mode_label})`}>
                     <span class="mb-prov">{state.mode_label}</span>{(state.model || !(state.is_cli || state.mode === "claude")) && <span class="mb-sep"> · </span>}{state.model || (state.is_cli || state.mode === "claude" ? "" : "choisir un modèle")} <span class="ico small">{I.chevron}</span>
                   </button>
                   {picker && <ModelPicker state={state} onClose={() => setPicker(false)}
                     onPick={async (m) => { setPicker(false); try { setState(await api.model(m)); } catch (e: any) { say(e.message); } }} />}
-                </div>
+                </div>}
                 {busy ? (
                   <button class="send stop" title="Arrêter (Échap)" onClick={() => api.interrupt()}><span class="ico">{I.stop}</span></button>
                 ) : (

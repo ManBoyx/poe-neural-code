@@ -20,7 +20,7 @@ from ..paths import data_dir
 # Commandes du CLI exécutées ici (les autres sont dans l'interface ou sans objet dans une fenêtre)
 ENGINE = ("doctor", "context", "status", "mcp", "skills", "plugins", "todo", "system", "fusion", "permissions", "bypass", "claude-limit", "limit",
           "rate", "spent", "define-token", "reload", "add-dir", "verify", "free", "init", "detect", "agent-path", "disconnect", "logout", "options",
-          "provider", "agents", "modes", "effort")
+          "provider", "agents", "modes", "effort", "cg")
 
 
 def catalog() -> list[dict]:
@@ -44,6 +44,13 @@ async def run(hub, name: str, args: str, confirmed: bool = False) -> dict:
     sv = hub.sv
     name = {"limit": "claude-limit", "logout": "disconnect", "modes": "agents"}.get(name, name)
     args = (args or "").strip()
+
+    if name == "cg":
+        try:
+            await hub.open(str(sv.ctx.workspace.root), cg=True)
+        except (OSError, RuntimeError) as exc:
+            return _msg(f"/cg : {exc}", ok=False)
+        return {"ok": True, "state": True}
 
     if name == "doctor":
         from ..diagnostics import doctor

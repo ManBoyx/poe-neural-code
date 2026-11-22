@@ -1,6 +1,8 @@
 # Recette PyInstaller du moteur Eclipse (dossier « onedir » : démarrage rapide, pas d'extraction temporaire,
 # moins de faux positifs antivirus sous Windows qu'un exécutable unique).
 # Construction : pyinstaller --noconfirm --distpath dist --workpath build packaging/engine/eclipse-engine.spec
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 hidden = []
@@ -12,6 +14,9 @@ for pkg in ("poe_neural_code", "textual", "rich", "uvicorn", "mcp", "keyring", "
         pass
 
 datas = collect_data_files("textual") + collect_data_files("poe_neural_code")
+cg_modules = Path(SPECPATH).resolve().parents[1] / "src" / "poe_neural_code" / "cg_sdk" / "node_modules"
+if cg_modules.is_dir():
+    datas.append((str(cg_modules), "poe_neural_code/cg_sdk/node_modules"))
 for dist in ("keyring", "mcp", "textual", "SecretStorage", "jeepney"):
     try:
         datas += copy_metadata(dist)

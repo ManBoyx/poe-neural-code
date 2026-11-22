@@ -6,7 +6,7 @@ import { renderMarkdown } from "./markdown";
 
 export type Item =
   | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string; live?: boolean }
+  | { kind: "assistant"; text: string; live?: boolean; author?: string; phase?: string }
   | { kind: "thinking"; text: string; live?: boolean }
   | { kind: "tool"; id: string; name: string; args: Record<string, unknown>; output: string | null; ok: boolean | null; diff?: string }
   | { kind: "note"; text: string; level: "info" | "warn" | "error" | "ok" };
@@ -96,9 +96,9 @@ export function PermissionCard({ p, onDecide }: { p: PermissionEvent; onDecide: 
   );
 }
 
-export function Thread({ items, pending, busy, onDecide, empty, onRetry, showThinking = true, showDetails = false }: {
+export function Thread({ items, pending, busy, progress, onDecide, empty, onRetry, showThinking = true, showDetails = false }: {
   items: Item[]; pending: PermissionEvent[]; busy: boolean; onDecide: (id: string, d: "once" | "session" | "deny") => void; empty: preact.ComponentChildren;
-  onRetry?: () => void; showThinking?: boolean; showDetails?: boolean;
+  onRetry?: () => void; showThinking?: boolean; showDetails?: boolean; progress?: string;
 }) {
   const lastAssistant = items.reduce((acc, it, i) => (it.kind === "assistant" ? i : acc), -1);
   const ref = useRef<HTMLDivElement>(null);
@@ -139,6 +139,9 @@ export function Thread({ items, pending, busy, onDecide, empty, onRetry, showThi
             case "user": return <div key={i} id={`msg-${i}`} class="msg user"><div class="bubble">{it.text}</div></div>;
             case "assistant": return (
               <div key={i} class={`msg assistant ${it.live ? "live" : ""}`}>
+                {it.author && <div class="msg-source" data-agent={it.author}>
+                  <b>{it.author}</b>{it.phase && <span>{it.phase}</span>}
+                </div>}
                 <Markdown text={it.text} />
                 {!it.live && (
                   <div class="msg-actions">
@@ -153,7 +156,7 @@ export function Thread({ items, pending, busy, onDecide, empty, onRetry, showThi
           }
         })}
         <div class="perms">{pending.map((p) => <PermissionCard key={p.id} p={p} onDecide={(d) => onDecide(p.id, d)} />)}</div>
-        {busy && pending.length === 0 && <div class="working"><span class="dots"><i /><i /><i /></span> Eclipse travaille…</div>}
+        {busy && pending.length === 0 && <div class="working" role="status"><span class="dots" aria-hidden="true"><i /><i /><i /></span> {progress || "Eclipse travaille…"}</div>}
       </div>
     </div>
   );

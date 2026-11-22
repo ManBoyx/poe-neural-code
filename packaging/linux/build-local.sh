@@ -14,6 +14,7 @@ mkdir -p build/cache/cargo build/cache/target
   bash -c 'set -e
     uv venv -q --python 3.12 /tmp/venv && . /tmp/venv/bin/activate
     uv pip install -q /src pyinstaller
+    npm install --prefix src/poe_neural_code/cg_sdk --omit=optional --no-audit --no-fund
     pyinstaller --noconfirm --log-level WARN --distpath build/engine/dist --workpath /tmp/pyi packaging/engine/eclipse-engine.spec
     cd desktop && npm ci --no-fund --no-audit && npx tauri build --bundles appimage,deb,rpm --config src-tauri/local-build.json "$@"' _ "$@"
 echo "Paquets : build/cache/target/release/bundle/"

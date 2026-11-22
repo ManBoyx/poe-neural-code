@@ -31,7 +31,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from .. import __version__, credentials, variants
-from ..agent import (AssistantDelta, AssistantMessage, DiffShown, Paused, StatusEvent, ThinkingEvent, ToolFinished,
+from ..agent import (AssistantDelta, AssistantMessage, CgProgress, DiffShown, Paused, StatusEvent, ThinkingEvent, ToolFinished,
                      ToolRequested, TurnDone, UsageEvent)
 from .. import connections as CX
 from ..logs import get_logger, logs_dir, redact
@@ -48,7 +48,7 @@ MAX_OUTPUT = 20_000
 
 EVENT_TYPES = {AssistantDelta: "delta", AssistantMessage: "message", ThinkingEvent: "thinking", ToolRequested: "tool_start",
                ToolFinished: "tool_end", DiffShown: "diff", StatusEvent: "status", UsageEvent: "usage", Paused: "paused",
-               TurnDone: "done"}
+               TurnDone: "done", CgProgress: "cg_progress"}
 
 
 def serialize(e: Any) -> dict | None:
@@ -56,6 +56,8 @@ def serialize(e: Any) -> dict | None:
     if kind is None or not dataclasses.is_dataclass(e):
         return None
     d = dataclasses.asdict(e)
+    if isinstance(e, AssistantMessage) and e.author is None:
+        d = {"text": e.text}
     for k in ("output", "diff"):
         if isinstance(d.get(k), str) and len(d[k]) > MAX_OUTPUT:
             d[k] = d[k][:MAX_OUTPUT] + "\n[… tronqué]"
@@ -82,6 +84,18 @@ def _unwrap(text: str) -> str:
 
 def transcript(sv: Services, limit: int = 200) -> list[dict]:
     """Fil de la conversation pour l'affichage : messages + appels d'outils avec leur résultat."""
+    if sv.mode == "cg":
+        items = []
+        for row in sv.memory.archive_rows(sv.session.conversation_id)[-limit:]:
+            if row["role"] not in ("user", "assistant"):
+                continue
+            item = {"kind": row["role"], "text": row["content"]}
+            if row["role"] == "assistant":
+                meta = json.loads(row["meta"] or "{}")
+                if meta.get("cg_author"):
+                    item.update(author=meta["cg_author"], phase=meta["cg_phase"], text=row["content"].partition("\n\n")[2])
+            items.append(item)
+        return items
     # Fil en mémoire (à jour même pendant un tour), sinon celui de la session sauvegardée.
     live = not sv.is_cli and sv.mode != "claude" and isinstance(getattr(sv.agent, "messages", None), list)
     msgs = sv.agent.messages if live else sv.session.messages  # vide après une annulation : c'est voulu
@@ -259,11 +273,11 @@ class Hub:
         return self.turn is not None and not self.turn.done()
 
     # ------------------------------------------------------------ conversation
-    async def open(self, workspace: str | None = None, resume: str | None = None) -> None:
+    async def open(self, workspace: str | None = None, resume: str | None = None, *, cg: bool = False) -> None:
         if self.busy:
             raise RuntimeError("une réponse est en cours : interrompez-la d'abord")
         kw = {"provider": self.provider_factory()} if self.provider_factory else {}
-        sv = create_services(workspace or ".", resume=resume, config=load_config(), **kw)  # échec : la conversation actuelle reste ouverte
+        sv = create_services(workspace or ".", resume=resume, config=load_config(), cg=cg, **kw)  # échec : la conversation actuelle reste ouverte
         if self.sv is not None:
             await self.sv.close()
         sv.set_emit(self.on_event)
@@ -305,6 +319,7 @@ class Hub:
     def interrupt(self) -> None:
         if self.sv is None:
             return
+        self.sv.interrupt_cg()
         for r in (self.sv.agent, self.sv.claude, getattr(self.sv, "runner", None)):
             fn = getattr(r, "interrupt", None)
             if fn:
@@ -319,6 +334,8 @@ class Hub:
     # ------------------------------------------------------------ vues
     def current_model(self) -> str | None:
         sv = self.sv
+        if sv.mode == "cg":
+            return None
         if sv.mode == "claude":
             return sv.config.claude_model
         if sv.is_cli:
@@ -336,7 +353,9 @@ class Hub:
             "open": True, "version": __version__, "busy": self.busy,
             "session": {"id": sv.session.id, "title": sv.session.title, "workspace": str(sv.ctx.workspace.root), "agent": sv.session.agent},
             "mode": sv.mode, "mode_label": sv.mode_label, "is_cli": sv.is_cli,
-            "configured": sv.is_cli or sv.provider.configured(),
+            "configured": bool(sv.session.cg_lead) if sv.mode == "cg" else sv.is_cli or sv.provider.configured(),
+            "cg_lead": sv.session.cg_lead,
+            "cg_progress": sv.cg_progress,
             "model": self.current_model(), "models": models,
             "effort": None if not effort else {"name": effort.name, "choices": list(effort.choices), "default": effort.default,
                                                "current": sv.current_options().get(effort.name),
@@ -491,6 +510,20 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
             await hub.open(d.get("workspace"), d.get("resume"))
         except Exception as e:  # noqa: BLE001
             return bad(str(e))
+        return JSONResponse(hub.state())
+
+    async def cg_lead(request):
+        from ..cg import LEADS
+
+        if (r := need_open()):
+            return r
+        if hub.busy or hub.sv.mode != "cg":
+            return bad("aucune discussion /cg disponible", 409)
+        lead = (await body(request)).get("lead")
+        if lead not in LEADS:
+            return bad("moteur principal invalide")
+        hub.sv.session.cg_lead = lead
+        hub.sv.session.save()
         return JSONResponse(hub.state())
 
     async def new_discussion(_request):
@@ -781,6 +814,11 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
             return bad("message vide")
         if hub.busy:
             return bad("une réponse est déjà en cours", 409)
+        if hub.sv.mode == "cg":
+            if not hub.sv.session.cg_lead:
+                return bad("choisissez d’abord le moteur principal")
+            if d.get("attachments"):
+                return bad("les discussions /cg acceptent les messages et les fichiers texte")
         allowed = attachments_dir(hub.sv.session.id).resolve()
         atts = []
         for a in d.get("attachments") or []:
@@ -897,6 +935,7 @@ def build_app(token: str, port_ref: list[int], hub: Hub | None = None) -> Starle
         Route("/api/local_servers", local_servers), Route("/api/agent_path", agent_path, methods=["POST"]),
         Route("/api/add_server", add_server, methods=["POST"]), Route("/api/forget_key", forget_key, methods=["POST"]),
         Route("/api/sessions/{sid}", remove, methods=["DELETE"]), Route("/api/new_discussion", new_discussion, methods=["POST"]),
+        Route("/api/cg/lead", cg_lead, methods=["POST"]),
         Route("/api/settings", settings, methods=["POST"]), Route("/api/memory", memory),
         Route("/api/memory/{iid:int}", forget, methods=["DELETE"]),
         Route("/api/memory/{iid:int}/edit", memory_edit, methods=["POST"]), Route("/api/files", files), Route("/api/file", file),
@@ -993,7 +1032,33 @@ def serve(port: int = 0, open_browser: bool = False, workspace: str | None = Non
     hub = Hub()
     app = build_app(token, port_ref, hub)
     config = uvicorn.Config(app, log_level="warning", lifespan="off", access_log=False)
-    server = uvicorn.Server(config)
+
+    class _Server(uvicorn.Server):
+        """Uvicorn se réveille 10 fois par seconde à vide ; ici 1 fois, et tout de suite à l'arrêt demandé (économie de réveils)."""
+        _loop = None
+        _wake = None
+
+        async def main_loop(self) -> None:
+            self._loop = asyncio.get_running_loop()
+            self._wake = asyncio.Event()
+            counter = 0
+            while not await self.on_tick(counter):
+                counter = (counter + 10) % 864000  # on_tick rafraîchit l'en-tête Date quand counter % 10 == 0 : ici à chaque tour (1 s)
+                try:
+                    await asyncio.wait_for(self._wake.wait(), 1.0)
+                except asyncio.TimeoutError:
+                    pass
+                self._wake.clear()
+
+        def wake_up(self) -> None:
+            if self._loop is not None and self._wake is not None:
+                self._loop.call_soon_threadsafe(self._wake.set)
+
+        def handle_exit(self, sig, frame) -> None:
+            super().handle_exit(sig, frame)
+            self.wake_up()
+
+    server = _Server(config)
 
     print(json.dumps({"event": "ready", "port": real_port, "token": token, "logs": str(logs_dir())}), flush=True)
     log().info("serveur Eclipse Desktop prêt sur 127.0.0.1:%s", real_port)
@@ -1010,6 +1075,7 @@ def serve(port: int = 0, open_browser: bool = False, workspace: str | None = Non
         except Exception:  # noqa: BLE001
             pass
         server.should_exit = True
+        server.wake_up()
     if watch_stdin:
         threading.Thread(target=watch_parent, daemon=True).start()
 
