@@ -1,0 +1,116 @@
+/** Fournisseurs par clé d'API et serveurs locaux (compatibles OpenAI). Aucun n'est imposé ; Poe est recommandé. */
+import { getKey, type KeyLookup } from "./secrets"
+
+export interface ProviderSpec {
+  id: string
+  label: string
+  baseUrl: string
+  keyEnv: string | null
+  local?: boolean
+  recommended?: boolean
+  publicCatalog?: boolean // catalogue lisible sans clé
+}
+
+export const PROVIDERS: ProviderSpec[] = [
+  { id: "poe", label: "Poe", baseUrl: "https://api.poe.com/v1", keyEnv: "POE_API_KEY", recommended: true, publicCatalog: true },
+  { id: "openrouter", label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", keyEnv: "OPENROUTER_API_KEY", publicCatalog: true },
+  { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", keyEnv: "OPENAI_API_KEY" },
+  { id: "anthropic", label: "Anthropic (API)", baseUrl: "https://api.anthropic.com/v1", keyEnv: "ANTHROPIC_API_KEY" },
+  { id: "google", label: "Google Gemini (API)", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", keyEnv: "GEMINI_API_KEY" },
+  { id: "mistral", label: "Mistral", baseUrl: "https://api.mistral.ai/v1", keyEnv: "MISTRAL_API_KEY" },
+  { id: "groq", label: "Groq", baseUrl: "https://api.groq.com/openai/v1", keyEnv: "GROQ_API_KEY" },
+  { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", keyEnv: "DEEPSEEK_API_KEY" },
+  { id: "xai", label: "xAI (Grok)", baseUrl: "https://api.x.ai/v1", keyEnv: "XAI_API_KEY" },
+  { id: "together", label: "Together AI", baseUrl: "https://api.together.xyz/v1", keyEnv: "TOGETHER_API_KEY" },
+  { id: "cerebras", label: "Cerebras", baseUrl: "https://api.cerebras.ai/v1", keyEnv: "CEREBRAS_API_KEY" },
+  { id: "github", label: "GitHub Models", baseUrl: "https://models.github.ai/inference", keyEnv: "GITHUB_MODELS_TOKEN" },
+  { id: "opencode-zen", label: "OpenCode Zen", baseUrl: "https://opencode.ai/zen/v1", keyEnv: "OPENCODE_API_KEY" },
+  { id: "opencode-go", label: "OpenCode Go (abonnement)", baseUrl: "https://opencode.ai/zen/go/v1", keyEnv: "OPENCODE_API_KEY" },
+  { id: "lmstudio", label: "LM Studio", baseUrl: "http://localhost:1234/v1", keyEnv: null, local: true },
+  { id: "ollama", label: "Ollama", baseUrl: "http://localhost:11434/v1", keyEnv: null, local: true },
+]
+
+export function provider(id: string): ProviderSpec | undefined {
+  return PROVIDERS.find((p) => p.id === id)
+}
+
+export async function keyFor(p: ProviderSpec): Promise<KeyLookup> {
+  if (p.local) return { ok: true, key: "", source: "aucune clé (serveur local)" }
+  return getKey(p.id, p.keyEnv)
+}
+
+export interface ModelInfo {
+  id: string
+  provider: string
+  label?: string
+  context?: number
+  free?: boolean
+  tools?: boolean // le fournisseur annonce les appels d'outils
+  input?: string[]
+  output?: string[]
+  effort?: string[] // valeurs d'effort proposées par le modèle
+  priceIn?: number // $ par million de tokens
+  priceOut?: number
+}
+
+/** Catalogue Poe. Corrige l'ancien filtre : `supported_endpoints` n'est pas documenté et vide pour la plupart des modèles. */
+export function parsePoe(data: any[]): ModelInfo[] {
+  const out: ModelInfo[] = []
+  for (const d of data) {
+    const arch = d.architecture ?? {}
+    const outMods: string[] = arch.output_modalities ?? ["text"]
+    if (!outMods.includes("text")) continue // modèles qui ne produisent que des images, vidéos ou sons
+    const price = d.pricing ?? {}
+    const eff = (d.parameters ?? []).find((p: any) => /effort/i.test(p.name ?? ""))?.schema?.enum
+    const pIn = price.prompt != null ? Number(price.prompt) * 1e6 : undefined
+    const pOut = price.completion != null ? Number(price.completion) * 1e6 : undefined
+    out.push({
+      id: d.id, provider: "poe", context: d.context_window?.context_length ?? d.context_length ?? undefined,
+      tools: (d.supported_features ?? []).includes("tools"), input: arch.input_modalities, output: outMods,
+      effort: Array.isArray(eff) ? eff.map(String) : undefined, priceIn: pIn, priceOut: pOut,
+      free: d.pricing === null ? undefined : pIn === 0 && pOut === 0,
+    })
+  }
+  return out
+}
+
+export function parseGeneric(providerId: string, data: any[]): ModelInfo[] {
+  return data.map((d) => {
+    const pIn = d.pricing?.prompt != null ? Number(d.pricing.prompt) * 1e6 : undefined
+    const pOut = d.pricing?.completion != null ? Number(d.pricing.completion) * 1e6 : undefined
+    return { id: d.id, provider: providerId, context: d.context_length ?? d.context_window ?? undefined, priceIn: pIn, priceOut: pOut,
+             free: pIn === 0 && pOut === 0 ? true : undefined,
+             tools: Array.isArray(d.supported_parameters) ? d.supported_parameters.includes("tools") : undefined }
+  })
+}
+
+export type CatalogResult = { ok: true; models: ModelInfo[] } | { ok: false; reason: string }
+
+const cache = new Map<string, { at: number; res: CatalogResult }>()
+
+export async function catalog(p: ProviderSpec, opts: { fetchImpl?: typeof fetch; timeoutMs?: number; refresh?: boolean } = {}): Promise<CatalogResult> {
+  const hit = cache.get(p.id)
+  if (!opts.refresh && hit && Date.now() - hit.at < 600_000) return hit.res
+  const f = opts.fetchImpl ?? fetch
+  const headers: Record<string, string> = {}
+  if (!p.publicCatalog || p.id === "poe") {
+    const k = await keyFor(p)
+    if (k.ok && k.key) headers.Authorization = `Bearer ${k.key}`
+    else if (!k.ok && !p.publicCatalog) return { ok: false, reason: k.missing ? "clé à saisir" : k.reason }
+  }
+  let res: CatalogResult
+  try {
+    const r = await f(p.baseUrl + "/models", { headers, signal: AbortSignal.timeout(opts.timeoutMs ?? (p.local ? 1500 : 15_000)) })
+    if (!r.ok) res = { ok: false, reason: r.status === 401 ? "clé refusée (HTTP 401)" : `HTTP ${r.status}` }
+    else {
+      const j: any = await r.json()
+      const data = Array.isArray(j?.data) ? j.data : Array.isArray(j) ? j : []
+      res = { ok: true, models: p.id === "poe" ? parsePoe(data) : parseGeneric(p.id, data) }
+    }
+  } catch (e) {
+    const n = (e as Error).name
+    res = { ok: false, reason: p.local ? "ne tourne pas" : n === "TimeoutError" ? "délai dépassé" : "réseau indisponible" }
+  }
+  cache.set(p.id, { at: Date.now(), res })
+  return res
+}
