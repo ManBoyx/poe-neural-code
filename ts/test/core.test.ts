@@ -153,3 +153,31 @@ describe("processus", () => {
     expect(ps).toBe("")
   })
 })
+
+describe("vérification de la clé", () => {
+  test("Poe : catalogue public, mais la clé se vérifie sur le solde (401 = refusée)", async () => {
+    const { verifyKey, provider } = await import("../src/core/providers")
+    const urls: string[] = []
+    const fake = (code: number) => (async (u: string) => { urls.push(String(u)); return new Response("{}", { status: code }) }) as unknown as typeof fetch
+    expect((await verifyKey(provider("poe")!, { key: "x", fetchImpl: fake(401) })).check).toBe("refusée")
+    expect(urls[0]).toBe("https://api.poe.com/usage/current_balance")
+    expect((await verifyKey(provider("poe")!, { key: "x", fetchImpl: fake(200) })).check).toBe("valide")
+    expect((await verifyKey(provider("openrouter")!, { key: "x", fetchImpl: fake(500) })).check).toBe("non vérifiée")
+    const neterr = (async () => { throw new Error("réseau") }) as unknown as typeof fetch
+    expect((await verifyKey(provider("openai")!, { key: "x", fetchImpl: neterr })).check).toBe("non vérifiée")
+  })
+})
+
+describe("vérification de la clé", () => {
+  test("Poe : catalogue public, mais la clé se vérifie sur le solde (401 = refusée)", async () => {
+    const { verifyKey, provider } = await import("../src/core/providers")
+    const urls: string[] = []
+    const fake = (code: number) => (async (u: string) => { urls.push(String(u)); return new Response("{}", { status: code }) }) as unknown as typeof fetch
+    expect((await verifyKey(provider("poe")!, { key: "x", fetchImpl: fake(401) })).check).toBe("refusée")
+    expect(urls[0]).toBe("https://api.poe.com/usage/current_balance")
+    expect((await verifyKey(provider("poe")!, { key: "x", fetchImpl: fake(200) })).check).toBe("valide")
+    expect((await verifyKey(provider("openrouter")!, { key: "x", fetchImpl: fake(500) })).check).toBe("non vérifiée")
+    const neterr = (async () => { throw new Error("réseau") }) as unknown as typeof fetch
+    expect((await verifyKey(provider("openai")!, { key: "x", fetchImpl: neterr })).check).toBe("non vérifiée")
+  })
+})
