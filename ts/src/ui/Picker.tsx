@@ -12,7 +12,7 @@ import { C, I } from "./theme"
 import { short } from "../core/paths"
 
 export interface ProviderStatus {
-  key: "ok" | "missing" | "error" | "local"
+  key: "ok" | "missing" | "invalid" | "error" | "local"
   keyNote: string
   models?: ModelInfo[]
   error?: string
@@ -80,6 +80,10 @@ export function Picker(props: PickerProps) {
     if (v) {
       const s = st[v]
       out.push({ kind: "header", label: `MODÈLES ${label(v).toUpperCase()}`, color: C.api, icon: I.model })
+      if (s?.key === "invalid" || s?.key === "missing") {
+        out.push({ kind: "item", title: s.key === "invalid" ? "Clé refusée" : "Aucune clé", detail: `${s.keyNote} — entrée : /connect, saisir la clé`, color: C.warn, run: () => props.onNeedKey(v) })
+        return out
+      }
       if (!s || s.loading) out.push({ kind: "item", title: "Chargement du catalogue…", detail: "", color: C.muted, dim: true, run: () => {} })
       else if (s.error && s.key === "local") out.push({ kind: "item", title: `${label(v)} ${s.error}`, detail: "lancez-le, puis rouvrez cette liste", color: C.warn, dim: true, run: () => {} })
       else if (s.error) out.push({ kind: "item", title: s.error, detail: "entrée : saisir ou changer la clé", color: C.warn, run: () => props.onNeedKey(v) })
@@ -119,8 +123,10 @@ export function Picker(props: PickerProps) {
     out.push({ kind: "header", label: "API RECOMMANDÉES", color: C.api, icon: I.api })
     for (const p of PROVIDERS.filter((x) => x.recommended)) {
       const s = st[p.id]
-      const detail = s ? (s.key === "ok" ? `${I.ok} ${s.keyNote}` + (s.models ? ` · ${s.models.length} modèles` : s.loading ? " · catalogue…" : "") : s.keyNote) : "…"
-      out.push({ kind: "item", title: p.label, detail, color: C.text, run: () => (s?.key === "missing" ? props.onNeedKey(p.id) : open(p.id)) })
+      const bad = s?.key === "invalid" || s?.key === "missing"
+      const detail = s ? (s.key === "ok" ? `${I.ok} ${s.keyNote}` + (s.models ? ` · ${s.models.length} modèles` : s.loading ? " · catalogue…" : "")
+                          : `${bad ? I.warn + " " : ""}${s.keyNote}${bad ? " — entrée : saisir la clé" : ""}`) : "…"
+      out.push({ kind: "item", title: p.label, detail, color: bad ? C.warn : C.text, run: () => (bad ? props.onNeedKey(p.id) : open(p.id)) })
     }
     out.push({ kind: "header", label: "DÉTECTÉS SUR CET ORDINATEUR", color: C.detected, icon: I.detected })
     const inst = props.detected().filter((d) => d.installed)

@@ -39,6 +39,31 @@ export async function keyFor(p: ProviderSpec): Promise<KeyLookup> {
   return getKey(p.id, p.keyEnv)
 }
 
+export type KeyCheck = "valide" | "refusée" | "absente" | "non vérifiée"
+
+/**
+ * Vérifie réellement la clé auprès du fournisseur. Le catalogue de Poe est public (200 même avec une clé supprimée) :
+ * la clé se vérifie sur /usage/current_balance (200 = acceptée, 401 = refusée). Ailleurs, GET /models avec la clé.
+ */
+export async function verifyKey(p: ProviderSpec, opts: { fetchImpl?: typeof fetch; key?: string } = {}): Promise<{ check: KeyCheck; detail: string }> {
+  if (p.local) return { check: "valide", detail: "serveur local, sans clé" }
+  let key = opts.key
+  if (key === undefined) {
+    const k = await keyFor(p)
+    if (!k.ok) return { check: k.missing ? "absente" : "non vérifiée", detail: k.missing ? "aucune clé enregistrée" : k.reason }
+    key = k.key
+  }
+  const url = p.id === "poe" ? "https://api.poe.com/usage/current_balance" : p.baseUrl + "/models"
+  try {
+    const r = await (opts.fetchImpl ?? fetch)(url, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) })
+    if (r.status === 401 || r.status === 403) return { check: "refusée", detail: `${p.label} refuse la clé (HTTP ${r.status}) : supprimée ou modifiée` }
+    if (r.ok) return { check: "valide", detail: "clé acceptée" }
+    return { check: "non vérifiée", detail: `vérification impossible (HTTP ${r.status})` }
+  } catch {
+    return { check: "non vérifiée", detail: "vérification impossible (réseau)" }
+  }
+}
+
 export interface ModelInfo {
   id: string
   provider: string

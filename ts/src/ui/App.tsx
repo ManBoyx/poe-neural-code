@@ -4,7 +4,7 @@ import { createStore, produce } from "solid-js/store"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { SyntaxStyle, type TextareaRenderable } from "@opentui/core"
 import { detect, type Detected } from "../core/detect"
-import { catalog, keyFor, provider, PROVIDERS } from "../core/providers"
+import { catalog, keyFor, provider, PROVIDERS, verifyKey } from "../core/providers"
 import { setKey } from "../core/secrets"
 import { streamChat, type Msg } from "../core/chat"
 import { choose, load, save, type Choice, type State } from "../core/store"
@@ -26,6 +26,7 @@ interface Item {
 
 const COMMANDS: { name: string; desc: string; keys?: string }[] = [
   { name: "models", desc: "Choisir le modèle", keys: "ctrl+x m" },
+  { name: "connect", desc: "Connexions : saisir ou changer une clé d'API" },
   { name: "provider", desc: "Choisir le fournisseur ou l'agent" },
   { name: "new", desc: "Nouvelle discussion", keys: "ctrl+x n" },
   { name: "help", desc: "Aide et raccourcis" },
@@ -77,12 +78,33 @@ export function App(props: { cwd: string }) {
     const p = provider(id)
     if (!p) return
     const k = await keyFor(p)
-    const key: ProviderStatus["key"] = p.local ? "local" : k.ok ? "ok" : k.missing ? "missing" : "error"
-    const keyNote = p.local ? p.baseUrl : k.ok ? `clé : ${k.source}` : k.missing ? "clé à saisir" : k.reason
-    setStatus(id, { key, keyNote, loading: key !== "missing" && key !== "error" })
-    if (key === "missing" && !p.publicCatalog) return
+    let key: ProviderStatus["key"] = p.local ? "local" : k.ok ? "ok" : k.missing ? "missing" : "error"
+    let keyNote = p.local ? p.baseUrl : k.ok ? `clé : ${k.source}` : k.missing ? "clé à saisir" : k.reason
+    setStatus(id, { key, keyNote, loading: key === "ok" || key === "local" })
+    if (key === "ok") {
+      // vérification réelle : une clé supprimée ou modifiée chez le fournisseur est détectée au lancement
+      const v = await verifyKey(p)
+      if (v.check === "refusée") {
+        key = "invalid"
+        keyNote = v.detail
+      } else if (v.check === "non vérifiée") keyNote += ` · ${v.detail}`
+      setStatus(id, { key, keyNote, loading: key === "ok" })
+      if (key === "invalid") {
+        needKey(id)
+        return
+      }
+    }
+    if (key !== "ok" && key !== "local") return
     const r = await catalog(p, { refresh })
     setStatus(id, r.ok ? { key, keyNote, models: r.models, loading: false, error: undefined } : { key, keyNote, loading: false, error: r.reason })
+  }
+
+  /** Repropose /connect pour ce fournisseur : clé absente, supprimée ou modifiée. Seulement s'il est utilisé ou recommandé. */
+  function needKey(id: string, force = false) {
+    const c = st().current
+    if (!force && !(c?.kind === "api" && c.provider === id) && !provider(id)?.recommended) return
+    if (overlay() && typeof overlay() === "object") return
+    setTimeout(() => setOverlay({ key: id }), 0)
   }
 
   onMount(async () => {
@@ -90,8 +112,8 @@ export function App(props: { cwd: string }) {
     for (const p of PROVIDERS) if (p.recommended || p.local) loadProvider(p.id)
     for (const p of PROVIDERS) if (!p.recommended && !p.local) {
       keyFor(p).then((k) => {
-        setStatus(p.id, { key: k.ok ? "ok" : k.missing ? "missing" : "error", keyNote: k.ok ? `clé : ${k.source}` : k.missing ? "clé à saisir" : k.reason })
         if (k.ok) loadProvider(p.id)
+        else setStatus(p.id, { key: k.missing ? "missing" : "error", keyNote: k.missing ? "clé à saisir" : k.reason })
       })
     }
     detect({ withVersion: true, manual: st().agentPaths }).then(setDetected)
@@ -135,7 +157,13 @@ export function App(props: { cwd: string }) {
       if (e.type === "text") setItems(idx, "text", (t) => t + e.text)
       else if (e.type === "thinking") setItems(idx, "thinking", (t) => (t ?? "") + e.text)
       else if (e.type === "usage") out = e.output ?? out
-      else if (e.type === "error") setItems(idx, produce((it) => { it.level = "error"; it.text = (it.text ? it.text + "\n\n" : "") + e.message }))
+      else if (e.type === "error") {
+        setItems(idx, produce((it) => { it.level = "error"; it.text = (it.text ? it.text + "\n\n" : "") + e.message }))
+        if (/HTTP 40[13]/.test(e.message)) {
+          setStatus(c.provider, { key: "invalid", keyNote: `${p.label} refuse la clé : supprimée ou modifiée`, models: status[c.provider]?.models })
+          needKey(c.provider, true)
+        }
+      }
     }
     const interrupted = abort.signal.aborted
     abort = null
@@ -150,7 +178,12 @@ export function App(props: { cwd: string }) {
 
   function runCommand(raw: string) {
     const [cmd] = raw.slice(1).trim().split(/\s+/)
-    if (cmd === "models" || cmd === "provider" || cmd === "model") openPicker()
+    if (cmd === "connect") {
+      const c = current()
+      const s = c?.kind === "api" ? status[c.provider] : undefined
+      if (c?.kind === "api" && s && s.key !== "ok" && s.key !== "local") needKey(c.provider, true)
+      else openPicker()
+    } else if (cmd === "models" || cmd === "provider" || cmd === "model") openPicker()
     else if (cmd === "new" || cmd === "clear") {
       setItems([])
       history.length = 0
@@ -298,14 +331,25 @@ export function App(props: { cwd: string }) {
       <Show when={typeof overlay() === "object" && overlay() !== null ? (overlay() as { key: string }) : null}>
         {(o) => (
           <KeyPrompt label={provider(o().key)?.label ?? o().key} width={() => dims().width}
-                     note={`Stockée dans le trousseau du système, jamais affichée ni écrite en clair. Variable possible : ${provider(o().key)?.keyEnv ?? "—"}`}
+                     note={(status[o().key]?.key === "invalid" ? `${status[o().key]!.keyNote}. Saisissez la nouvelle clé. ` : "") + `Vérifiée puis stockée dans le trousseau du système, jamais affichée ni écrite en clair.`}
                      onCancel={() => setOverlay("picker")}
                      onSubmit={async (key) => {
                        const id = o().key
+                       const pv = provider(id)!
+                       flash("Vérification de la clé…")
+                       const v = await verifyKey(pv, { key })
+                       if (v.check === "refusée") {
+                         flash(`${pv.label} refuse cette clé : vérifiez-la et recommencez.`)
+                         return
+                       }
                        const r = await setKey(id, key)
-                       flash(r.message)
-                       setOverlay("picker")
-                       if (r.ok) loadProvider(id, true)
+                       flash(r.ok ? (v.check === "valide" ? "Clé acceptée et enregistrée dans le trousseau" : `Clé enregistrée (${v.detail})`) : r.message)
+                       if (!r.ok) return
+                       setOverlay(null)
+                       const c = current()
+                       if (c?.kind === "api" && c.provider === id) prompt?.focus()
+                       else openPicker()
+                       loadProvider(id, true)
                      }} />
         )}
       </Show>
