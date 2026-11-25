@@ -1,0 +1,6 @@
+#!/bin/sh
+# Eclipse 5 (TypeScript, Bun + OpenTUI) : ouvre l'interface dans le dossier courant.
+here=$(CDPATH= cd -- "$(dirname -- "$(readlink -f -- "$0")")/.." && pwd)
+dir=$PWD
+cd "$here" || exit 1
+exec "${BUN:-$HOME/.bun/bin/bun}" run src/main.tsx "$dir"
