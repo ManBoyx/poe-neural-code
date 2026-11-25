@@ -97,6 +97,26 @@ Défauts constatés en pilotant le vrai TUI dans un pseudo-terminal de 120×40, 
   2. transcription par API : Groq (Whisper, rapide, offre gratuite limitée) ou OpenAI, avec la clé dans le trousseau ;
   3. dans les deux cas, enregistrement avec `pw-record` ou `arecord` sur une touche (appuyer pour parler), puis envoi du texte transcrit, affiché et modifiable avant envoi, à /cg comme une saisie normale.
 
+## 5 bis. Poe : clé et modèles (ajouté le 25/11, PC sous CachyOS)
+
+Constats [vu] :
+- clé trouvée dans le trousseau (KWallet via Secret Service) par le terminal, par l'environnement du menu (`systemd-run --user`), par le moteur de l'AppImage et par celui du dépôt ;
+- Poe l'accepte (`/usage/current_balance` → 200 ; une fausse clé → 401) ; solde positif ;
+- catalogue : 299 modèles reçus, **36 seulement proposés** par `/models` (vu dans le vrai TUI : « Modèles Poe (36, chat + outils) »).
+
+| # | Symptôme | Cause | Fichier:ligne |
+|---|---|---|---|
+| P1 | `claude-haiku-5.5`, `kimi-k3.1-pro`, `mistral-large-4`, `gemini-4-hydrogen`… absents de `/models` | Eclipse exige `/v1/chat/completions` dans `supported_endpoints`. Ce champ n'est pas documenté par Poe et il est **vide pour 258 modèles sur 299**. La documentation présente Chat Completions comme l'accès à tous les bots publics. | `provider/poe.py:77` |
+| P2 | `gpt-5.4`, `gpt-5.4-mini`… absents | Eclipse exige une sortie strictement `["text"]` ; ces modèles annoncent `["text","image"]`. | `provider/poe.py:77` |
+| P3 | Modèle sans outils (ex. `gemini-3.5-flash-lite`, ton modèle actuel) : « HTTP 400 … does not support tool calling » (journal du 21/11) | Les outils sont toujours envoyés. Un modèle sans outils pourrait servir à discuter, mais il est soit caché, soit cassé. | `ui/app.py:763`, `agent.py` |
+| P4 | « clé acceptée » même si la vérification n'a pas eu lieu | Tout code autre que 401, et toute erreur réseau, compte comme accepté. | `provider/poe.py:47-55` |
+| P5 | « Connexion Poe non configurée : définissez POE_API_KEY », même quand la clé est censée être dans le trousseau | Les erreurs du trousseau (KWallet verrouillé, refus, délai) sont avalées et deviennent « pas de clé », sans raison donnée. Le message ne parle que de la variable d'environnement. | `credentials.py:91-98`, `provider/poe.py:84-85`, `agent.py:228` |
+| P6 | Une partie de la clé peut s'afficher | `mask()` montre les 3 premiers et les 3 derniers caractères. | `credentials.py:125-128` |
+
+| P7 | Eclipse démarre sur Poe même pour qui ne l'utilise pas (« Fournisseur Poe prêt », « Connexion Poe non configurée ») | Poe est le fournisseur par défaut en dur, alors qu'Eclipse vise tous les fournisseurs. `/provider` sans argument ouvre `/connect`, sans notion de fournisseur recommandé. | `session.py:24`, `config.py:14`, `ui/app.py:1147-1150` |
+
+Non reproduit : « il n'arrive pas à lire la clé ». Tout ce que j'ai testé le 25/11 la lit. La cause la plus probable est P5 (trousseau verrouillé ou pas encore prêt, juste après la réinstallation), à confirmer avec le message exact.
+
 ## 6. Ce qui n'a pas été vérifié
 
 - Aucun /cg réel lancé pour l'audit : chaque tour coûte des appels sur les abonnements Claude et Codex. Les symptômes CG1 à CG3 viennent des traces du 21/11.
