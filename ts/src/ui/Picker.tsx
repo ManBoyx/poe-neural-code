@@ -10,6 +10,7 @@ import { PROVIDERS, type ModelInfo } from "../core/providers"
 import type { Choice, State } from "../core/store"
 import { C, I } from "./theme"
 import { short } from "../core/paths"
+import { t } from "./i18n"
 
 export interface ProviderStatus {
   key: "ok" | "missing" | "invalid" | "error" | "local"
@@ -31,17 +32,18 @@ export interface PickerProps {
   onNeedKey: (providerId: string) => void
   onOpenProvider: (providerId: string) => void
   onClose: () => void
+  initialView?: string
   width: () => number
   height: () => number
 }
 
-function ago(t: number): string {
-  if (!t) return "ancienne version"
-  const s = (Date.now() - t) / 1000
+function ago(ts: number): string {
+  if (!ts) return t("ancienne version")
+  const s = (Date.now() - ts) / 1000
   if (s < 3600) return `il y a ${Math.max(1, Math.round(s / 60))} min`
   if (s < 86400) return `il y a ${Math.round(s / 3600)} h`
-  if (s < 172800) return "hier"
-  return new Date(t).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })
+  if (s < 172800) return t("hier")
+  return new Date(ts).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })
 }
 
 function label(id: string): string {
@@ -60,7 +62,7 @@ export function modelDetail(m: ModelInfo): string {
 
 export function Picker(props: PickerProps) {
   const [query, setQuery] = createSignal("")
-  const [view, setView] = createSignal<string | null>(null) // null = accueil ; sinon id du fournisseur affiché
+  const [view, setView] = createSignal<string | null>(props.initialView ?? null) // null = accueil ; sinon id du fournisseur affiché
   const [sel, setSel] = createSignal(0)
 
   const open = (id: string) => {
@@ -96,7 +98,7 @@ export function Picker(props: PickerProps) {
     }
     if (q) {
       // recherche partout : fournisseurs, agents, modèles des catalogues chargés
-      out.push({ kind: "header", label: "RÉSULTATS", color: C.recent, icon: I.search })
+      out.push({ kind: "header", label: t("RÉSULTATS"), color: C.recent, icon: I.search })
       for (const p of PROVIDERS) if (p.label.toLowerCase().includes(q) || p.id.includes(q))
         out.push({ kind: "item", title: p.label, detail: st[p.id]?.keyNote ?? "", right: "fournisseur", color: C.api, run: () => open(p.id) })
       for (const d of props.detected()) if (d.label.toLowerCase().includes(q))
@@ -115,12 +117,12 @@ export function Picker(props: PickerProps) {
     }
     const recents = props.state().recents
     if (recents.length) {
-      out.push({ kind: "header", label: "RÉCEMMENT UTILISÉS", color: C.recent, icon: I.recent })
+      out.push({ kind: "header", label: t("RÉCEMMENT UTILISÉS"), color: C.recent, icon: I.recent })
       for (const r of recents)
         out.push({ kind: "item", title: r.model ?? agentLabel(r.provider), detail: r.kind === "agent" ? "agent installé" : label(r.provider), right: ago(r.at), color: C.text,
                    run: () => props.onChoose({ kind: r.kind, provider: r.provider, model: r.model }) })
     }
-    out.push({ kind: "header", label: "API RECOMMANDÉES", color: C.api, icon: I.api })
+    out.push({ kind: "header", label: t("API RECOMMANDÉES"), color: C.api, icon: I.api })
     for (const p of PROVIDERS.filter((x) => x.recommended)) {
       const s = st[p.id]
       const bad = s?.key === "invalid" || s?.key === "missing"
@@ -128,7 +130,7 @@ export function Picker(props: PickerProps) {
                           : `${bad ? I.warn + " " : ""}${s.keyNote}${bad ? " — entrée : saisir la clé" : ""}`) : "…"
       out.push({ kind: "item", title: p.label, detail, color: bad ? C.warn : C.text, run: () => (bad ? props.onNeedKey(p.id) : open(p.id)) })
     }
-    out.push({ kind: "header", label: "DÉTECTÉS SUR CET ORDINATEUR", color: C.detected, icon: I.detected })
+    out.push({ kind: "header", label: t("DÉTECTÉS SUR CET ORDINATEUR"), color: C.detected, icon: I.detected })
     const inst = props.detected().filter((d) => d.installed)
     for (const d of inst)
       out.push({ kind: "item", title: d.label, detail: d.version ?? d.versionError ?? "", right: short(d.path ?? ""), color: C.text, run: () => props.onChoose({ kind: "agent", provider: d.id }) })
@@ -162,7 +164,7 @@ export function Picker(props: PickerProps) {
   })
 
   // la fenêtre montre une tranche de la liste autour de la sélection
-  const visible = () => Math.max(5, props.height() - 10)
+  const visible = () => Math.max(5, props.height() - 11 - Math.max(0, rows().filter((r: any) => r.kind === "header" || r.header).length - 1))
   const start = createMemo(() => {
     const c = current()
     return Math.max(0, Math.min(c - Math.floor(visible() / 2), rows().length - visible()))
@@ -173,16 +175,16 @@ export function Picker(props: PickerProps) {
     <box position="absolute" top={2} left={Math.max(0, Math.floor((props.width() - w()) / 2))} width={w()} height={props.height() - 4} zIndex={10}
          backgroundColor={C.panel} border borderStyle="rounded" borderColor={C.panelBorder} paddingX={2} paddingY={1} flexDirection="column">
       <box flexDirection="row" justifyContent="space-between" height={1}>
-        <text fg={C.text}><b>{view() ? label(view()!) : "Choisir un modèle"}</b></text>
-        <text fg={C.dim}>{view() ? "échap retour" : "échap"}</text>
+        <text fg={C.text}><b>{view() ? label(view()!) : t("Choisir un modèle")}</b></text>
+        <text fg={C.dim}>{view() ? t("échap retour") : t("échap")}</text>
       </box>
       <box flexDirection="row" height={1} marginTop={1}>
         <text fg={C.accent}>{I.search + " "}</text>
-        <input flexGrow={1} focused placeholder={view() ? "Filtrer les modèles…" : "Rechercher d'autres modèles…"} placeholderColor={C.dim}
+        <input flexGrow={1} focused placeholder={view() ? t("Filtrer les modèles…") : t("Rechercher d'autres modèles…")} placeholderColor={C.dim}
                textColor={C.text} backgroundColor={C.panel} focusedBackgroundColor={C.panel} value={query()}
                onInput={(v: string) => { setQuery(v); setSel(0) }} />
       </box>
-      <box flexDirection="column" marginTop={1} flexGrow={1}>
+      <box flexDirection="column" marginTop={1} flexGrow={1} overflow="hidden">
         <For each={rows().slice(start(), start() + visible())}>
           {(r, i) =>
             r.kind === "header" ? (
@@ -190,7 +192,7 @@ export function Picker(props: PickerProps) {
             ) : (
               <box height={1} flexDirection="row" backgroundColor={start() + i() === current() ? C.selBg : undefined} paddingX={1}>
                 <text fg={r.dim ? C.dim : start() + i() === current() ? C.accent : r.color} width={r.detail || r.right ? 34 : undefined} flexGrow={r.detail || r.right ? 0 : 1}>
-                  {r.detail || r.right ? r.title.slice(0, 33) : r.title.slice(0, w() - 8)}
+                  {(start() + i() === current() ? "› " : "  ") + (r.detail || r.right ? r.title.slice(0, 31) : r.title.slice(0, w() - 10))}
                 </text>
                 <text fg={C.muted} flexGrow={1}>{r.detail.slice(0, Math.max(0, w() - 8 - 34 - (r.right ? Math.min(r.right.length, 30) + 2 : 0)))}</text>
                 <Show when={r.right}><text fg={C.dim}>{"  " + (r.right ?? "").slice(-30)}</text></Show>
@@ -199,7 +201,7 @@ export function Picker(props: PickerProps) {
           }
         </For>
       </box>
-      <text fg={C.dim}>↑↓ choisir · entrée valider · tapez pour rechercher partout</text>
+      <text fg={C.dim}>{t("↑↓ choisir · entrée valider · tapez pour rechercher partout")}</text>
     </box>
   )
 }

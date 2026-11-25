@@ -181,3 +181,14 @@ describe("vérification de la clé", () => {
     expect((await verifyKey(provider("openai")!, { key: "x", fetchImpl: neterr })).check).toBe("non vérifiée")
   })
 })
+
+describe("effort", () => {
+  test("rapide / normal / profond vers les vraies valeurs, sinon extrêmes ou milieu", async () => {
+    const { levelValue } = await import("../src/core/effort")
+    expect(levelValue(["low", "medium", "high", "xhigh"], "profond")).toBe("high")
+    expect(levelValue(["none", "minimal", "max"], "rapide")).toBe("minimal")
+    expect(levelValue(["a", "b", "c"], "normal")).toBe("b")
+    expect(levelValue(["a", "b", "c"], "c")).toBe("c")
+    expect(levelValue(undefined, "profond")).toBeUndefined()
+  })
+})
