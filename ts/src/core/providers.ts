@@ -74,6 +74,7 @@ export interface ModelInfo {
   input?: string[]
   output?: string[]
   effort?: string[] // valeurs d'effort proposées par le modèle
+  effortParam?: string // nom du paramètre à envoyer (ex. reasoning_effort)
   priceIn?: number // $ par million de tokens
   priceOut?: number
 }
@@ -86,13 +87,14 @@ export function parsePoe(data: any[]): ModelInfo[] {
     const outMods: string[] = arch.output_modalities ?? ["text"]
     if (!outMods.includes("text")) continue // modèles qui ne produisent que des images, vidéos ou sons
     const price = d.pricing ?? {}
-    const eff = (d.parameters ?? []).find((p: any) => /effort/i.test(p.name ?? ""))?.schema?.enum
+    const effP = (d.parameters ?? []).find((p: any) => /effort/i.test(p.name ?? ""))
+    const eff = effP?.schema?.enum
     const pIn = price.prompt != null ? Number(price.prompt) * 1e6 : undefined
     const pOut = price.completion != null ? Number(price.completion) * 1e6 : undefined
     out.push({
       id: d.id, provider: "poe", context: d.context_window?.context_length ?? d.context_length ?? undefined,
       tools: (d.supported_features ?? []).includes("tools"), input: arch.input_modalities, output: outMods,
-      effort: Array.isArray(eff) ? eff.map(String) : undefined, priceIn: pIn, priceOut: pOut,
+      effort: Array.isArray(eff) ? eff.map(String) : undefined, effortParam: Array.isArray(eff) ? effP.name : undefined, priceIn: pIn, priceOut: pOut,
       free: d.pricing === null ? undefined : pIn === 0 && pOut === 0,
     })
   }

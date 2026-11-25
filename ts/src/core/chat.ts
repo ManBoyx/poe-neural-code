@@ -18,7 +18,7 @@ const HINTS: Record<number, string> = {
   408: "délai dépassé côté modèle", 413: "conversation trop longue pour ce modèle", 429: "limite de débit atteinte",
 }
 
-export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[], opts: { signal?: AbortSignal; fetchImpl?: typeof fetch } = {}): AsyncGenerator<ChatEvent> {
+export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[], opts: { signal?: AbortSignal; fetchImpl?: typeof fetch; extra?: Record<string, unknown> } = {}): AsyncGenerator<ChatEvent> {
   const k = await keyFor(p)
   if (!k.ok) {
     yield { type: "error", message: `${p.label} : ${k.missing ? "aucune clé enregistrée — choisissez « Saisir la clé » dans /provider" : k.reason}` }
@@ -31,7 +31,7 @@ export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[
   try {
     r = await f(p.baseUrl + "/chat/completions", {
       method: "POST", headers, signal: opts.signal,
-      body: JSON.stringify({ model, messages, stream: true, stream_options: { include_usage: true } }),
+      body: JSON.stringify({ ...(opts.extra ?? {}), model, messages, stream: true, stream_options: { include_usage: true } }),
     })
   } catch (e) {
     if ((e as Error).name === "AbortError") return

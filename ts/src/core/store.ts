@@ -17,10 +17,20 @@ export interface Recent extends Choice {
   at: number
 }
 
+export interface Prefs {
+  theme?: "eclipse" | "contraste" | "clair" | "sans-couleur"
+  icons?: "nerd" | "texte"
+  lang?: "fr" | "en"
+  showThinking?: boolean
+  mode?: "build" | "plan"
+  effort?: Record<string, string> // « fournisseur/modèle » -> rapide | normal | profond | valeur exacte
+}
+
 export interface State {
   current?: Choice
   recents: Recent[]
   agentPaths: Record<string, string>
+  prefs: Prefs
 }
 
 const MAX_RECENTS = 8
@@ -34,12 +44,12 @@ export function load(): State {
   if (existsSync(p)) {
     try {
       const s = JSON.parse(readFileSync(p, "utf8"))
-      return { current: s.current, recents: Array.isArray(s.recents) ? s.recents : [], agentPaths: s.agentPaths ?? {} }
+      return { current: s.current, recents: Array.isArray(s.recents) ? s.recents : [], agentPaths: s.agentPaths ?? {}, prefs: s.prefs ?? {} }
     } catch {
       // fichier abîmé : on repart à vide sans l'écraser tant qu'aucun choix n'est fait
     }
   }
-  const st: State = { recents: [], agentPaths: {} }
+  const st: State = { recents: [], agentPaths: {}, prefs: {} }
   try {
     const old = JSON.parse(readFileSync(join(dataDir(), "config.json"), "utf8"))
     // date d'utilisation inconnue dans l'ancienne configuration : 0 (affiché « ancienne version »), ordre conservé

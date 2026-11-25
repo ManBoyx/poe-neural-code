@@ -2,6 +2,7 @@
 import { createSignal } from "solid-js"
 import { useKeyboard, usePaste } from "@opentui/solid"
 import { C, I } from "./theme"
+import { t } from "./i18n"
 
 export function KeyPrompt(props: { label: string; note: string; onSubmit: (key: string) => void; onCancel: () => void; width: () => number }) {
   let key = ""
@@ -29,12 +30,12 @@ export function KeyPrompt(props: { label: string; note: string; onSubmit: (key: 
   return (
     <box position="absolute" top={6} left={Math.max(0, Math.floor((props.width() - w()) / 2))} width={w()} zIndex={20}
          backgroundColor={C.panel} border borderStyle="rounded" borderColor={C.accent} paddingX={2} paddingY={1} flexDirection="column">
-      <text fg={C.text}><b>{I.api + "  Clé d'API " + props.label}</b></text>
+      <text fg={C.text}><b>{I.api + "  " + t("Clé d'API") + " " + props.label}</b></text>
       <text fg={C.muted} marginTop={1}>{props.note}</text>
       <box border borderStyle="rounded" borderColor={C.panelBorder} marginTop={1} paddingX={1} height={3}>
         <text fg={C.accent}>{len() ? "•".repeat(Math.min(len(), w() - 10)) : " "}</text>
       </box>
-      <text fg={C.dim}>{len() ? `${len()} caractères · entrée enregistrer · échap annuler` : "collez ou tapez la clé · échap annuler"}</text>
+      <text fg={C.dim}>{len() ? `${len()} ${t("caractères · entrée enregistrer · échap annuler")}` : t("collez ou tapez la clé · échap annuler")}</text>
     </box>
   )
 }
