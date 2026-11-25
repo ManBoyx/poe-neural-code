@@ -38,10 +38,11 @@ const EN: Record<string, string> = {
   "Agents détectés": "Detected agents",
   "non installé": "not installed",
   "Clé d'API": "API key",
-  "collez ou tapez la clé · échap annuler": "paste or type the key · esc cancel",
+  "collez (ctrl+maj+v) ou tapez la clé · échap annuler": "paste (ctrl+shift+v) or type the key · esc cancel",
   "caractères · entrée enregistrer · échap annuler": "characters · enter save · esc cancel",
   "Vérification de la clé…": "Checking the key…",
   "Modèle": "Model",
+  "Ctrl+V ne colle pas dans ce terminal : utilisez Ctrl+Maj+V.": "Ctrl+V does not paste in this terminal: use Ctrl+Shift+V.",
 }
 
 let lang: Lang = /^en/i.test(process.env.LANG ?? "") ? "en" : "fr"
