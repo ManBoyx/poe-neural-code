@@ -24,6 +24,7 @@ export interface Prefs {
   showThinking?: boolean
   mode?: "build" | "plan"
   effort?: Record<string, string> // « fournisseur/modèle » -> rapide | normal | profond | valeur exacte
+  rate?: number // taux points Poe par dollar, saisi par l'utilisateur (/rate)
 }
 
 export interface State {

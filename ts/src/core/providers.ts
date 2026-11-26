@@ -141,3 +141,20 @@ export async function catalog(p: ProviderSpec, opts: { fetchImpl?: typeof fetch;
   cache.set(p.id, { at: Date.now(), res })
   return res
 }
+
+/** Solde réel du compte Poe (points et dollars), lu sur /usage/current_balance : valeur mesurée par Poe. */
+export async function poeBalance(opts: { fetchImpl?: typeof fetch } = {}): Promise<{ ok: true; points: number; usd: number; nextGrant?: number } | { ok: false; reason: string }> {
+  const p = provider("poe")!
+  const k = await keyFor(p)
+  if (!k.ok) return { ok: false, reason: k.missing ? "aucune clé Poe" : k.reason }
+  try {
+    const r = await (opts.fetchImpl ?? fetch)("https://api.poe.com/usage/current_balance", { headers: { Authorization: `Bearer ${k.key}` }, signal: AbortSignal.timeout(10_000) })
+    if (r.status === 401) return { ok: false, reason: "clé Poe refusée (/connect)" }
+    if (!r.ok) return { ok: false, reason: `HTTP ${r.status}` }
+    const j: any = await r.json()
+    return { ok: true, points: Number(j.current_point_balance ?? 0), usd: Number(j.total_balance_usd ?? 0),
+             nextGrant: j.next_daily_grant_time ? Number(j.next_daily_grant_time) / 1e6 : undefined }
+  } catch {
+    return { ok: false, reason: "réseau indisponible" }
+  }
+}
