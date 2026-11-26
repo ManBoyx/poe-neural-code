@@ -1566,7 +1566,7 @@ export function App(props: { cwd: string }) {
   })
 
   const PromptBox = () => (
-    <box flexDirection="column" width="100%">
+    <box flexDirection="column" width="100%" flexShrink={0}>
       <Show when={slashMatches().length}>
         <box flexDirection="column" border={["left"]} borderStyle="heavy" borderColor={C.panelBorder} paddingX={1} backgroundColor={C.panel}>
           <For each={slashMatches().slice(slashStart(), slashStart() + SLASH_ROWS)}>
@@ -1606,7 +1606,7 @@ export function App(props: { cwd: string }) {
   )
 
   const Footer = () => (
-    <box flexDirection="row" justifyContent="space-between" height={1} width="100%" paddingX={1}>
+    <box flexDirection="row" justifyContent="space-between" height={1} width="100%" paddingX={1} flexShrink={0}>
       <text fg={C.dim}>{short(cwd())}</text>
       <text fg={toast() ? C.warn : leader() ? C.accent : C.dim}>
         {toast() || (leader() ? t("ctrl+x : m modèles · n nouvelle discussion · l sessions") : "maj+tab mode   " + t("ctrl+x m modèles   ctrl+p commandes   /help"))}
@@ -1646,9 +1646,9 @@ export function App(props: { cwd: string }) {
 
   const Thread = () => (
     <box flexDirection="column" flexGrow={1} paddingX={2} paddingTop={1}>
-      <text fg={C.text} height={1}><b>{(title() || items.find((i) => i.role === "user")?.text || "").split("\n")[0].slice(0, dims().width - 10)}</b></text>
+      <text fg={C.text} height={1} flexShrink={0}><b>{(title() || items.find((i) => i.role === "user")?.text || "").split("\n")[0].slice(0, dims().width - 10)}</b></text>
       <Show when={cgOn()}><CgZones zones={zones} phase={cgPhase()} width={dims().width - (sidebarOn() && dims().width >= 110 ? 36 : 0)} height={dims().height} /></Show>
-      <scrollbox ref={(r: any) => (threadScroll = r)} flexGrow={1} stickyScroll stickyStart="bottom" marginTop={1}>
+      <scrollbox ref={(r: any) => (threadScroll = r)} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom" marginTop={1}>
         <For each={items}>
           {(it, i) => (
             <box id={`msg-${i()}`} flexDirection="column" marginBottom={1}>
