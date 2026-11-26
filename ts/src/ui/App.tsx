@@ -19,7 +19,7 @@ import { runCmd } from "../core/proc"
 import { Budget, estimateUsd } from "../core/budget"
 import { UsageScreen } from "./UsageScreen"
 import { TextPrompt } from "./TextPrompt"
-import { PermissionPrompt } from "./PermissionPrompt"
+import { PermissionPrompt, revealHidden } from "./PermissionPrompt"
 import { Permissions, PERM_LABEL, type Decision, type PermMode, type Request } from "../core/permissions"
 import { openAiTools, READ_ONLY_TOOLS, runTool, summarize, type Todo, type ToolEnv } from "../core/tools"
 import { Snapshots } from "../core/snapshots"
@@ -1701,7 +1701,7 @@ export function App(props: { cwd: string }) {
             const d = await new Promise<Decision>((res) => later({ type: "perm", resolve: res, req: {
               tool: "mcp", kind: "exec", destructive: true, grantKey: "mcp-projet", mustRead: true,
               summary: `Lancer le serveur MCP « ${x.name} » déclaré par ce projet (.eclipse/mcp.json)`,
-              detail: JSON.stringify(x.cfg, null, 2) + (x.files.length ? `\n\nFichiers du projet suivis (l'approbation tombe s'ils changent) : ${x.files.join(", ")}` : ""),
+              detail: revealHidden(JSON.stringify(x.cfg, null, 2) + (x.files.length ? `\n\nFichiers du projet suivis (l'approbation tombe s'ils changent) : ${x.files.join(", ")}` : "")),
             } }))
             if (d === "deny") continue
             approveMcpFingerprint(cwd(), x.name, x.fp)

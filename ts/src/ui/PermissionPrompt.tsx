@@ -8,6 +8,31 @@ import { useKeyboard } from "@opentui/solid"
 import type { Decision, Request } from "../core/permissions"
 import { C, I } from "./theme"
 
+/** Largeur d'affichage d'un caractère (2 pour les idéogrammes et la plupart des emoji, 0 pour les combinants). */
+const charWidth = (ch: string) => Math.max(0, Bun.stringWidth(ch))
+
+/** Replie une ligne pour qu'aucun morceau ne dépasse `cols` colonnes d'écran (suite indentée de 2). */
+export function wrapToWidth(line: string, cols: number): string[] {
+  const out: string[] = []
+  let cur = ""
+  let wcur = 0
+  for (const ch of line) {
+    const cw = charWidth(ch)
+    if (wcur + cw > cols && cur.trim()) {
+      out.push(cur)
+      cur = "  "
+      wcur = 2
+    }
+    cur += ch
+    wcur += cw
+  }
+  out.push(cur)
+  return out
+}
+
+/** Rend visibles les caractères invisibles ou trompeurs (contrôle, sens d'écriture, largeur nulle) : \u{…}. */
+export const revealHidden = (s: string) => s.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (c) => (c === "\n" ? c : `\\u{${c.codePointAt(0)!.toString(16).toUpperCase()}}`))
+
 const CHOICES: { d: Decision; key: string; label: string }[] = [
   { d: "once", key: "o", label: "Autoriser une fois" },
   { d: "session", key: "t", label: "Toujours pour cette session" },
@@ -26,13 +51,8 @@ export function PermissionPrompt(props: { req: Request; onDecide: (d: Decision) 
   const [off, setOff] = createSignal(0)
   const w = () => Math.min(110, props.width() - 4)
   // lignes repliées à la largeur de la fenêtre : rien n'est coupé
-  const wrapped = () => (props.req.detail ?? "").split("\n").flatMap((l) => {
-    const n = Math.max(20, w() - 12) // largeur intérieure réelle (bords, marges, filet) : aucune ligne n'est repliée une 2e fois
-    if (l.length <= n) return [l]
-    const out: string[] = []
-    for (let i = 0; i < l.length; i += n) out.push((i ? "  " : "") + l.slice(i, i + n))
-    return out
-  })
+  // largeur intérieure réelle (bords, marges, filet), en colonnes d'écran : aucune ligne n'est repliée une 2e fois
+  const wrapped = () => (props.req.detail ?? "").split("\n").flatMap((l) => wrapToWidth(l, Math.max(20, w() - 13)))
   const page = () => Math.max(3, props.height() - 16)
   const maxOff = () => Math.max(0, wrapped().length - page())
   const lines = () => wrapped().slice(off(), off() + page())
