@@ -233,10 +233,10 @@ function McpSettings({ st, toast }: { st: EngineState; toast: (t: string, l?: st
       {pending.map((x) => (
         <div class="approve">
           <p>Le projet veut lancer ce programme. Lisez toute la configuration avant d'approuver :</p>
-          <pre class="out" onScroll={(e) => { const el = e.currentTarget; if (el.scrollTop + el.clientHeight >= el.scrollHeight - 4) setRead((r) => ({ ...r, [x.name]: true })); }}
-            ref={(el) => { if (el && el.scrollHeight <= el.clientHeight + 4 && !read[x.name]) setRead((r) => ({ ...r, [x.name]: true })); }}>{JSON.stringify(x.config, null, 2)}</pre>
+          <pre class="out" onScroll={(e) => { const el = e.currentTarget; if (el.scrollTop + el.clientHeight >= el.scrollHeight - 4) setRead((r) => ({ ...r, [x.fingerprint]: true })); }}
+            ref={(el) => { if (el && el.scrollHeight <= el.clientHeight + 4 && !read[x.fingerprint]) setRead((r) => ({ ...r, [x.fingerprint]: true })); }}>{JSON.stringify(x.config, null, 2)}</pre>
           {x.files.length > 0 && <p class="dim small">Fichiers suivis (l'approbation tombe s'ils changent) : {x.files.join(", ")}</p>}
-          <button class="btn primary" disabled={!read[x.name]} onClick={() => approve(x)} title={read[x.name] ? "" : "Faites défiler jusqu'au bout"}>{I.check} Approuver « {x.name} »</button>
+          <button class="btn primary" disabled={!read[x.fingerprint]} onClick={() => approve(x)} title={read[x.fingerprint] ? "" : "Faites défiler jusqu'au bout"}>{I.check} Approuver « {x.name} »</button>
         </div>
       ))}
     </>
@@ -347,7 +347,7 @@ export function Lightbox({ url, onClose }: { url: string; onClose: () => void })
   return (
     <div class="scrim dark" onMouseDown={onClose}>
       <img class="lightbox" src={url} alt="" />
-      <a class="btn lb-dl" href={url} target="_blank" rel="noopener noreferrer" onMouseDown={(e) => e.stopPropagation()}>{I.download} Ouvrir l'original</a>
+      {/^https?:/i.test(url) && <a class="btn lb-dl" href={url} target="_blank" rel="noopener noreferrer" onMouseDown={(e) => e.stopPropagation()}>{I.download} Ouvrir l'original</a>}
     </div>
   );
 }

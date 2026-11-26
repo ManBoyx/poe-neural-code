@@ -9,6 +9,7 @@
  * Les événements (texte, réflexion, outils, sous-agents, phases de /cg, autorisations, consommation) partent vers
  * l'écran par un rappel ; le serveur HTTP les relaie.
  */
+import { existsSync } from "node:fs"
 import { Budget, estimateUsd } from "../core/budget"
 import { cgTurn, CG_LABEL, type CgAgent, type CgMode } from "../core/cg"
 import { streamChat, type Msg } from "../core/chat"
@@ -149,6 +150,7 @@ export class EngineSession {
   }
 
   newChat(): void {
+    if (this.busy) throw new Error("une réponse est en cours : attendez la fin ou arrêtez-la")
     this.conv = null
     this.title = ""
     this.history = []
@@ -160,9 +162,17 @@ export class EngineSession {
   openConversation(id: number) {
     const row = this.mem.db.query("SELECT title, district_id FROM conversations WHERE id=?").get(id) as { title: string; district_id: number } | null
     const msgs = this.mem.messages(id).filter((m) => m.role === "user" || m.role === "assistant")
+    if (this.busy) throw new Error("une réponse est en cours : attendez la fin ou arrêtez-la avant d'ouvrir une autre discussion")
     this.conv = id
     this.title = row?.title ?? ""
     if (row) this.district = row.district_id
+    // une discussion de travail se reprend dans SON projet (fichiers, skills, serveurs MCP), jamais dans le projet actif
+    const dpath = row ? (this.mem.db.query("SELECT path FROM districts WHERE id=?").get(row.district_id) as { path: string | null } | null)?.path : null
+    if (dpath && dpath !== this.cwd && existsSync(dpath) && !isProtected(dpath)) {
+      this.cwd = dpath
+      this.skills = discoverSkills(dpath)
+      this.mcp.start(dpath, () => this.emit({ type: "state" }))
+    }
     this.space = (row?.title ?? "").startsWith("[cg]") || (row?.title ?? "").startsWith("[work]") ? "work" : (row?.title ?? "").startsWith("[media]") ? "medias" : "conversation"
     this.history = msgs.slice(-40).map((m) => ({ role: m.role as Msg["role"], content: m.content }))
     this.agentSessions = {}

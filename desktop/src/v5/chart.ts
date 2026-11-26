@@ -25,18 +25,21 @@ const fmt = (v: number, unit?: string) => nf.format(v) + (unit ? ` ${unit}` : ""
 export function parseChart(text: string): ChartSpec | null {
   let j: any;
   try { j = JSON.parse(text); } catch { return null; }
-  if (!j || !["bar", "line", "pie"].includes(j.type) || !Array.isArray(j.labels) || !Array.isArray(j.series)) return null;
-  const labels = j.labels.slice(0, 60).map((l: unknown) => String(l).slice(0, 40));
+  if (!j || typeof j !== "object" || !["bar", "line", "pie"].includes(j.type) || !Array.isArray(j.labels) || !Array.isArray(j.series)) return null;
+  const str = (v: unknown) => (typeof v === "string" ? v : typeof v === "number" || typeof v === "boolean" ? String(v) : "");
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && Number.isFinite(Number(v)) ? Number(v) : 0);
+  const labels = j.labels.slice(0, 60).map((l: unknown) => str(l).slice(0, 40));
   let series = j.series
     .filter((s: any) => s && Array.isArray(s.data))
-    .map((s: any, i: number) => ({ name: String(s.name ?? `Série ${i + 1}`).slice(0, 40), data: labels.map((_: unknown, k: number) => (Number.isFinite(Number(s.data[k])) ? Number(s.data[k]) : 0)) }));
+    .slice(0, 40)
+    .map((s: any, i: number) => ({ name: (str(s.name) || `Série ${i + 1}`).slice(0, 40), data: labels.map((_: unknown, k: number) => num(s.data[k])) }));
   if (!series.length || !labels.length) return null;
   // au-delà de 8 séries : les suivantes sont regroupées dans « Autres » (jamais de 9e couleur)
   if (series.length > MAX_SERIES) {
     const rest = series.slice(MAX_SERIES - 1);
     series = [...series.slice(0, MAX_SERIES - 1), { name: "Autres", data: labels.map((_: unknown, k: number) => rest.reduce((a: number, s: any) => a + s.data[k], 0)) }];
   }
-  return { type: j.type, title: j.title ? String(j.title).slice(0, 120) : undefined, labels, series, unit: j.unit ? String(j.unit).slice(0, 12) : undefined };
+  return { type: j.type, title: str(j.title).slice(0, 120) || undefined, labels, series, unit: str(j.unit).slice(0, 12) || undefined };
 }
 
 /** Graduations « rondes » couvrant [min, max]. */
@@ -46,7 +49,8 @@ function ticks(min: number, max: number, n = 4): number[] {
   const p = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw) ?? 10 * p;
   const out: number[] = [];
-  for (let v = Math.floor(min / step) * step; v <= max + step * 0.001; v += step) out.push(+v.toFixed(10));
+  if (!Number.isFinite(step) || step <= 0) return [min, max];
+  for (let v = Math.floor(min / step) * step; v <= max + step * 0.001 && out.length < 50; v += step) out.push(+v.toPrecision(12));
   if (out[out.length - 1] < max) out.push(out[out.length - 1] + step);
   return out;
 }

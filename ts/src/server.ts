@@ -196,6 +196,8 @@ const server = Bun.serve({
         return json({ ok: true, state: S.state() })
       }
       if (p === "/api/prefs") return (S.savePrefs(await body()), json(S.state()))
+      // pendant une réponse, on ne change ni de discussion ni de projet (la réponse en cours s'enregistrerait ailleurs)
+      if ((p === "/api/sessions/open" || p === "/api/new" || p === "/api/project") && S.busy) return json({ error: "une réponse est en cours : attendez la fin ou arrêtez-la" }, 409)
       if (p === "/api/project") {
         const b = await body()
         return json({ ok: true, path: S.enterProject(String(b.name ?? "projet")), state: S.state() })

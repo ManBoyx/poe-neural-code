@@ -7,12 +7,13 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "preact/hooks";
 import { ApiError, connect, events, get, isDesktop, post, restartEngine, type EngineState, type MediaModel, type SessionRow, type Space } from "./api";
 import { I } from "./icons";
+import { safeUrl } from "./markdown";
 import { Lightbox, ModelPicker, PermModal, ProjectChooser, Settings, SubModal, UsageView } from "./modals";
 import { CgPanel, Composer, MessageView, Rail, Sidebar, StatusBar, SubDots, Welcome } from "./parts";
-import { emptyThread, fromHistory, reduce, type Sub, type ThreadState } from "./thread";
+import { emptyThread, fromHistory, reduce, settle, type Sub, type ThreadState } from "./thread";
 
-type Action = { t: "ev"; e: any; cg: boolean } | { t: "set"; s: ThreadState };
-const threadReducer = (s: ThreadState, a: Action) => (a.t === "set" ? a.s : reduce(s, a.e, { cg: a.cg }));
+type Action = { t: "ev"; e: any; cg: boolean } | { t: "set"; s: ThreadState } | { t: "settle" };
+const threadReducer = (s: ThreadState, a: Action) => (a.t === "set" ? a.s : a.t === "settle" ? settle(s) : reduce(s, a.e, { cg: a.cg }));
 
 type Overlay = { kind: "models" } | { kind: "settings"; tab?: string } | { kind: "usage" } | { kind: "project"; propose?: string; text?: string } | { kind: "sub"; sub: Sub } | { kind: "image"; url: string };
 interface Toast { id: number; text: string; level: string }
@@ -73,6 +74,14 @@ export function App() {
     }, 120);
   };
   const loadUsage = () => get("/api/usage").then((u: any) => setToday(u.periods?.[0]?.tokens ?? 0)).catch(() => {});
+  // les catalogues se chargent en arrière-plan dans le moteur : la liste des modèles de médias est relue au besoin
+  const mediaCount = useRef(0);
+  const loadMedia = () => get<MediaModel[]>("/api/media/models").then((m) => {
+    mediaCount.current = m.length;
+    setMedia(m);
+    const saved = store.get("media", "");
+    setMediaModelRaw((cur) => cur ?? m.find((x) => `${x.provider}/${x.id}` === saved) ?? null);
+  }).catch(() => {});
 
   useEffect(() => {
     applyTheme(theme);
@@ -85,12 +94,17 @@ export function App() {
         setSessions(ss);
         setPhase("ready");
         loadUsage();
-        get<MediaModel[]>("/api/media/models").then((m) => {
-          setMedia(m);
-          const saved = store.get("media", "");
-          setMediaModelRaw(m.find((x) => `${x.provider}/${x.id}` === saved) ?? null);
-        }).catch(() => {});
-        stop = events(onEvent, setConnected);
+        loadMedia();
+        let wasDown = false;
+        stop = events(onEvent, (up) => {
+          setConnected(up);
+          if (!up) { wasDown = true; return; }
+          if (!wasDown) return;
+          wasDown = false;
+          // des événements ont pu se perdre pendant la coupure (dont la fin du tour) : on resynchronise
+          get<EngineState>("/api/state").then((s2) => { setSt(s2); if (!s2.busy) dispatch({ t: "settle" }); }).catch(() => {});
+          get<SessionRow[]>("/api/sessions").then(setSessions).catch(() => {});
+        });
       } catch (e: any) {
         setFatal(e.message ?? String(e));
         setPhase("error");
@@ -101,7 +115,9 @@ export function App() {
 
   function onEvent(e: any) {
     switch (e.type) {
-      case "state": return reload();
+      case "state":
+        if (!mediaCount.current) loadMedia();
+        return reload();
       case "perm": return setPerm({ id: e.id, req: e.req });
       case "voice": return setVoice((v) => ({ ...v, state: e.state ?? "", call: e.call ?? v.call }));
       case "voice-level": return setVoice((v) => ({ ...v, level: e.level ?? 0 }));
@@ -153,7 +169,11 @@ export function App() {
         return;
       }
       const img = t.closest?.("[data-media]");
-      if (img) { ev.preventDefault(); setOverlay({ kind: "image", url: img.getAttribute("data-media")! }); }
+      if (img) {
+        ev.preventDefault();
+        const url = img.getAttribute("data-media") ?? "";
+        if (safeUrl(url)) setOverlay({ kind: "image", url }); // adresse revérifiée : du HTML brut peut fournir son propre data-media
+      }
     };
     addEventListener("mousemove", move);
     addEventListener("click", click);
@@ -175,18 +195,22 @@ export function App() {
 
   // ---------------------------------------------------------------- actions
   const newChat = async () => {
-    try { await post("/api/new"); } catch { /* le fil local est vidé quand même */ }
+    if (st?.busy) return toast("Une réponse est en cours : attendez la fin ou arrêtez-la (Échap).", "warn");
+    try { await post("/api/new"); } catch (e: any) { return toast(e.message, "error"); }
     dispatch({ t: "set", s: emptyThread() });
     setTab("ensemble");
     stick.current = true;
   };
   const setSpace = (s: Space) => {
     if (s === space) return;
+    if (st?.busy) return toast("Une réponse est en cours : attendez la fin ou arrêtez-la (Échap).", "warn");
     setSpaceRaw(s);
     store.set("space", s);
+    if (s === "medias") loadMedia();
     if (thread.msgs.length) newChat();
   };
   const openSession = async (row: SessionRow) => {
+    if (st?.busy) return toast("Une réponse est en cours : attendez la fin ou arrêtez-la (Échap).", "warn");
     try {
       const r = await post<{ messages: { role: string; text: string }[]; state: EngineState }>("/api/sessions/open", { id: row.id });
       setSpaceRaw(row.space);

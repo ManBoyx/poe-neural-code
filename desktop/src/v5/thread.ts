@@ -133,3 +133,10 @@ export function fromHistory(rows: { role: string; text: string }[], space: Space
 
 /** Texte complet d'un message (pour la recherche de graphiques et de médias). */
 export const msgText = (m: Msg) => m.text + m.blocks.map((b) => (b.k === "text" ? b.text : "")).join("");
+
+/** Remet le fil au repos (après une coupure du flux, quand le moteur n'a plus de réponse en cours). */
+export function settle(s: ThreadState): ThreadState {
+  const last = s.msgs[s.msgs.length - 1];
+  if (!last || last.role !== "assistant" || last.done) return s;
+  return { ...s, msgs: s.msgs.map((m, i) => (i === s.msgs.length - 1 ? { ...m, done: true, interrupted: true } : m)) };
+}

@@ -7,7 +7,7 @@ import { chartHtml, parseChart } from "./chart";
 
 const VIDEO = /\.(mp4|webm|mov|m4v)(\?|#|$)/i;
 const AUDIO = /\.(mp3|wav|ogg|oga|m4a|flac|aac)(\?|#|$)/i;
-const safeUrl = (u: string) => /^(https?:|blob:|data:image\/)/i.test(u);
+export const safeUrl = (u: string) => /^(https?:|blob:|data:image\/(png|jpe?g|gif|webp|avif);)/i.test(u);
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 const md = new Marked({ gfm: true, breaks: false });
@@ -15,8 +15,12 @@ md.use({
   renderer: {
     code({ text, lang }) {
       if ((lang || "").trim() === "chart") {
-        const spec = parseChart(text);
-        return spec ? chartHtml(spec) : `<div class="chart chart-wait">Graphique en préparation…</div>`;
+        try {
+          const spec = parseChart(text);
+          return spec ? chartHtml(spec) : `<div class="chart chart-wait">Graphique en préparation…</div>`;
+        } catch {
+          return `<div class="chart chart-wait">Graphique illisible.</div>`; // jamais de fil cassé par un graphique
+        }
       }
       const language = lang && hljs.getLanguage(lang) ? lang : undefined;
       const html = language ? hljs.highlight(text, { language }).value : hljs.highlightAuto(text).value;
@@ -49,6 +53,9 @@ export function renderMarkdown(text: string): string {
   const html = DOMPurify.sanitize(md.parse(text, { async: false }) as string, {
     ADD_TAGS: ["video", "audio", "figure", "figcaption", "details", "summary"],
     ADD_ATTR: ["data-copy", "data-tip", "data-media", "target", "controls", "preload", "loading"],
+    // aucun style venant du modèle : une réponse ne doit pas pouvoir recouvrir ou maquiller une fenêtre de confiance
+    FORBID_TAGS: ["style", "link", "meta", "base", "form", "iframe", "object", "embed"],
+    FORBID_ATTR: ["style"],
   });
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
   cache.set(text, html);
