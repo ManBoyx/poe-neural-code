@@ -111,3 +111,15 @@ test("« délègue » : l'écriture va à l'autre agent même si le plan en choi
   expect(log.map((x) => x.agent)).toEqual(["claude", "codex", "claude"])
   expect(log.every((x) => x.subagents === false)).toBe(true)
 })
+
+test("agent nommé dans la demande : c'est lui qui répond ; pas de relecture sans fichier modifié", async () => {
+  const { addressed } = await import("../src/core/cg")
+  expect(addressed("dis à gpt de répondre")).toBe("codex")
+  expect(addressed("test claude")).toBe("claude")
+  expect(addressed("compare claude et codex")).toBeNull()
+  const log: AgentRun[] = []
+  const r = await cgTurn({ text: "dis à gpt de répondre à test", cwd: ".", agents, lead: "claude", sessions: {},
+    snapshot: async () => "même", diff: async () => "", run: fakeRun({ codex: ["test"], claude: [] }, log) }, cb())
+  expect(log.map((x) => x.agent)).toEqual(["codex"]) // ni tri par Claude, ni relecture : rien n'a changé
+  expect(r.markdown).toBe("test")
+})
