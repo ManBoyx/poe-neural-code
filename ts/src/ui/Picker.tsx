@@ -54,7 +54,7 @@ export function modelDetail(m: ModelInfo): string {
   const parts: string[] = []
   const media = (m.output ?? []).filter((o) => o !== "text")
   if (media.length && !(m.output ?? []).includes("text")) parts.push(media.map((o) => (o === "image" ? "image" : o === "video" ? "vidéo" : o === "audio" ? "son" : o)).join(" + "))
-  if (m.context) parts.push(`${Math.round(m.context / 1000)}k`)
+  if (m.context && m.context >= 1000) parts.push(`${Math.round(m.context / 1000)}k`)
   if (m.free) parts.push("gratuit")
   else if (m.priceIn != null && m.priceOut != null) parts.push(`$${m.priceIn.toFixed(2)}/$${m.priceOut.toFixed(2)} par Mtok`)
   if (m.tools === false) parts.push("sans outils")
