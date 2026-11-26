@@ -37,6 +37,14 @@ export interface Plan {
   review: string
 }
 
+/** Façon de travailler : le coordinateur décide, fait tout seul, ou délègue l'écriture à l'autre agent. */
+export type CgMode = "auto" | "seul" | "delegue"
+export const CG_MODE_LABEL: Record<CgMode, string> = {
+  auto: "le coordinateur décide qui écrit",
+  seul: "le coordinateur fait le travail lui-même",
+  delegue: "le coordinateur délègue l'écriture à l'autre agent",
+}
+
 export interface CgTurnOptions {
   text: string
   cwd: string
@@ -44,6 +52,9 @@ export interface CgTurnOptions {
   lead: CgAgent
   sessions: Partial<Record<CgAgent, string>>
   memory?: string // mémoire du projet à transmettre
+  mode?: CgMode
+  review?: boolean // relecture par l'autre agent (défaut : oui)
+  subagents?: boolean // sous-agents autorisés (défaut : oui)
   sandbox?: boolean
   signal?: AbortSignal
   snapshot?: (label: string) => Promise<string | null>
@@ -101,7 +112,7 @@ export async function cgTurn(o: CgTurnOptions, cb: CgCallbacks): Promise<CgResul
     cb.status(agent, status)
     let text = ""
     let failed = false
-    for await (const e of run({ agent, binary: cfg.binary, cwd: o.cwd, prompt, model: cfg.model, effort: cfg.effort, power, resume: o.sessions[agent],
+    for await (const e of run({ agent, binary: cfg.binary, cwd: o.cwd, prompt, model: cfg.model, effort: cfg.effort, power, resume: o.sessions[agent], subagents: o.subagents,
                                 system: [ROLE(agent, otherName), o.memory].filter(Boolean).join("\n\n"), signal: o.signal, sandbox: o.sandbox, idleMs: 180_000 })) {
       cb.event(agent, e)
       if (e.type === "session") o.sessions[agent] = e.id
@@ -122,6 +133,13 @@ export async function cgTurn(o: CgTurnOptions, cb: CgCallbacks): Promise<CgResul
   if (!present.length) return { ...base, markdown: "Ni Claude Code ni Codex ne sont installés : /cg ne peut pas démarrer." }
   const other = (a: CgAgent): CgAgent | null => present.find((x) => x !== a) ?? null
 
+  const mode: CgMode = o.mode ?? "auto"
+  const wantReview = o.review !== false
+  let plan: Plan | null
+  if (mode === "seul") {
+    // le coordinateur fait tout lui-même : pas d'appel de tri, la demande lui est transmise telle quelle
+    plan = { simple: false, writer: lead, task: o.text, review: "" }
+  } else {
   // 1-2. tri et répartition par le coordinateur, en lecture seule
   cb.phase(`${CG_LABEL[lead]} coordonne : tri de la demande`)
   const planPrompt = `Demande de l'utilisateur :\n${o.text}\n\n` +
@@ -129,11 +147,13 @@ export async function cgTurn(o: CgTurnOptions, cb: CgCallbacks): Promise<CgResul
     "Réponds UNIQUEMENT par un objet JSON, sans texte autour :\n" +
     '{"simple": true, "answer": "ta réponse complète en Markdown"}  si c\'est une question, une explication ou une demande sans modification de fichiers ;\n' +
     `{"simple": false, "writer": "${present.join('" ou "')}", "task": "consigne précise et complète pour l'agent qui modifie", "review": "ce que l'autre doit vérifier en priorité"}  sinon.\n` +
-    "Choisis l'agent qui écrit selon ses forces : Claude Code pour la conception, la refonte et le raisonnement sur tout le projet ; Codex pour l'implémentation ciblée, les scripts et les tests. Un seul agent écrit."
+    (mode === "delegue" && other(lead) ? `Le travail sera fait par ${CG_LABEL[other(lead)!]} : écris-lui une consigne précise (writer = "${other(lead)}").`
+      : "Choisis l'agent qui écrit selon ses forces : Claude Code pour la conception, la refonte et le raisonnement sur tout le projet ; Codex pour l'implémentation ciblée, les scripts et les tests. Un seul agent écrit.")
   const p = await call(lead, planPrompt, "lecture", "coordonne", other(lead))
   if (interrupted) return { ...base, interrupted: true, markdown: "Échange interrompu." }
   if (p.failed && !p.text) return { ...base, markdown: `${CG_LABEL[lead]} n'a pas pu coordonner (voir sa zone).` }
-  const plan = parsePlan(p.text, present, lead)
+  plan = parsePlan(p.text, present, lead)
+  if (plan && !plan.simple && mode === "delegue" && other(lead)) plan.writer = other(lead)! // délégation imposée par le réglage
   if (!plan) {
     // réponse non structurée : elle est rendue telle quelle plutôt que perdue
     return { ...base, markdown: p.text || "Pas de réponse du coordinateur.", verdict: "sans relecture" }
@@ -142,17 +162,19 @@ export async function cgTurn(o: CgTurnOptions, cb: CgCallbacks): Promise<CgResul
     cb.phase("Réponse directe (demande simple : pas de boucle)")
     return { ...base, plan, markdown: plan.answer || p.text, verdict: "sans relecture" }
   }
+  }
 
   // 3. l'agent désigné écrit, seul
   const writer = plan.writer
-  const reviewer = other(writer)
+  const reviewer = wantReview ? other(writer) : null
   const before = (await o.snapshot?.(`cg avant : ${o.text.slice(0, 50)}`)) ?? null
   cb.phase(`${CG_LABEL[writer]} travaille${reviewer ? ` · ${CG_LABEL[reviewer]} relira` : " (seul : pas de relecture croisée)"}`)
   const writerPower: Power = o.agents[writer]!.power === "lecture" ? "lecture" : o.agents[writer]!.power
-  let report = await call(writer, `Demande de l'utilisateur :\n${o.text}\n\nConsigne du coordinateur :\n${plan.task}\n\n` +
+  let report = await call(writer, `Demande de l'utilisateur :\n${o.text}\n\n${mode === "seul" ? "" : `Consigne du coordinateur :\n${plan.task}\n\n`}` +
     "Tu es le seul à modifier les fichiers. Termine par un court rapport : fichiers modifiés, commandes ou tests lancés, résultat, ce qui reste.", writerPower, "travaille", reviewer)
   if (interrupted) return { ...base, plan, interrupted: true, markdown: "Échange interrompu pendant le travail. /undo pour annuler les fichiers déjà modifiés." }
-  if (!reviewer) return { ...base, plan, wrote: true, markdown: `## Résultat (${CG_LABEL[writer]}, sans relecture : l'autre agent est absent)\n\n${report.text}`, verdict: "sans relecture" }
+  if (!reviewer) return { ...base, plan, wrote: true, verdict: "sans relecture",
+                          markdown: `## Résultat (${CG_LABEL[writer]}, sans relecture : ${wantReview ? "l'autre agent est absent" : "relecture désactivée"})\n\n${report.text}` }
 
   // 4-5. relecture du diff réel par l'autre, corrections bornées
   let verdict: "approuvé" | "à revoir" | null = null

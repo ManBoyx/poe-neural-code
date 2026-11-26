@@ -90,3 +90,24 @@ test("interruption : tout s'arrête, rien n'est lancé ensuite", async () => {
   expect(r.interrupted).toBe(true)
   expect(log.length).toBe(1)
 })
+
+test("« seul » : pas de tri, le coordinateur écrit, l'autre relit ; relecture désactivable", async () => {
+  const log: AgentRun[] = []
+  const r = await cgTurn({ text: "corrige", cwd: ".", agents, lead: "codex", sessions: {}, mode: "seul",
+    run: fakeRun({ codex: ["Corrigé."], claude: ["VERDICT: APPROUVÉ"] }, log) }, cb())
+  expect(log.map((x) => `${x.agent}:${x.power}`)).toEqual(["codex:commandes", "claude:lecture"])
+  expect(r.verdict).toBe("approuvé")
+  const log2: AgentRun[] = []
+  const r2 = await cgTurn({ text: "corrige", cwd: ".", agents, lead: "codex", sessions: {}, mode: "seul", review: false,
+    run: fakeRun({ codex: ["Corrigé."], claude: [] }, log2) }, cb())
+  expect(log2.length).toBe(1)
+  expect(r2.markdown).toContain("relecture désactivée")
+})
+
+test("« délègue » : l'écriture va à l'autre agent même si le plan en choisit un autre ; sous-agents transmis", async () => {
+  const log: AgentRun[] = []
+  await cgTurn({ text: "ajoute", cwd: ".", agents, lead: "claude", sessions: {}, mode: "delegue", subagents: false,
+    run: fakeRun({ claude: ['{"simple": false, "writer": "claude", "task": "Ajoute"}', "VERDICT: APPROUVÉ"], codex: ["Ajouté."] }, log) }, cb())
+  expect(log.map((x) => x.agent)).toEqual(["claude", "codex", "claude"])
+  expect(log.every((x) => x.subagents === false)).toBe(true)
+})

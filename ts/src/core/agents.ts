@@ -20,9 +20,10 @@ export const POWER_LABEL: Record<Power, string> = {
 
 export type AgentEvent =
   | { type: "session"; id: string; model?: string }
-  | { type: "text"; text: string }
-  | { type: "thinking"; text: string }
-  | { type: "tool"; id: string; name: string; summary: string; done: boolean; ok?: boolean; output?: string }
+  | { type: "text"; text: string; parent?: string }
+  | { type: "thinking"; text: string; parent?: string }
+  | { type: "tool"; id: string; name: string; summary: string; done: boolean; ok?: boolean; output?: string; parent?: string }
+  | { type: "subagent"; id: string; label: string; done: boolean; ok?: boolean; output?: string; parent?: string }
   | { type: "usage"; input: number; output: number; cached?: number; costUsd?: number }
   | { type: "error"; message: string }
   | { type: "done"; interrupted?: boolean }
@@ -39,6 +40,7 @@ export interface AgentRun {
   system?: string // consignes ajoutées (rôle dans /cg, mémoire)
   signal?: AbortSignal
   sandbox?: boolean
+  subagents?: boolean // false : l'agent ne peut pas créer de sous-agents
   idleMs?: number // sans signe de vie (et sans commande en cours) : arrêt
   maxMs?: number
 }
@@ -57,10 +59,12 @@ export function buildCommand(r: AgentRun): string[] {
       if (r.resume) c.push("--resume", r.resume)
       if (r.system) c.push("--append-system-prompt", r.system)
       if (r.sandbox) c.push("--settings", JSON.stringify({ sandbox: { enabled: true } }))
-      if (r.power === "lecture") c.push("--tools", "Read,Grep,Glob")
-      else if (r.power === "modifications") c.push("--permission-mode", "acceptEdits", "--tools", "Read,Grep,Glob,Edit,Write")
+      const sub = r.subagents !== false ? ",Agent" : ""
+      if (r.power === "lecture") c.push("--tools", "Read,Grep,Glob" + sub)
+      else if (r.power === "modifications") c.push("--permission-mode", "acceptEdits", "--tools", "Read,Grep,Glob,Edit,Write" + sub)
       else if (r.power === "commandes") c.push("--permission-mode", "acceptEdits", "--allowedTools", "Bash")
       else c.push("--permission-mode", "bypassPermissions")
+      if (r.subagents === false && (r.power === "commandes" || r.power === "bypass")) c.push("--disallowedTools", "Agent")
       return c
     }
     case "codex": {
@@ -71,6 +75,7 @@ export function buildCommand(r: AgentRun): string[] {
       if (r.power === "bypass" && !r.sandbox) c.push("--dangerously-bypass-approvals-and-sandbox")
       else c.push("-c", `sandbox_mode="${r.power === "lecture" ? "read-only" : "workspace-write"}"`, "-c", 'approval_policy="never"')
       if (r.power === "modifications") c.push("-c", "sandbox_workspace_write.network_access=false")
+      c.push(r.subagents === false ? "--disable" : "--enable", "multi_agent")
       return c
     }
     case "opencode": {
@@ -113,19 +118,25 @@ export function parseLine(agent: string, line: string, state: { tools: Map<strin
   if (agent === "claude") {
     if (e.type === "system" && e.subtype === "init") out.push({ type: "session", id: e.session_id, model: e.model })
     else if (e.type === "assistant") {
+      const parent: string | undefined = e.parent_tool_use_id ?? undefined // message d'un sous-agent
       for (const b of e.message?.content ?? []) {
-        if (b.type === "text" && b.text) out.push({ type: "text", text: b.text })
-        else if (b.type === "thinking" && b.thinking) out.push({ type: "thinking", text: b.thinking })
+        if (b.type === "text" && b.text) out.push({ type: "text", text: b.text, parent })
+        else if (b.type === "thinking" && b.thinking) out.push({ type: "thinking", text: b.thinking, parent })
         else if (b.type === "tool_use") {
           state.tools.set(b.id, b.name)
-          out.push({ type: "tool", id: b.id, name: b.name, summary: summarizeClaudeTool(b.name, b.input), done: false })
+          if (b.name === "Agent" || b.name === "Task")
+            out.push({ type: "subagent", id: b.id, label: String(b.input?.description ?? b.input?.subagent_type ?? "sous-agent").slice(0, 80), done: false, parent })
+          else out.push({ type: "tool", id: b.id, name: b.name, summary: summarizeClaudeTool(b.name, b.input), done: false, parent })
         }
       }
     } else if (e.type === "user") {
+      const parent: string | undefined = e.parent_tool_use_id ?? undefined
       for (const b of e.message?.content ?? []) {
         if (b.type === "tool_result") {
           const txt = typeof b.content === "string" ? b.content : (b.content ?? []).map((x: any) => x.text ?? "").join("\n")
-          out.push({ type: "tool", id: b.tool_use_id, name: state.tools.get(b.tool_use_id) ?? "outil", summary: "", done: true, ok: !b.is_error, output: txt.slice(0, 4000) })
+          const name = state.tools.get(b.tool_use_id) ?? "outil"
+          if (name === "Agent" || name === "Task") out.push({ type: "subagent", id: b.tool_use_id, label: "", done: true, ok: !b.is_error, output: txt.slice(0, 4000), parent })
+          else out.push({ type: "tool", id: b.tool_use_id, name, summary: "", done: true, ok: !b.is_error, output: txt.slice(0, 4000), parent })
         }
       }
     } else if (e.type === "result") {
@@ -139,7 +150,11 @@ export function parseLine(agent: string, line: string, state: { tools: Map<strin
   // Codex
   const it = e.item ?? {}
   if (e.type === "thread.started") out.push({ type: "session", id: e.thread_id })
-  else if (e.type === "item.started" && (it.type === "command_execution" || it.type === "mcp_tool_call" || it.type === "file_change" || it.type === "web_search"))
+  else if ((e.type === "item.started" || e.type === "item.completed") && /^collab/.test(it.type ?? "")) {
+    // sous-agents de Codex (spawn_agent…) : champs lus avec tolérance, format pas encore vérifié par un vrai essai
+    const label = String(it.prompt ?? it.description ?? it.tool ?? "sous-agent").replace(/\s+/g, " ").slice(0, 80)
+    out.push({ type: "subagent", id: String(it.id), label, done: e.type === "item.completed", ok: it.status !== "failed" })
+  } else if (e.type === "item.started" && (it.type === "command_execution" || it.type === "mcp_tool_call" || it.type === "file_change" || it.type === "web_search"))
     out.push({ type: "tool", id: it.id, name: it.type === "command_execution" ? "commande" : it.type === "file_change" ? "fichiers" : it.type, summary: String(it.command ?? it.query ?? it.tool ?? "").slice(0, 160), done: false })
   else if (e.type === "item.completed") {
     if (it.type === "agent_message" && it.text) out.push({ type: "text", text: it.text })

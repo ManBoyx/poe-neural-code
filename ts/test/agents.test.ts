@@ -88,3 +88,28 @@ test("les clés d'API ne sont pas transmises à l'agent", async () => {
   delete process.env.ANTHROPIC_API_KEY
   expect(ev.find((e) => e.type === "text")).toEqual({ type: "text", text: "cle=absente" })
 })
+
+test("sous-agents de Claude Code : création, messages rattachés (parent_tool_use_id), fin", () => {
+  const st = { tools: new Map<string, string>() }
+  const lines = [
+    { type: "assistant", message: { content: [{ type: "tool_use", id: "a1", name: "Agent", input: { description: "Explorer les tests", subagent_type: "Explore" } }] } },
+    { type: "assistant", parent_tool_use_id: "a1", message: { content: [{ type: "text", text: "Je cherche." }, { type: "tool_use", id: "g1", name: "Grep", input: { pattern: "test" } }] } },
+    { type: "user", parent_tool_use_id: "a1", message: { content: [{ type: "tool_result", tool_use_id: "g1", content: "3 fichiers" }] } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "a1", content: "Rapport du sous-agent" }] } },
+  ]
+  const ev = lines.flatMap((l) => parseLine("claude", JSON.stringify(l), st))
+  expect(ev[0]).toEqual({ type: "subagent", id: "a1", label: "Explorer les tests", done: false, parent: undefined })
+  expect(ev[1]).toMatchObject({ type: "text", text: "Je cherche.", parent: "a1" })
+  expect(ev[2]).toMatchObject({ type: "tool", name: "Grep", parent: "a1", done: false })
+  expect(ev[3]).toMatchObject({ type: "tool", done: true, parent: "a1" })
+  expect(ev[4]).toMatchObject({ type: "subagent", id: "a1", done: true, ok: true, output: "Rapport du sous-agent" })
+})
+
+test("sous-agents autorisés ou non, dans les options réelles", () => {
+  const c = (agent: string, power: any, subagents?: boolean) => buildCommand({ agent, binary: agent, cwd: ".", prompt: "x", power, subagents }).join(" ")
+  expect(c("claude", "modifications")).toContain("Read,Grep,Glob,Edit,Write,Agent")
+  expect(c("claude", "modifications", false)).not.toContain("Agent")
+  expect(c("claude", "commandes", false)).toContain("--disallowedTools Agent")
+  expect(c("codex", "modifications")).toContain("--enable multi_agent")
+  expect(c("codex", "modifications", false)).toContain("--disable multi_agent")
+})
