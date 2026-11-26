@@ -37,7 +37,14 @@ jobs:
         with:
           node-version: "22"
       - run: npm install -g bun@1.4.5
+      - name: bubblewrap (sandbox et garde des fichiers d'Eclipse testées pour de vrai, pas sautées)
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          bwrap --dev-bind / / --unshare-pid --proc /proc true
       - working-directory: ts
+        env:
+          ECLIPSE_REQUIRE_BWRAP: "1"
         run: |
           bun install --frozen-lockfile
           bun x tsc --noEmit
@@ -46,7 +53,8 @@ jobs:
         run: |
           bun packaging/cli-ts/build.ts bun-linux-x64-baseline > build-cli.log 2>&1 || { grep -v '^Downloading' build-cli.log | tail -30; exit 1; }
           build/cli-ts/linux-x64-baseline/Eclipse --version
-          sh packaging/cli-ts/smoke.sh build/cli-ts/linux-x64-baseline/Eclipse
+          python3 -m pip install --user pyte
+          python3 packaging/cli-ts/smoke.py build/cli-ts/linux-x64-baseline/Eclipse
 
   desktop:
     name: Application desktop (Rust + interface)

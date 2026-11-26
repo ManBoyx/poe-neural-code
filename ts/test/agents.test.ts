@@ -115,7 +115,10 @@ test("sous-agents autorisés ou non, dans les options réelles", () => {
 })
 
 test("garde : un agent sans sandbox, même en bypass, ne peut pas écrire dans les fichiers d'Eclipse", async () => {
-  if (process.platform !== "linux" || !Bun.which("bwrap")) return
+  if (process.platform !== "linux" || !Bun.which("bwrap")) {
+    if (process.env.ECLIPSE_REQUIRE_BWRAP === "1") throw new Error("bubblewrap requis pour ce test (ECLIPSE_REQUIRE_BWRAP=1)")
+    return
+  }
   const prev = process.env.ECLIPSE_ROOT
   const eclipse = join(dir, "installation-eclipse")
   mkdirSync(eclipse)

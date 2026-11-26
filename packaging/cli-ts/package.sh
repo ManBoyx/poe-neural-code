@@ -16,7 +16,8 @@ if ! bun packaging/cli-ts/build.ts bun-linux-x64-baseline >"$LOG" 2>&1; then
 fi
 "$BIN" --version
 # l'interface démarre-t-elle vraiment ? (--version s'arrête avant de charger OpenTUI)
-sh "$ROOT/packaging/cli-ts/smoke.sh" "$BIN"
+PYTHON=${PYTHON:-python3}; [ -x "$ROOT/.venv/bin/python" ] && PYTHON="$ROOT/.venv/bin/python"
+"$PYTHON" "$ROOT/packaging/cli-ts/smoke.py" "$BIN"
 OUT="$ROOT/build/cli-ts/release"; STAGE="$ROOT/build/cli-ts/stage"
 rm -rf "$OUT" "$STAGE"; mkdir -p "$OUT" "$STAGE"
 cp "$BIN" "$STAGE/Eclipse"; cp "$ROOT/LICENSE" "$STAGE/LICENSE"

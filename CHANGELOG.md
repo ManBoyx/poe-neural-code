@@ -21,9 +21,11 @@ reprises telles quelles : mémoire, sessions, consommation, clés du trousseau.
 - Règle absolue : aucun modèle ni agent n'écrit dans les fichiers d'Eclipse. Le travail se fait dans `~/Projets`,
   un dossier par projet, retrouvé quand on reprend le projet. Les outils d'Eclipse refusent ces écritures, et avec
   bubblewrap les commandes et les agents voient les fichiers d'Eclipse en lecture seule, même sandbox coupée et en
-  bypass (sans bubblewrap, seuls les outils d'Eclipse refusent).
+  bypass (sans bubblewrap, seuls les outils d'Eclipse refusent). C'est un garde-fou contre les erreurs, pas une
+  prison : la sandbox reste la protection forte.
 - Un projet ne peut pas modifier le comportement d'Eclipse : l'exécutable ne lit jamais les fichiers `.env` ou
-  `bunfig.toml` du dossier ouvert.
+  `bunfig.toml` du dossier ouvert, et un serveur MCP déclaré par le projet (`.eclipse/mcp.json`) n'est lancé
+  qu'après `/mcp approuver NOM` (approbation à redonner si sa commande change).
 - `/usage` en plein écran (périodes, 30 derniers jours, par modèle, budgets, solde Poe).
 - `/voice` : appel vocal avec le modèle ou l'agent choisi (Claude Code compris), transcription whisper.cpp et voix
   piper sur l'ordinateur ; `/voice installer`, `/voice rapide | précis`.

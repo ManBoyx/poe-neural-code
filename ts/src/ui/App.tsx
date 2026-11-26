@@ -27,7 +27,7 @@ import { verifyPassword } from "../core/auth"
 import * as V from "../core/voice"
 import { isProtected, listProjects, needsProject, openProject, projectsRoot, PROTECT_RULE, slug } from "../core/protect"
 import { available as sandboxAvailable } from "../core/sandbox"
-import { McpManager } from "../core/mcp"
+import { approve as approveMcp, loadConfigs as loadMcpConfigs, McpManager } from "../core/mcp"
 import { discoverPlugins, discoverSkills, loadPlugins, setTrust, skillCatalog, type PluginCommand, type PluginInfo, type Skill } from "../core/extensions"
 import { cgTurn, CG_LABEL, parsePlan, type CgAgent, type CgMode } from "../core/cg"
 import { CgZones, cgTabs, SUB_COLORS, SubAgentView, type Zone, type ZoneEntry } from "./CgView"
@@ -270,8 +270,15 @@ export function App(props: { cwd: string }) {
     skills = discoverSkills(cwd())
     plugins = discoverPlugins(cwd())
     pluginCmds = await loadPlugins(plugins)
-    mcp.start(cwd(), () => setMcpTick((x) => x + 1))
+    await mcp.start(cwd(), () => setMcpTick((x) => x + 1))
+    const waiting = mcp.status.filter((x) => x.state === "à approuver")
+    if (waiting.length) note(`Ce projet déclare ${waiting.length} serveur(s) MCP (${waiting.map((x) => x.name).join(", ")}) : rien n'est lancé sans votre accord. /mcp pour voir les commandes, puis /mcp approuver NOM.`, "warn")
+    if (process.platform === "linux" && !sandboxAvailable().ok && !warnedNoBwrap) {
+      warnedNoBwrap = true
+      note("bubblewrap n'est pas installé : sandbox et garde des fichiers d'Eclipse indisponibles pour les commandes et les agents (seuls les outils d'Eclipse refusent d'y écrire). Installez le paquet bubblewrap.", "warn")
+    }
   }
+  let warnedNoBwrap = false
   /** Consignes du projet (AGENTS.md, CLAUDE.md, .eclipse/instructions.md) et personnelles, bornées. */
   function instructions(): string {
     const parts: string[] = []
@@ -1578,7 +1585,7 @@ export function App(props: { cwd: string }) {
         const on = arg === "on" ? true : arg === "off" ? false : !sandboxOn()
         updatePrefs({ sandbox: on })
         return note(on ? `Sandbox active (${av.tool}) : les commandes des modèles et des agents n'écrivent que dans le projet, /tmp et les caches de build.`
-                       : "Sandbox désactivée : les commandes autorisées peuvent écrire partout où vous le pouvez. /sandbox pour la réactiver.", on ? "info" : "warn")
+                       : "Sandbox désactivée : les commandes autorisées peuvent écrire partout où vous le pouvez, sauf dans les fichiers d'Eclipse. /sandbox pour la réactiver.", on ? "info" : "warn")
       }
       case "details":
         setShowDetails((x) => !x)
@@ -1673,9 +1680,20 @@ export function App(props: { cwd: string }) {
           await mcp.start(cwd(), () => setMcpTick((x) => x + 1))
           return flash("Serveurs MCP relancés")
         }
+        const [sub, ...rest] = arg.split(/\s+/)
+        if (sub === "approuver" || sub === "retirer") {
+          const name = rest.join(" ").trim()
+          const cfgs = loadMcpConfigs(cwd()).filter((c) => c.source === "projet" && (name === "tout" || c.name === name))
+          if (!name || !cfgs.length) return note(`Usage : /mcp ${sub} NOM (serveur déclaré dans .eclipse/mcp.json du projet) ou /mcp ${sub} tout`, "error")
+          for (const c of cfgs) approveMcp(cwd(), c.name, c.cfg, sub === "approuver")
+          await mcp.start(cwd(), () => setMcpTick((x) => x + 1))
+          return note(`${sub === "approuver" ? "Approuvé et lancé" : "Approbation retirée"} : ${cfgs.map((c) => c.name).join(", ")}`)
+        }
         mcpTick()
         if (!mcp.status.length) return note(`Aucun serveur MCP configuré. Fichier : ${short(join(dataDir(), "mcp.json"))} (ou .eclipse/mcp.json du projet), format {"mcpServers": {"nom": {"command": "…", "args": []}}}.`)
-        return note("Serveurs MCP (outils donnés aux modèles d'API) :\n" + mcp.status.map((s) => `  ${s.state === "connecté" ? I.ok : s.state === "erreur" ? I.error : I.off} ${s.name.padEnd(20)} ${s.state}${s.tools ? ` · ${s.tools} outil(s)` : ""}${s.error ? " · " + s.error : ""} (${s.source})`).join("\n") + "\n\n/mcp reload pour relancer")
+        const waiting = mcp.status.filter((s) => s.state === "à approuver")
+        return note("Serveurs MCP (outils donnés aux modèles d'API) :\n" + mcp.status.map((s) => `  ${s.state === "connecté" ? I.ok : s.state === "erreur" ? I.error : s.state === "à approuver" ? I.warn : I.off} ${s.name.padEnd(20)} ${s.state}${s.tools ? ` · ${s.tools} outil(s)` : ""}${s.error ? " · " + s.error : ""} (${s.source})${s.launch ? `\n      lancerait : ${s.launch}` : ""}`).join("\n")
+          + (waiting.length ? `\n\nServeurs déclarés par le projet : rien n'est lancé sans votre accord. Vérifiez la commande, puis /mcp approuver NOM (ou tout).` : "") + "\n\n/mcp reload pour relancer")
       }
       case "fusion": {
         const [sub, ...r] = arg.split(/\s+/)

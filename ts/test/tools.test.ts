@@ -143,7 +143,10 @@ test("sandbox : la commande écrit dans le projet, pas ailleurs ; le bypass ne l
 })
 
 test("garde : sandbox coupée et bypass total, une commande ne peut toujours pas écrire dans les fichiers d'Eclipse", async () => {
-  if (process.platform !== "linux" || !Bun.which("bwrap")) return
+  if (process.platform !== "linux" || !Bun.which("bwrap")) {
+    if (process.env.ECLIPSE_REQUIRE_BWRAP === "1") throw new Error("bubblewrap requis pour ce test (ECLIPSE_REQUIRE_BWRAP=1)")
+    return
+  }
   mkdirSync(process.env.PNC_HOME!, { recursive: true }) // dossier de données d'Eclipse (protégé)
   env.sandbox = false
   env.perms.bypassVerified = true
@@ -156,7 +159,10 @@ test("garde : sandbox coupée et bypass total, une commande ne peut toujours pas
 })
 
 test("garde : l'arrêt sur délai tue aussi les petits-enfants (aucun orphelin)", async () => {
-  if (process.platform !== "linux" || !Bun.which("bwrap")) return
+  if (process.platform !== "linux" || !Bun.which("bwrap")) {
+    if (process.env.ECLIPSE_REQUIRE_BWRAP === "1") throw new Error("bubblewrap requis pour ce test (ECLIPSE_REQUIRE_BWRAP=1)")
+    return
+  }
   env.sandbox = false
   env.perms.bypassVerified = true
   env.perms.setMode("bypass")
@@ -166,4 +172,21 @@ test("garde : l'arrêt sur délai tue aussi les petits-enfants (aucun orphelin)"
   await Bun.sleep(300)
   const left = Bun.spawnSync(["pgrep", "-f", `^sleep ${mark}\\.5$`]).stdout.toString().trim()
   expect(left).toBe("")
+})
+
+test("garde : un descendant qui crée sa propre session meurt aussi au délai, et /proc ne montre pas l'hôte", async () => {
+  if (process.platform !== "linux" || !Bun.which("bwrap")) {
+    if (process.env.ECLIPSE_REQUIRE_BWRAP === "1") throw new Error("bubblewrap requis pour ce test (ECLIPSE_REQUIRE_BWRAP=1)")
+    return
+  }
+  env.sandbox = false
+  env.perms.bypassVerified = true
+  env.perms.setMode("bypass")
+  const mark = 900 + (process.pid % 90)
+  const r = await call("run_command", { command: `setsid sleep ${mark}.7 >/dev/null 2>&1 < /dev/null & sleep 30`, timeout_s: 1 })
+  expect(r.ok).toBe(false)
+  await Bun.sleep(400)
+  expect(Bun.spawnSync(["pgrep", "-f", `^sleep ${mark}\\.7$`]).stdout.toString().trim()).toBe("")
+  const ps = await call("run_command", { command: `ls /proc | grep -c '^[0-9]'` })
+  expect(Number(ps.output.trim().split("\n")[0])).toBeLessThan(10)
 })
