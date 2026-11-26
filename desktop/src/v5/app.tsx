@@ -8,14 +8,14 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "preact/hooks";
 import { ApiError, connect, events, get, isDesktop, post, restartEngine, type EngineState, type MediaModel, type SessionRow, type Space } from "./api";
 import { I } from "./icons";
 import { safeUrl } from "./markdown";
-import { Lightbox, ModelPicker, PermModal, ProjectChooser, Settings, SubModal, UsageView } from "./modals";
-import { CgPanel, Composer, MessageView, Rail, Sidebar, StatusBar, SubDots, Welcome } from "./parts";
-import { emptyThread, fromHistory, reduce, settle, type Sub, type ThreadState } from "./thread";
+import { Lightbox, ModelPicker, PermModal, ProjectChooser, Settings, UsageView } from "./modals";
+import { AgentSheet, AgentsStrip, Composer, MessageView, Rail, railHasContent, Sidebar, StatusBar, Welcome } from "./parts";
+import { emptyThread, fromHistory, reduce, settle, type ThreadState } from "./thread";
 
 type Action = { t: "ev"; e: any; cg: boolean } | { t: "set"; s: ThreadState } | { t: "settle" };
 const threadReducer = (s: ThreadState, a: Action) => (a.t === "set" ? a.s : a.t === "settle" ? settle(s) : reduce(s, a.e, { cg: a.cg }));
 
-type Overlay = { kind: "models" } | { kind: "settings"; tab?: string } | { kind: "usage" } | { kind: "project"; propose?: string; text?: string } | { kind: "sub"; sub: Sub } | { kind: "image"; url: string };
+type Overlay = { kind: "models" } | { kind: "settings"; tab?: string } | { kind: "usage" } | { kind: "project"; propose?: string; text?: string } | { kind: "image"; url: string };
 interface Toast { id: number; text: string; level: string }
 
 const store = {
@@ -40,10 +40,11 @@ export function App() {
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [perm, setPerm] = useState<{ id: number; req: any } | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [voice, setVoice] = useState({ state: "", call: false, level: 0, heard: "" });
-  const [railOpen, setRailOpen] = useState(() => store.get("rail", "1") === "1");
+  const [voice, setVoice] = useState({ state: "", level: 0 });
+  const [railOpen, setRailOpen] = useState(() => store.get("rail", "0") === "1");
+  const [sheet, setSheet] = useState<string | null>(null); // agent ou sous-agent affiché dans le panneau de droite
+  const [scrolled, setScrolled] = useState(false);
   const [sideCollapsed, setSideCollapsed] = useState(() => store.get("side", "0") === "1");
-  const [tab, setTab] = useState("ensemble");
   const [media, setMedia] = useState<MediaModel[]>([]);
   const [mediaModel, setMediaModelRaw] = useState<MediaModel | null>(null);
   const [connected, setConnected] = useState(false);
@@ -119,9 +120,8 @@ export function App() {
         if (!mediaCount.current) loadMedia();
         return reload();
       case "perm": return setPerm({ id: e.id, req: e.req });
-      case "voice": return setVoice((v) => ({ ...v, state: e.state ?? "", call: e.call ?? v.call }));
+      case "voice": return setVoice((v) => ({ ...v, state: e.state ?? "" }));
       case "voice-level": return setVoice((v) => ({ ...v, level: e.level ?? 0 }));
-      case "voice-text": return setVoice((v) => ({ ...v, heard: e.text ?? "" }));
       case "notice":
         // pendant une réponse, l'avis s'inscrit dans le fil ; sinon (ou si c'est une erreur) il s'affiche en bulle
         if (e.level === "error" || !busyRef.current) toast(e.text, e.level);
@@ -144,7 +144,10 @@ export function App() {
   }, [thread]);
   const onScroll = () => {
     const el = scroller.current;
-    if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (el) {
+      stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      setScrolled(el.scrollTop > 4);
+    }
   };
 
   // infobulles des graphiques, boutons « Copier », images en grand (délégation : le HTML vient du rendu Markdown)
@@ -183,6 +186,7 @@ export function App() {
   // raccourcis : Échap arrête, Ctrl+N nouvelle discussion, Ctrl+K modèles, Ctrl+B barre latérale
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && sheet && !overlay && !perm) { setSheet(null); return; }
       if (e.key === "Escape" && st?.busy && !overlay && !perm) { post("/api/interrupt").catch(() => {}); return; }
       if (!(e.ctrlKey || e.metaKey)) return;
       if (e.key === "n") { e.preventDefault(); newChat(); }
@@ -198,7 +202,7 @@ export function App() {
     if (st?.busy) return toast("Une réponse est en cours : attendez la fin ou arrêtez-la (Échap).", "warn");
     try { await post("/api/new"); } catch (e: any) { return toast(e.message, "error"); }
     dispatch({ t: "set", s: emptyThread() });
-    setTab("ensemble");
+    setSheet(null);
     stick.current = true;
   };
   const setSpace = (s: Space) => {
@@ -235,24 +239,16 @@ export function App() {
       else toast(e.message, "error");
     }
   };
+  // dictée : la voix devient du texte dans la saisie (transcription d'OpenAI), rien n'est lu à voix haute
   const dictate = async () => {
-    if (voice.state === "écoute") return;
+    if (voice.state) return;
     try {
       const r = await post<{ ok: boolean; text?: string; reason?: string }>("/api/voice/dictate");
-      if (r.ok && r.text) setDraft((d) => (d ? d + " " : "") + r.text);
-      else toast(r.reason ?? "rien entendu", "warn");
+      if (r.ok && r.text) setDraft((d) => (d ? d.trimEnd() + " " : "") + r.text);
+      else if (r.reason && !/arrêt/i.test(r.reason)) toast(r.reason, "warn");
     } catch (e: any) { toast(e.message, "error"); }
   };
-  const call = async () => {
-    try {
-      if (voice.call) await post("/api/voice/call", { on: false });
-      else {
-        const r = await post<{ ok: boolean; reason?: string }>("/api/voice/call", { on: true, space, cg: space === "work" && cgOn });
-        if (!r.ok) toast(`Appel impossible : ${r.reason}`, "error");
-        else cgPending.current = space === "work" && cgOn;
-      }
-    } catch (e: any) { toast(e.message, "error"); }
-  };
+  const stopDictate = () => post("/api/voice/stop").catch(() => {});
   const toggleSide = () => setSideCollapsed((c) => { store.set("side", c ? "0" : "1"); return !c; });
   const toggleRail = () => setRailOpen((r) => { store.set("rail", r ? "0" : "1"); return !r; });
 
@@ -261,39 +257,35 @@ export function App() {
   busyRef.current = busy;
 
   // ---------------------------------------------------------------- écrans
-  if (phase === "connect") return <div class="boot"><span class="logo pulse">{I.eclipse}</span><p>Démarrage du moteur Eclipse…</p></div>;
+  if (phase === "connect") return <div class="boot"><span class="ic logo breath">{I.eclipse}</span><p>Démarrage…</p></div>;
   if (phase === "error" || !st)
     return (
       <div class="boot">
-        <span class="logo">{I.eclipse}</span>
+        <span class="ic logo">{I.eclipse}</span>
         <h2>Le moteur ne répond pas</h2>
-        <p class="bad">{fatal}</p>
-        {isDesktop && <button class="btn primary" onClick={() => restartEngine().then(() => location.reload()).catch((e) => setFatal(e.message))}>{I.refresh} Relancer le moteur</button>}
+        <p>{fatal}</p>
+        {isDesktop && <button class="btn primary press" onClick={() => restartEngine().then(() => location.reload()).catch((e) => setFatal(e.message))}>Relancer le moteur</button>}
       </div>
     );
 
-  const showCg = space === "work" && (cgOn || thread.cgTurn) && thread.msgs.some((m) => m.cg);
+  const cgView = space === "work" && cgOn;
   const empty = !thread.msgs.length;
+  const railDot = !railOpen && railHasContent(thread);
   return (
-    <div class={`app ${sideCollapsed ? "side-min" : ""} ${railOpen ? "rail-on" : ""} space-${space}`}>
-      <Sidebar st={st} sessions={sessions} space={space} onSpace={setSpace} onNew={newChat} onOpen={openSession} collapsed={sideCollapsed} onCollapse={toggleSide}
+    <div class={`app ${sideCollapsed ? "side-min" : ""} ${railOpen ? "rail-on" : ""}`}>
+      <Sidebar st={st} sessions={sessions} space={space} onSpace={setSpace} onNew={newChat} onOpen={openSession} onCollapse={toggleSide}
         onUsage={() => setOverlay({ kind: "usage" })} onSettings={() => setOverlay({ kind: "settings" })} onProjects={() => setOverlay({ kind: "project" })} />
       <main class="main">
-        <header class="top">
-          <div class="title">{st.title || (space === "work" ? "Nouveau travail" : space === "medias" ? "Nouvelle création" : "Nouvelle discussion")}</div>
-          {space === "work" && !st.needsProject && <button class="chip proj" onClick={() => setOverlay({ kind: "project" })} title={st.cwd}>{I.folder} {st.cwdShort.split("/").pop()}</button>}
-          <div class="top-actions">
-            <button class={`icon-btn ${railOpen ? "on" : ""}`} onClick={toggleRail} title="Aperçu : graphiques, médias, tâches">{I.rail}</button>
-          </div>
+        <header class={`top ${scrolled ? "scrolled" : ""}`}>
+          {sideCollapsed && <button class="icon-btn press" onClick={toggleSide} title="Afficher la barre latérale (Ctrl+B)"><span class="ic">{I.menu}</span></button>}
+          <div class="title">{(!empty && st.title) || (space === "work" ? "Nouveau travail" : space === "medias" ? "Nouvelle création" : "Nouvelle discussion")}</div>
+          {space === "work" && !st.needsProject && <button class="pill press" onClick={() => setOverlay({ kind: "project" })} title={st.cwd}><span class="ic">{I.folder}</span>{st.cwdShort.split("/").pop()}</button>}
+          <span class="spacer" />
+          <button class={`icon-btn press ${railOpen ? "on" : ""}`} onClick={toggleRail} title="Aperçu : graphiques, images, tâches">
+            <span class="ic">{I.rail}</span>{railDot && <span class="badge" style={{ position: "absolute", marginLeft: "18px", marginTop: "-14px" }} />}
+          </button>
         </header>
-        {voice.call && (
-          <div class="call-banner">
-            <span class="wave" style={{ "--l": String(Math.min(1, voice.level * 6)) } as any}>{I.wave}</span>
-            <b>Appel en cours</b><span class="dim">{voice.state || "…"}{voice.heard ? ` · « ${voice.heard} »` : ""}</span>
-            <button class="btn danger small" onClick={call}>{I.hangup} Raccrocher</button>
-          </div>
-        )}
-        {showCg && <CgPanel t={thread} tab={tab} setTab={setTab} />}
+        {cgView && <AgentsStrip st={st} t={thread} open={sheet} onOpen={(k) => setSheet((cur) => (cur === k ? null : k))} />}
         <div class="scroller" ref={scroller} onScroll={onScroll}>
           <div class="thread">
             {empty ? <Welcome space={space} st={st} onPick={(t) => (space === "work" && st.needsProject ? setOverlay({ kind: "project", text: t }) : setDraft(t))} />
@@ -301,15 +293,17 @@ export function App() {
           </div>
         </div>
         <div class="dock">
-          <SubDots subs={showCg ? [] : thread.subs} onOpen={(s) => setOverlay({ kind: "sub", sub: s })} />
-          {space === "work" && st.needsProject && <button class="need-project" onClick={() => setOverlay({ kind: "project" })}>{I.folder} Choisissez ou créez un projet pour travailler</button>}
-          <Composer st={st} space={space} busy={busy} cgOn={cgOn} setCgOn={setCgOn} onSend={(t) => send(t)} onStop={() => post("/api/interrupt").catch(() => {})}
-            onModels={() => setOverlay({ kind: "models" })} onEffort={(v) => post("/api/effort", { value: v }).catch((e) => toast(e.message, "error"))}
-            media={media} mediaModel={mediaModel} setMediaModel={setMediaModel} voice={voice} onDictate={dictate} onCall={call} draft={draft} setDraft={setDraft} history={history} />
-          <StatusBar st={st} today={today} connected={connected} />
+          <div class="dock-inner">
+            {space === "work" && st.needsProject && <button class="need-project press" onClick={() => setOverlay({ kind: "project" })}><span class="ic">{I.folder}</span>Choisis ou crée un projet pour travailler</button>}
+            <Composer st={st} space={space} busy={busy} cgOn={cgOn} setCgOn={setCgOn} onSend={(t) => send(t)} onStop={() => post("/api/interrupt").catch(() => {})}
+              onModels={() => setOverlay({ kind: "models" })} onEffort={(v) => post("/api/effort", { value: v }).catch((e) => toast(e.message, "error"))}
+              media={media} mediaModel={mediaModel} setMediaModel={setMediaModel} voice={voice} onDictate={dictate} onStopDictate={stopDictate} draft={draft} setDraft={setDraft} history={history} />
+          </div>
         </div>
+        <StatusBar st={st} today={today} connected={connected} />
+        <AgentSheet t={thread} which={cgView || thread.subs.length ? sheet : null} onClose={() => setSheet(null)} />
       </main>
-      {railOpen && <Rail t={thread} st={st} space={space} onClose={toggleRail} onMedia={(url) => setOverlay({ kind: "image", url })} onSub={(s) => (showCg ? setTab(`sub:${s.id}`) : setOverlay({ kind: "sub", sub: s }))} />}
+      {railOpen && <Rail t={thread} st={st} space={space} onClose={toggleRail} onMedia={(url) => setOverlay({ kind: "image", url })} />}
 
       {overlay?.kind === "models" && <ModelPicker onClose={() => setOverlay(null)} onKeys={() => setOverlay({ kind: "settings", tab: "keys" })} toast={toast} />}
       {overlay?.kind === "settings" && <Settings st={st} start={overlay.tab} onClose={() => setOverlay(null)} toast={toast} theme={theme} setTheme={setTheme} />}
@@ -318,7 +312,6 @@ export function App() {
         <ProjectChooser st={st} propose={overlay.propose} toast={toast} onClose={() => setOverlay(null)}
           onDone={() => { const t = overlay.text; setOverlay(null); dispatch({ t: "set", s: emptyThread() }); reload(); if (t) setTimeout(() => send(t, "work"), 300); }} />
       )}
-      {overlay?.kind === "sub" && <SubModal sub={thread.subs.find((s) => s.id === overlay.sub.id) ?? overlay.sub} onClose={() => setOverlay(null)} />}
       {overlay?.kind === "image" && <Lightbox url={overlay.url} onClose={() => setOverlay(null)} />}
       {perm && <PermModal perm={perm} onDecide={(d) => { post("/api/perm", { id: perm.id, decision: d }).catch(() => {}); setPerm(null); }} />}
       <div class="toasts" aria-live="polite">{toasts.map((t) => <div class={`toast ${t.level}`}>{t.text}</div>)}</div>

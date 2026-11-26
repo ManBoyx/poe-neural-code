@@ -317,3 +317,25 @@ export async function install(progress: (step: string) => void): Promise<{ ok: b
     return { ok: false, message: (e as Error).message }
   }
 }
+
+// ------------------------------------------------------------------ dictée en ligne (sans Whisper ni voix de synthèse)
+/**
+ * Transcription par l'API d'OpenAI (gpt-4o-transcribe, celle de ChatGPT) : fidèle à ce qui est dit, ponctuation
+ * comprise. La clé vient du trousseau (jamais affichée ni journalisée) ; l'audio n'est envoyé qu'à OpenAI.
+ */
+export async function transcribeCloud(samples: Int16Array, key: string, lang = "fr", signal?: AbortSignal): Promise<{ ok: true; text: string } | { ok: false; reason: string }> {
+  const form = new FormData()
+  form.append("file", new Blob([wav(samples) as Uint8Array<ArrayBuffer>], { type: "audio/wav" }), "dictee.wav")
+  form.append("model", "gpt-4o-transcribe")
+  form.append("language", lang)
+  form.append("response_format", "json")
+  try {
+    const r = await fetch("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${key}` }, body: form, signal: signal ?? AbortSignal.timeout(60_000) })
+    if (r.status === 401) return { ok: false, reason: "OpenAI refuse la clé : changez-la dans Réglages > Clés d'API" }
+    if (!r.ok) return { ok: false, reason: `transcription refusée par OpenAI (${r.status})` }
+    const j = (await r.json()) as { text?: string }
+    return { ok: true, text: (j.text ?? "").trim() }
+  } catch (e) {
+    return { ok: false, reason: `transcription impossible : ${(e as Error).message}` }
+  }
+}

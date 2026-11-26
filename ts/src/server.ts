@@ -6,7 +6,7 @@
  */
 import { randomBytes } from "node:crypto"
 import { Budget, dayStart, monthStart, tokens, weekStart } from "./core/budget"
-import { poeBalance, provider, PROVIDERS, verifyKey } from "./core/providers"
+import { keyFor, poeBalance, provider, PROVIDERS, verifyKey } from "./core/providers"
 import { setKey } from "./core/secrets"
 import { verifyPassword } from "./core/auth"
 import { needsProject } from "./core/protect"
@@ -39,81 +39,50 @@ function broadcast(e: EngineEvent | { type: string; [k: string]: unknown }) {
 const S = new EngineSession(dir, (e) => broadcast(e))
 S.init()
 
-// ------------------------------------------------------------------ voix : dictée et appel
-let call: { stop: () => void; pause: (on: boolean) => void } | null = null
-let stopSpeech: (() => void) | null = null
+// ------------------------------------------------------------------ voix : dictée seulement
+// L'utilisateur parle, le texte s'écrit dans la saisie. Transcription par OpenAI (pas de Whisper sur le PC, pas de voix
+// de synthèse qui répète). Le micro est lu par arecord ; l'enregistrement s'arrête tout seul après un silence.
+let dictating: { stop: () => void } | null = null
 function voiceState(state: string, extra: Record<string, unknown> = {}) {
   broadcast({ type: "voice", state, ...extra })
 }
-async function dictate(): Promise<{ ok: boolean; text?: string; reason?: string }> {
+async function voiceReady(): Promise<{ ok: true; key: string } | { ok: false; reason: string }> {
   const s = V.setup()
-  if (s.missing.length) return { ok: false, reason: s.missing.join(" ; ") }
+  if (!s.record) return { ok: false, reason: "enregistreur absent : installez le paquet alsa-utils (arecord)" }
+  const k = await keyFor(provider("openai")!)
+  if (!k.ok) return { ok: false, reason: "la dictée utilise la transcription d'OpenAI : ajoutez une clé OpenAI dans Réglages > Clés d'API" }
+  return { ok: true, key: k.key }
+}
+async function dictate(): Promise<{ ok: boolean; text?: string; reason?: string }> {
+  if (dictating) return { ok: false, reason: "dictée déjà en cours" }
+  const ready = await voiceReady()
+  if (!ready.ok) return { ok: false, reason: ready.reason }
+  const s = V.setup()
   return new Promise((res) => {
     voiceState("écoute")
     let done = false
+    const finish = (r: { ok: boolean; text?: string; reason?: string }) => {
+      if (done) return
+      done = true
+      dictating?.stop()
+      dictating = null
+      voiceState("")
+      res(r)
+    }
     const l = V.listen(s, {
       onUtterance: async (pcm) => {
         if (done) return
-        done = true
         l.stop()
         voiceState("transcription")
-        const r = await V.transcribe(s, pcm)
-        voiceState("")
-        res(r.ok ? { ok: true, text: r.text } : { ok: false, reason: r.reason })
+        const r = await V.transcribeCloud(pcm, ready.key)
+        finish(r.ok ? { ok: true, text: r.text } : { ok: false, reason: r.reason })
       },
       onLevel: (level) => broadcast({ type: "voice-level", level }),
-      onError: (m) => { if (!done) { done = true; voiceState(""); res({ ok: false, reason: m }) } },
+      onError: (m) => finish({ ok: false, reason: m }),
     })
-    setTimeout(() => { if (!done) { done = true; l.stop(); voiceState(""); res({ ok: false, reason: "rien entendu en 30 s" }) } }, 30_000)
+    dictating = { stop: () => l.stop() }
+    setTimeout(() => finish({ ok: false, reason: "rien entendu en 30 s" }), 30_000)
   })
-}
-function startCall(space: Space, cg: boolean) {
-  const s = V.setup()
-  if (s.missing.length) return { ok: false, reason: s.missing.join(" ; ") }
-  voiceState("écoute", { call: true })
-  call = V.listen(s, {
-    onUtterance: async (pcm) => {
-      call?.pause(true)
-      voiceState("transcription", { call: true })
-      const r = await V.transcribe(s, pcm)
-      if (!call) return
-      if (!r.ok || !r.text || r.text.length < 2) {
-        voiceState("écoute", { call: true })
-        return call.pause(false)
-      }
-      if (/^(raccroche|fin de l'appel|au revoir)\.?$/i.test(r.text.trim())) return endCall()
-      broadcast({ type: "voice-text", text: r.text })
-      voiceState("réponse", { call: true })
-      let answer = ""
-      const off = (e: EngineEvent) => { if (e.type === "done") answer = e.text }
-      const prev = S.emit
-      S.emit = (e) => { off(e); prev(e) }
-      try {
-        await S.send(r.text, space, { cg })
-      } catch (e) {
-        broadcast({ type: "notice", text: (e as Error).message, level: "error" })
-      }
-      S.emit = prev
-      if (!call) return
-      voiceState("lecture", { call: true })
-      stopSpeech = V.speak(s, V.speakable(answer || "Pas de réponse à lire."), () => {
-        stopSpeech = null
-        if (!call) return
-        voiceState("écoute", { call: true })
-        call.pause(false)
-      })
-    },
-    onLevel: (level) => broadcast({ type: "voice-level", level }),
-    onError: (m) => { broadcast({ type: "notice", text: `Appel arrêté : ${m}`, level: "error" }); endCall() },
-  })
-  return { ok: true }
-}
-function endCall() {
-  call?.stop()
-  call = null
-  stopSpeech?.()
-  stopSpeech = null
-  voiceState("", { call: false })
 }
 
 // ------------------------------------------------------------------ HTTP
@@ -179,7 +148,7 @@ const server = Bun.serve({
         S.send(String(b.text ?? ""), space, { cg: !!b.cg, mediaModel: b.mediaModel }).catch(() => {})
         return json({ ok: true }, 202)
       }
-      if (p === "/api/interrupt") return (S.interrupt(), stopSpeech?.(), json({ ok: true }))
+      if (p === "/api/interrupt") return (S.interrupt(), json({ ok: true }))
       if (p === "/api/perm") {
         const b = await body()
         S.answerPerm(Number(b.id), b.decision)
@@ -237,14 +206,12 @@ const server = Bun.serve({
           poe: bal && bal.ok ? { points: bal.points, usd: bal.usd } : null,
         })
       }
-      if (p === "/api/voice/status") return json(V.setup())
-      if (p === "/api/voice/dictate") return json(await dictate())
-      if (p === "/api/voice/call") {
-        const b = await body()
-        if (b.on === false) return (endCall(), json({ ok: true }))
-        return json(startCall((b.space ?? "conversation") as Space, !!b.cg))
+      if (p === "/api/voice/status") {
+        const r = await voiceReady()
+        return json(r.ok ? { ok: true } : { ok: false, reason: r.reason }) // jamais la clé
       }
-      if (p === "/api/voice/stop-speech") return (stopSpeech?.(), json({ ok: true }))
+      if (p === "/api/voice/dictate") return json(await dictate())
+      if (p === "/api/voice/stop") return (dictating?.stop(), json({ ok: true }))
       return json({ error: "inconnu" }, 404)
     } catch (e) {
       return json({ error: (e as Error).message }, 500)
@@ -255,7 +222,7 @@ const server = Bun.serve({
 console.log(JSON.stringify({ event: "ready", port: server.port, token }))
 
 function shutdown() {
-  endCall()
+  dictating?.stop()
   S.close()
   server.stop(true)
   process.exit(0)
