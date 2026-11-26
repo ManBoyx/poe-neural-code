@@ -221,6 +221,30 @@ export class Memory {
                           JOIN items ib ON ib.id=c.item_b WHERE c.district_id=? AND c.status='open'`).all(districtId) as any
   }
 
+  // --- résumés (compactage) : vérifiables contre leurs sources
+  addSummary(districtId: number, convId: number, content: string, fromId: number, toId: number, method: string): number {
+    const id = Number(this.db.query("INSERT INTO summaries(district_id,department_id,conversation_id,level,content,from_archive_id,to_archive_id,method,created) VALUES(?,?,?,?,?,?,?,?,?)")
+      .run(districtId, this.dept(districtId, "summaries"), convId, "segment", content, fromId, toId, method, now()).lastInsertRowid)
+    this.db.query("INSERT INTO summaries_fts(rowid,content) VALUES(?,?)").run(id, content)
+    return id
+  }
+
+  summary(id: number): { id: number; content: string; conversation_id: number; from_archive_id: number; to_archive_id: number; verified_ok: number | null; method: string } | null {
+    return this.db.query("SELECT id, content, conversation_id, from_archive_id, to_archive_id, verified_ok, method FROM summaries WHERE id=?").get(id) as any
+  }
+
+  summaries(convId: number) {
+    return this.db.query("SELECT id, content, verified_ok, created FROM summaries WHERE conversation_id=? ORDER BY id").all(convId) as { id: number; content: string; verified_ok: number | null; created: number }[]
+  }
+
+  setVerified(id: number, ok: boolean): void {
+    this.db.query("UPDATE summaries SET verified_ok=?, verified_at=? WHERE id=?").run(ok ? 1 : 0, now(), id)
+  }
+
+  archiveRange(convId: number, fromId: number, toId: number) {
+    return this.db.query("SELECT id, role, content FROM archive WHERE conversation_id=? AND id BETWEEN ? AND ? ORDER BY seq").all(convId, fromId, toId) as { id: number; role: string; content: string }[]
+  }
+
   // --- recherche
   search(query: string, opts: { districtId?: number; limit?: number; layers?: Hit["layer"][] } = {}): Hit[] {
     const q = ftsQuery(query)

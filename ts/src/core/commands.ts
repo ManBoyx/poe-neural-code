@@ -33,7 +33,7 @@ export const COMMANDS: Command[] = [
   { name: "free", desc: "Modèles gratuits disponibles", origin: "eclipse", ready: true },
   { name: "detect", desc: "Détecter à nouveau les agents installés", origin: "eclipse", ready: true },
   { name: "agent-path", desc: "Indiquer à la main l'exécutable d'un agent", usage: "/agent-path ID [CHEMIN]", origin: "eclipse", ready: true },
-  { name: "fusion", desc: "Le modèle actif peut consulter d'autres modèles ou agents", usage: "/fusion [on|off|list|add ID|remove ID]", origin: "eclipse", ready: false, step: S.agents },
+  { name: "fusion", desc: "Le modèle actif peut consulter d'autres modèles ou agents", usage: "/fusion [on|off|list|add ID|remove ID]", origin: "eclipse", ready: true },
   { name: "cg", desc: "Discussion commune Claude Code et Codex : un écrit, l'autre relit, un seul résultat", usage: "/cg [off | lead claude|codex]", origin: "eclipse", ready: true },
   // --- session et conversation
   { name: "new", aliases: ["clear"], desc: "Nouvelle discussion", keys: "ctrl+x n", origin: "les deux", ready: true },
@@ -47,12 +47,12 @@ export const COMMANDS: Command[] = [
   { name: "btw", desc: "Réponse ponctuelle, sans l'ajouter à la discussion", usage: "/btw QUESTION", origin: "opencode", ready: true },
   { name: "undo", desc: "Annuler le dernier message (réponses et fichiers)", keys: "ctrl+x u", origin: "eclipse", ready: true },
   { name: "redo", desc: "Rétablir le message annulé", keys: "ctrl+x r", origin: "eclipse", ready: true },
-  { name: "compact", aliases: ["summarize"], desc: "Compacter la session (résumé vérifiable)", keys: "ctrl+x c", origin: "eclipse", ready: false, step: S.mem },
+  { name: "compact", aliases: ["summarize"], desc: "Compacter la session (résumé vérifiable)", keys: "ctrl+x c", origin: "eclipse", ready: true },
   { name: "export", desc: "Exporter la discussion en Markdown", keys: "ctrl+x x", origin: "eclipse", ready: true },
   { name: "copy", desc: "Copier la dernière réponse", keys: "ctrl+x y", origin: "eclipse", ready: true },
   { name: "timeline", desc: "Aller à un message de la discussion", keys: "ctrl+x g", origin: "eclipse", ready: true },
   { name: "goal", desc: "Continuer jusqu'à atteindre un objectif", usage: "/goal OBJECTIF | pause | resume | clear", origin: "opencode", ready: true },
-  { name: "automation", desc: "Créer, lister, mettre en pause ou supprimer une automatisation", origin: "opencode", ready: false, step: S.tools },
+  { name: "automation", desc: "Message répété (tant qu'Eclipse est ouvert) : add 30m TEXTE | list | pause N | resume N | delete N", origin: "opencode", ready: true },
   { name: "review", desc: "Relire les changements (commit, branche, PR ; défaut : non commités)", usage: "/review [commit|branch|pr]", origin: "opencode", ready: true },
   { name: "attach", desc: "Joindre une image ou un fichier (ou @chemin dans le message)", usage: "/attach CHEMIN", origin: "eclipse", ready: true },
   // --- modes, permissions
@@ -64,8 +64,8 @@ export const COMMANDS: Command[] = [
   { name: "add-dir", desc: "Autoriser un dossier en plus du projet", usage: "/add-dir CHEMIN", origin: "eclipse", ready: true },
   // --- mémoire, instructions, contexte
   { name: "memory", desc: "Mémoire du projet : voir, chercher, ajouter, épingler, oublier", usage: "/memory [REQUÊTE] | add TEXTE | pin N | forget N", origin: "eclipse", ready: true },
-  { name: "verify", desc: "Vérifier un résumé contre ses sources", usage: "/verify ID", origin: "eclipse", ready: false, step: S.mem },
-  { name: "system", aliases: ["instructions"], desc: "Consignes personnelles et du projet", origin: "eclipse", ready: false, step: S.mem },
+  { name: "verify", desc: "Vérifier un résumé contre ses sources", usage: "/verify ID", origin: "eclipse", ready: true },
+  { name: "system", aliases: ["instructions"], desc: "Consignes personnelles et du projet", origin: "eclipse", ready: true },
   { name: "init", desc: "Créer ou mettre à jour AGENTS.md (guidé)", origin: "les deux", ready: true },
   { name: "context", desc: "Ce qui est envoyé au modèle (consignes, mémoire, historique)", origin: "eclipse", ready: true },
   { name: "todo", desc: "Tâches : add TEXTE | doing N | done N | clear", usage: "/todo add|doing|done|clear", origin: "eclipse", ready: true },
@@ -76,9 +76,9 @@ export const COMMANDS: Command[] = [
   { name: "rate", desc: "Taux points / USD saisi à la main", usage: "/rate N", origin: "eclipse", ready: true },
   { name: "spent", desc: "Dépense saisie à la main (points)", usage: "/spent N", origin: "eclipse", ready: true },
   // --- extensions
-  { name: "skills", desc: "Lister les skills", origin: "les deux", ready: false, step: S.tools },
-  { name: "plugins", desc: "Plugins et confiance", usage: "/plugins [trust|untrust NOM]", origin: "les deux", ready: false, step: S.tools },
-  { name: "mcp", aliases: ["mcps"], desc: "Serveurs MCP", origin: "les deux", ready: false, step: S.mcp },
+  { name: "skills", desc: "Lister les skills", origin: "les deux", ready: true },
+  { name: "plugins", desc: "Plugins et confiance", usage: "/plugins [trust|untrust NOM]", origin: "les deux", ready: true },
+  { name: "mcp", aliases: ["mcps"], desc: "Serveurs MCP", origin: "les deux", ready: true },
   { name: "reload", desc: "Recharger configuration, skills, modes et plugins", origin: "les deux", ready: true },
   // --- affichage
   { name: "themes", desc: "Choisir le thème (dont contraste élevé et sans couleur)", keys: "ctrl+x t", origin: "les deux", ready: true },

@@ -25,6 +25,8 @@ import { openAiTools, READ_ONLY_TOOLS, runTool, summarize, type Todo, type ToolE
 import { Snapshots } from "../core/snapshots"
 import { verifyPassword } from "../core/auth"
 import { available as sandboxAvailable } from "../core/sandbox"
+import { McpManager } from "../core/mcp"
+import { discoverPlugins, discoverSkills, loadPlugins, setTrust, skillCatalog, type PluginCommand, type PluginInfo, type Skill } from "../core/extensions"
 import { cgTurn, CG_LABEL, parsePlan, type CgAgent } from "../core/cg"
 import { CgZones, type Zone } from "./CgView"
 import { agentModels, AGENT_SUPPORT, POWER_LABEL, runAgent, type Power } from "../core/agents"
@@ -151,6 +153,56 @@ export function App(props: { cwd: string }) {
   const emptyZone = (label: string): Zone => ({ status: "en attente", entries: [], input: 0, output: 0, label })
   const [zones, setZones] = createStore<Record<CgAgent, Zone>>({ claude: emptyZone("Claude Code"), codex: emptyZone("Codex") })
   const cgSessions: Partial<Record<CgAgent, string>> = {}
+  const mcp = new McpManager()
+  const [mcpTick, setMcpTick] = createSignal(0)
+  let skills: Skill[] = []
+  let plugins: PluginInfo[] = []
+  let pluginCmds: PluginCommand[] = []
+  async function loadExtensions() {
+    skills = discoverSkills(cwd())
+    plugins = discoverPlugins(cwd())
+    pluginCmds = await loadPlugins(plugins)
+    mcp.start(cwd(), () => setMcpTick((x) => x + 1))
+  }
+  /** Consignes du projet (AGENTS.md, CLAUDE.md, .eclipse/instructions.md) et personnelles, bornées. */
+  function instructions(): string {
+    const parts: string[] = []
+    if (prefs().system) parts.push(`Consignes personnelles de l'utilisateur :\n${prefs().system}`)
+    for (const f of ["AGENTS.md", "CLAUDE.md", ".eclipse/instructions.md"]) {
+      const pth = join(cwd(), f)
+      if (existsSync(pth)) parts.push(`Consignes du projet (${f}, contenu du dépôt) :\n${readFileSync(pth, "utf8").slice(0, 8000)}`)
+    }
+    const cat = skillCatalog(skills)
+    if (cat) parts.push(cat)
+    return parts.join("\n\n")
+  }
+  /** /fusion : consulter un autre modèle d'API ou un agent, en lecture seule. */
+  async function consultHelper(id: string, question: string): Promise<{ ok: boolean; text: string }> {
+    if (!(prefs().fusion ?? []).includes(id)) return { ok: false, text: `assistant inconnu : ${id} (configurés : ${(prefs().fusion ?? []).join(", ") || "aucun"})` }
+    if (id.startsWith("agent:")) {
+      const d = detected().find((x) => x.id === id.slice(6))
+      if (!d?.installed) return { ok: false, text: `${id} n'est pas installé` }
+      let text = ""
+      for await (const e of runAgent({ agent: d.id, binary: d.path!, cwd: cwd(), prompt: question, power: "lecture", sandbox: sandboxOn(), signal: abort?.signal, idleMs: 120_000 })) {
+        if (e.type === "text") text += (text ? "\n\n" : "") + e.text
+        if (e.type === "usage") recordUsage({ session: sessionKey(), model: `cli:${d.id}`, tokensIn: e.input, tokensOut: e.output, measured: true, usd: null, note: "/fusion" })
+      }
+      return { ok: !!text, text: text || "pas de réponse" }
+    }
+    const [pid, ...mparts] = id.split("/")
+    const pv = provider(pid)
+    if (!pv) return { ok: false, text: `fournisseur inconnu : ${pid}` }
+    let text = ""
+    let tin = 0, tout = 0
+    for await (const e of streamChat(pv, mparts.join("/"), [{ role: "user", content: question }], { signal: abort?.signal })) {
+      if (e.type === "text") text += e.text
+      else if (e.type === "usage") { tin = e.input ?? 0; tout = e.output ?? 0 }
+      else if (e.type === "error") return { ok: false, text: e.message }
+    }
+    const mi = status[pid]?.models?.find((m) => m.id === mparts.join("/"))
+    recordUsage({ session: sessionKey(), model: mparts.join("/"), tokensIn: tin, tokensOut: tout, measured: !!(tin || tout), usd: estimateUsd(mi?.priceIn, mi?.priceOut, tin, tout), rate: rate(), note: `${pid} · /fusion` })
+    return { ok: true, text }
+  }
   const recordUsage = (e: Parameters<Budget["record"]>[0]) => {
     budget.record(e)
     setUsageTick((x) => x + 1) // après l'enregistrement : la colonne relit le bon total
@@ -250,6 +302,16 @@ export function App(props: { cwd: string }) {
 
   onMount(() => {
     refreshAll()
+    loadExtensions()
+    // automatisations : vérifiées toutes les 20 s, lancées seulement quand Eclipse est libre
+    setInterval(() => {
+      if (busy() || overlay()) return
+      const due = (prefs().automations ?? []).find((a) => !a.paused && Date.now() - (a.last ?? 0) >= a.every * 1000)
+      if (!due) return
+      updatePrefs({ automations: (prefs().automations ?? []).map((a) => (a.id === due.id ? { ...a, last: Date.now() } : a)) })
+      note(`Automatisation n° ${due.id} (toutes les ${Math.round(due.every / 60)} min) :`, "info")
+      send(due.prompt)
+    }, 20_000)
     if (!st().current) openModels() // premier lancement : aucun fournisseur n'est imposé
   })
 
@@ -515,7 +577,8 @@ export function App(props: { cwd: string }) {
     const ev = lv ? levelValue(mi?.effort, lv) : undefined
     if (ev && mi?.effortParam) extra[mi.effortParam] = ev
     const useTools = mi?.tools !== false && !noTools.has(effortKey(c))
-    const sys = systemPrompt(mode(), getLang(), cwd(), useTools, perms.mode) + (memCtx.text ? "\n\n" + memCtx.text : "")
+    const instr = instructions()
+    const sys = systemPrompt(mode(), getLang(), cwd(), useTools, perms.mode) + (instr ? "\n\n" + instr : "") + (memCtx.text ? "\n\n" + memCtx.text : "")
     const uc = buildUserContent(text, mi)
     for (const n of uc.notes) note(n, n.includes("non envoyée") || n.includes("introuvable") || n.includes("trop gros") ? "warn" : "info")
     const msgs: Msg[] = [{ role: "system", content: sys }, ...history, { role: "user", content: uc.content as any }]
@@ -524,7 +587,9 @@ export function App(props: { cwd: string }) {
     setBusy(true)
     abort = new AbortController()
     const signal = abort.signal
-    const env: ToolEnv = { roots: [cwd(), ...extraDirs()], perms, memory: mem, districtId: district(), todos: todoList, onTodos: syncTodos, signal, sandbox: sandboxOn() }
+    const helpers = prefs().fusionOn !== false ? (prefs().fusion ?? []).map((id) => ({ id, label: id })) : []
+    const env: ToolEnv = { roots: [cwd(), ...extraDirs()], perms, memory: mem, districtId: district(), todos: todoList, onTodos: syncTodos, signal, sandbox: sandboxOn(),
+                           skills, mcp, helpers, helper: consultHelper }
     const saved = perms.mode
     if (opts.readOnly || mode() === "plan") perms.mode = "lecture"
     const snaps = useTools && !opts.aside ? new Snapshots(cwd()) : null
@@ -542,7 +607,7 @@ export function App(props: { cwd: string }) {
         setItems(idx, { role: "assistant", text: "", streaming: true, aside: opts.aside, memory: step === 0 ? memLine : undefined })
         let calls: { id: string; name: string; args: string }[] = []
         let failed = false
-        for await (const e of streamChat(p, c.model!, msgs, { signal, extra, tools: useTools ? openAiTools() : undefined })) {
+        for await (const e of streamChat(p, c.model!, msgs, { signal, extra, tools: useTools ? openAiTools(env) : undefined })) {
           if (e.type === "text") setItems(idx, "text", (x) => x + e.text)
           else if (e.type === "thinking") setItems(idx, "thinking", (x) => (x ?? "") + e.text)
           else if (e.type === "usage") {
@@ -679,7 +744,18 @@ export function App(props: { cwd: string }) {
         arg = m[2]
       } else if (!arg) return note(`Dans /cg, précisez l'agent : /${c.name} claude … ou /${c.name} codex …`, "warn")
     }
-    if (!c) return note(`${t("Commande inconnue")} : /${name}  (/help)`, "error")
+    if (!c) {
+      const pc = pluginCmds.find((x) => x.name === name)
+      if (pc) {
+        try {
+          const out = await pc.run(arg)
+          return note(`[plugin ${pc.plugin}] ${String(out ?? "")}`)
+        } catch (e) {
+          return note(`Erreur du plugin ${pc.plugin} : ${(e as Error).message}`, "error")
+        }
+      }
+      return note(`${t("Commande inconnue")} : /${name}  (/help)`, "error")
+    }
     if (!c.ready) return note(`/${c.name} : pas encore disponible dans cette version (étape « ${c.step} » du plan). La liste complète : /help.`, "warn")
     switch (c.name) {
       case "connect": {
@@ -846,6 +922,7 @@ export function App(props: { cwd: string }) {
         setCwd(target)
         setDistrict(mem.district(target))
         newChat()
+        loadExtensions()
         return flash(`Dossier : ${short(target)}`)
       }
       case "rename":
@@ -905,6 +982,7 @@ export function App(props: { cwd: string }) {
         return later({ type: "usage" })
       case "reload":
         setSt(load())
+        await loadExtensions()
         await refreshAll(true)
         return flash("Rechargé : réglages, clés, catalogues, agents")
       case "themes": {
@@ -1274,6 +1352,132 @@ export function App(props: { cwd: string }) {
       case "details":
         setShowDetails((x) => !x)
         return flash(showDetails() ? "Détail des outils affiché" : "Détail des outils masqué (une ligne par outil)")
+      case "system": {
+        const [sub, ...r] = arg.split(/\s+/)
+        const txt = r.join(" ").trim()
+        if (sub === "set") {
+          updatePrefs({ system: txt || undefined })
+          return note(txt ? "Consignes personnelles enregistrées : envoyées aux modèles d'API à chaque message." : "Consignes personnelles effacées.")
+        }
+        if (sub === "project") {
+          if (!txt) return note("Usage : /system project TEXTE — ajouté à .eclipse/instructions.md du projet", "error")
+          mkdirSync(join(cwd(), ".eclipse"), { recursive: true })
+          const f = join(cwd(), ".eclipse", "instructions.md")
+          writeFileSync(f, (existsSync(f) ? readFileSync(f, "utf8").replace(/\n*$/, "\n") : "") + txt + "\n")
+          return note(`Consigne ajoutée à ${short(f)}`)
+        }
+        if (sub === "clear") return updatePrefs({ system: undefined }), note("Consignes personnelles effacées.")
+        const i = instructions()
+        return note((i ? `Consignes envoyées aux modèles d'API :\n\n${i.slice(0, 3000)}${i.length > 3000 ? "\n…" : ""}` : "Aucune consigne : ni personnelle, ni AGENTS.md, CLAUDE.md ou .eclipse/instructions.md dans ce projet.") +
+                    "\n\n/system set TEXTE · /system project TEXTE · /system clear")
+      }
+      case "compact": {
+        const cur = current()
+        if (cur?.kind === "agent") return note(`${agentName(cur.provider)} compacte lui-même sa session ; Eclipse garde l'archive complète.`, "info")
+        if (!cur?.model) return note("Aucun modèle choisi : /models", "warn")
+        if (history.length < 4) return note("Discussion trop courte pour être compactée.", "warn")
+        if (!conv) return note("Rien à compacter.", "warn")
+        const p = provider(cur.provider)!
+        flash("Compactage en cours…")
+        setBusy(true)
+        const before = history.reduce((n, m) => n + estimateTokens(typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "")), 0)
+        let sum = ""
+        const transcript = history.map((m) => `${m.role === "user" ? "Utilisateur" : "Assistant"} : ${typeof m.content === "string" ? m.content : ""}`).join("\n\n").slice(-120_000)
+        for await (const e of streamChat(p, cur.model, [{ role: "user", content: "Résume fidèlement cette discussion pour pouvoir la continuer : objectifs, décisions et leurs raisons, fichiers concernés, état actuel, questions ouvertes. N'invente rien ; en français ; 400 mots au plus.\n\n" + transcript }])) {
+          if (e.type === "text") sum += e.text
+          else if (e.type === "error") {
+            setBusy(false)
+            return note(`Compactage impossible : ${e.message}`, "error")
+          }
+        }
+        setBusy(false)
+        if (!sum.trim()) return note("Compactage : réponse vide, rien n'a changé.", "warn")
+        const rows = mem.messages(conv)
+        const sid = mem.addSummary(district(), conv, sum, rows[0]?.id ?? 0, rows[rows.length - 1]?.id ?? 0, `modèle ${cur.model}`)
+        history = [{ role: "user", content: "Résumé de la discussion jusqu'ici (vérifiable avec /verify " + sid + ") :\n" + sum }, { role: "assistant", content: "Compris, je continue à partir de ce résumé." }]
+        return note(`Discussion compactée (résumé n° ${sid}) : ≈ ${before} → ${estimateTokens(sum)} tokens transmis désormais. L'archive complète est conservée. /verify ${sid} pour contrôler le résumé.`)
+      }
+      case "verify": {
+        const id = Number(arg)
+        const s = id ? mem.summary(id) : null
+        if (!s) return note(`Usage : /verify ID — résumés de cette discussion : ${conv ? mem.summaries(conv).map((x) => x.id).join(", ") || "aucun" : "aucun"}`, "error")
+        const cur = current()
+        if (cur?.kind !== "api" || !cur.model) return note("/verify utilise le modèle d'API choisi : /models", "warn")
+        const src = mem.archiveRange(s.conversation_id, s.from_archive_id, s.to_archive_id).map((r) => `${r.role} : ${r.content}`).join("\n\n").slice(-100_000)
+        let out = ""
+        flash("Vérification du résumé…")
+        for await (const e of streamChat(provider(cur.provider)!, cur.model, [{ role: "user", content: `Compare ce résumé à la discussion d'origine. Liste chaque affirmation du résumé qui est fausse, absente des sources ou déformée, puis conclus par une ligne « FIDÈLE: OUI » ou « FIDÈLE: NON ».\n\nRÉSUMÉ :\n${s.content}\n\nSOURCES :\n${src}` }])) {
+          if (e.type === "text") out += e.text
+          else if (e.type === "error") return note(`Vérification impossible : ${e.message}`, "error")
+        }
+        const ok = /FID[ÈE]LE\s*:\s*OUI/i.test(out)
+        const ko = /FID[ÈE]LE\s*:\s*NON/i.test(out)
+        if (ok || ko) mem.setVerified(id, ok)
+        return setItems(items.length, { role: "assistant", text: `### Vérification du résumé n° ${id} : ${ok ? "fidèle" : ko ? "écarts trouvés" : "sans conclusion claire"}\n\n${out}` })
+      }
+      case "skills": {
+        skills = discoverSkills(cwd())
+        if (!skills.length) return note("Aucun skill trouvé (.eclipse/skills, .claude/skills, ~/.claude/skills, ~/.config/eclipse/skills…).", "warn")
+        return openList(`Skills (${skills.length})`, () => skills.map((s) => ({ title: s.name, detail: s.description, right: s.scope, value: s.name })),
+                        (v) => { closeOverlay(); prompt?.setText(`Utilise le skill « ${v} » pour : `); setDraft(prompt?.plainText ?? "") }, "entrée : l'utiliser dans le prochain message · échap")
+      }
+      case "plugins": {
+        const [sub, nm] = arg.split(/\s+/)
+        plugins = discoverPlugins(cwd())
+        if ((sub === "trust" || sub === "untrust") && nm) {
+          const pl = plugins.find((x) => x.name === nm)
+          if (!pl) return note(`Plugin inconnu : ${nm}`, "error")
+          setTrust(pl, sub === "trust")
+          await loadExtensions()
+          const now2 = plugins.find((x) => x.name === nm)
+          return note(sub === "trust" ? (now2?.error ? `Plugin ${nm} : confiance donnée, mais erreur au chargement : ${now2.error}` : `Plugin ${nm} : confiance donnée et chargé (${pluginCmds.filter((x) => x.plugin === nm).map((x) => "/" + x.name).join(", ") || "aucune commande"}).`)
+                                    : `Plugin ${nm} : confiance retirée (il ne sera plus exécuté).`)
+        }
+        if (!plugins.length) return note("Aucun plugin (.eclipse/plugins ou ~/.config/eclipse/plugins, fichiers .ts ou .js). Un plugin exporte par défaut une fonction (api) => { api.command(nom, description, (arg) => texte) }.")
+        return note("Plugins :\n" + plugins.map((x) => `  ${x.name.padEnd(20)} ${x.scope.padEnd(7)} ${x.trusted ? (x.loaded ? "chargé" : `erreur : ${x.error}`) : "non exécuté (pas de confiance)"}`).join("\n") +
+                    "\n\n/plugins trust NOM · /plugins untrust NOM — la confiance porte sur le contenu exact du fichier.")
+      }
+      case "mcp": {
+        if (arg === "reload") {
+          await mcp.start(cwd(), () => setMcpTick((x) => x + 1))
+          return flash("Serveurs MCP relancés")
+        }
+        mcpTick()
+        if (!mcp.status.length) return note(`Aucun serveur MCP configuré. Fichier : ${short(join(dataDir(), "mcp.json"))} (ou .eclipse/mcp.json du projet), format {"mcpServers": {"nom": {"command": "…", "args": []}}}.`)
+        return note("Serveurs MCP (outils donnés aux modèles d'API) :\n" + mcp.status.map((s) => `  ${s.state === "connecté" ? I.ok : s.state === "erreur" ? I.error : I.off} ${s.name.padEnd(20)} ${s.state}${s.tools ? ` · ${s.tools} outil(s)` : ""}${s.error ? " · " + s.error : ""} (${s.source})`).join("\n") + "\n\n/mcp reload pour relancer")
+      }
+      case "fusion": {
+        const [sub, ...r] = arg.split(/\s+/)
+        const id = r.join(" ")
+        const list = prefs().fusion ?? []
+        if (sub === "add" && id) {
+          const ok = id.startsWith("agent:") ? !!detected().find((x) => x.id === id.slice(6))?.installed : !!provider(id.split("/")[0])
+          if (!ok) return note(`Assistant introuvable : ${id}. Formats : agent:codex, agent:claude, poe/claude-haiku-5.5, openrouter/…`, "error")
+          updatePrefs({ fusion: [...new Set([...list, id])], fusionOn: true })
+          return note(`Fusion : ${id} ajouté. Le modèle d'API actif peut le consulter (outil ask_helper, en lecture seule).`)
+        }
+        if (sub === "remove" && id) return updatePrefs({ fusion: list.filter((x) => x !== id) }), note(`Fusion : ${id} retiré.`)
+        if (sub === "on" || sub === "off") return updatePrefs({ fusionOn: sub === "on" }), note(`Fusion ${sub === "on" ? "activée" : "désactivée"}.`)
+        return note(`Fusion ${prefs().fusionOn === false ? "désactivée" : "activée"} · assistants : ${list.join(", ") || "aucun"}\n/fusion add agent:codex | add poe/MODÈLE | remove ID | on | off`)
+      }
+      case "automation": {
+        const [sub, a1, ...r] = arg.split(/\s+/)
+        const autos = prefs().automations ?? []
+        if (sub === "add") {
+          const every = parseDuration(a1 ?? "")
+          const txt = r.join(" ").trim()
+          if (!every || every < 60 || !txt) return note("Usage : /automation add 30m TEXTE (1 minute au moins) — envoyé à intervalle régulier tant qu'Eclipse est ouvert", "error")
+          const id = Math.max(0, ...autos.map((x) => x.id)) + 1
+          updatePrefs({ automations: [...autos, { id, every, prompt: txt, last: Date.now() }] })
+          return note(`Automatisation n° ${id} : « ${txt} » toutes les ${a1}, tant qu'Eclipse est ouvert (rien ne tourne quand il est fermé).`)
+        }
+        const n = Number(a1)
+        if ((sub === "pause" || sub === "resume") && autos.some((x) => x.id === n))
+          return updatePrefs({ automations: autos.map((x) => (x.id === n ? { ...x, paused: sub === "pause" } : x)) }), flash(`Automatisation n° ${n} ${sub === "pause" ? "en pause" : "reprise"}`)
+        if (sub === "delete" && autos.some((x) => x.id === n)) return updatePrefs({ automations: autos.filter((x) => x.id !== n) }), flash(`Automatisation n° ${n} supprimée`)
+        return note((autos.length ? "Automatisations :\n" + autos.map((x) => `  ${x.id}. toutes les ${Math.round(x.every / 60)} min${x.paused ? " (en pause)" : ""} : ${x.prompt.slice(0, 80)}`).join("\n") : "Aucune automatisation.") +
+                    "\n\n/automation add 30m TEXTE · pause N · resume N · delete N")
+      }
       case "highlights":
         return setItems(items.length, { role: "assistant", text: HIGHLIGHTS })
       case "help":
@@ -1284,6 +1488,7 @@ export function App(props: { cwd: string }) {
           ...COMMANDS.filter((x) => !x.ready).map((x) => ({ title: "/" + x.name, detail: `${x.desc} — étape « ${x.step} »`, right: x.origin, dim: true })),
         ], (v) => { closeOverlay(); prompt?.setText("/" + v + " "); setDraft("/" + v + " ") }, "↑↓ · entrée : écrire la commande · tapez pour filtrer · échap")
       case "exit":
+        await mcp.close()
         mem.close()
         budget.close()
         return renderer.destroy()

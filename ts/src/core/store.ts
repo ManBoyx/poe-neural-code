@@ -29,6 +29,10 @@ export interface Prefs {
   sidebar?: boolean
   sandbox?: boolean // défaut : active
   cgLead?: "claude" | "codex"
+  system?: string // consignes personnelles (/system set)
+  fusion?: string[] // assistants consultables : « fournisseur/modèle » ou « agent:id »
+  fusionOn?: boolean
+  automations?: { id: number; every: number; prompt: string; paused?: boolean; last?: number }[]
   agents?: Record<string, { model?: string; effort?: string; power?: "lecture" | "modifications" | "commandes" }> // réglages par agent
 }
 

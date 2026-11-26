@@ -9,6 +9,8 @@ import { isDestructive, type Permissions } from "./permissions"
 import { runCmd } from "./proc"
 import { available as sandboxAvailable, wrap } from "./sandbox"
 import type { Kind, Memory } from "./memory"
+import type { McpManager } from "./mcp"
+import type { Skill } from "./extensions"
 
 export interface ToolCall {
   id: string
@@ -36,6 +38,10 @@ export interface ToolEnv {
   onTodos?: () => void
   signal?: AbortSignal
   sandbox?: boolean // true : commandes dans bubblewrap (écriture limitée au projet)
+  skills?: Skill[]
+  mcp?: McpManager
+  helper?: (id: string, prompt: string) => Promise<{ ok: boolean; text: string }> // /fusion : consulter un autre modèle ou agent
+  helpers?: { id: string; label: string }[]
 }
 
 const MAX_OUT = 20_000
@@ -56,14 +62,23 @@ export const TOOL_DEFS = [
     parameters: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { text: { type: "string" }, status: { type: "string", enum: ["à faire", "en cours", "fait"] } }, required: ["text", "status"] } } }, required: ["items"] } },
   { name: "memory_note", description: "Enregistrer une information durable dans la mémoire du projet (fait, décision, contrainte, tâche…).",
     parameters: { type: "object", properties: { kind: { type: "string", enum: ["fact", "decision", "constraint", "task", "goal", "error", "question"] }, content: { type: "string" }, key: { type: "string" } }, required: ["kind", "content"] } },
+  { name: "skill", description: "Charger le contenu d'un skill du catalogue (instructions spécialisées).",
+    parameters: { type: "object", properties: { name: { type: "string" } }, required: ["name"] } },
+  { name: "ask_helper", description: "Consulter un autre modèle ou agent configuré avec /fusion (avis, relecture, deuxième opinion). Il ne modifie rien.",
+    parameters: { type: "object", properties: { helper: { type: "string" }, prompt: { type: "string" } }, required: ["helper", "prompt"] } },
   { name: "memory_search", description: "Chercher dans la mémoire du projet (éléments, résumés, discussions passées).",
     parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
 ] as const
 
-export const READ_ONLY_TOOLS = new Set(["read_file", "list_dir", "search_files", "memory_search", "todo_write"])
+export const READ_ONLY_TOOLS = new Set(["read_file", "list_dir", "search_files", "memory_search", "todo_write", "skill", "ask_helper"])
 
-export function openAiTools() {
-  return TOOL_DEFS.map((d) => ({ type: "function", function: { name: d.name, description: d.description, parameters: d.parameters } }))
+/** Outils proposés au modèle : intégrés (skill et ask_helper seulement s'ils servent), puis ceux des serveurs MCP. */
+export function openAiTools(env?: Pick<ToolEnv, "skills" | "mcp" | "helpers">) {
+  return [
+    ...TOOL_DEFS.filter((d) => (d.name !== "skill" || env?.skills?.length) && (d.name !== "ask_helper" || env?.helpers?.length))
+      .map((d) => ({ type: "function", function: { name: d.name, description: d.name === "ask_helper" && env?.helpers ? `${d.description} Disponibles : ${env.helpers.map((h) => h.id).join(", ")}.` : d.description, parameters: d.parameters } })),
+    ...(env?.mcp?.openAiTools() ?? []),
+  ]
 }
 
 /** Résumé lisible d'un appel (pas de JSON brut à l'écran). */
@@ -73,6 +88,8 @@ export function summarize(name: string, a: any): string {
   if (name === "todo_write") return `${(a.items ?? []).length} tâche(s)`
   if (name === "memory_note") return `${a.kind ?? ""} : ${String(a.content ?? "").slice(0, 60)}`
   if (name === "memory_search") return `« ${a.query ?? ""} »`
+  if (name === "skill") return String(a.name ?? "")
+  if (name === "ask_helper") return `${a.helper ?? ""} ← ${String(a.prompt ?? "").slice(0, 60)}`
   return String(a.path ?? "")
 }
 
@@ -202,6 +219,27 @@ export async function runTool(env: ToolEnv, call: ToolCall): Promise<ToolResult>
         const hits = env.memory.search(String(a.query ?? ""), { districtId: env.districtId, limit: 8 })
         return { ok: true, output: hits.map((h) => `[${h.layer}] ${h.text.replace(/\s+/g, " ").slice(0, 300)}`).join("\n") || "rien en mémoire" }
       }
+      case "skill": {
+        const s = env.skills?.find((x) => x.name === a.name)
+        if (!s) return { ok: false, output: `skill inconnu : ${a.name}` }
+        // skill du projet : contenu de dépôt non fiable, chargé après confirmation
+        if (s.scope === "projet" && !(await env.perms.authorize({ tool: "skill", kind: "read", summary: `charger le skill du projet « ${s.name} »`, detail: readFileSync(s.path, "utf8").slice(0, 3000), outside: true, grantKey: `skill:${s.name}` })))
+          return { ok: false, output: "chargement du skill refusé" }
+        return { ok: true, output: readFileSync(s.path, "utf8").slice(0, 20_000) }
+      }
+      case "ask_helper": {
+        if (!env.helper) return { ok: false, output: "aucun assistant configuré (/fusion add ID)" }
+        const r = await env.helper(String(a.helper ?? ""), String(a.prompt ?? ""))
+        return { ok: r.ok, output: r.text.slice(0, 20_000) }
+      }
+    }
+    if (call.name.startsWith("mcp__") && env.mcp) {
+      const tool = env.mcp.find(call.name)
+      if (!tool) return { ok: false, output: `outil MCP inconnu : ${call.name}` }
+      const ok = await env.perms.authorize({ tool: `MCP ${tool.server}`, kind: tool.readOnly ? "read" : "exec", summary: `${tool.name} ${JSON.stringify(a).slice(0, 120)}`,
+                                             detail: JSON.stringify(a, null, 2).slice(0, 2000), grantKey: `mcp:${call.name}` })
+      if (!ok) return { ok: false, output: "appel MCP refusé par l'utilisateur" }
+      return env.mcp.call(tool, a)
     }
     return { ok: false, output: `outil inconnu : ${call.name}` }
   } catch (e) {
