@@ -61,7 +61,9 @@ export function PermissionPrompt(props: { req: Request; onDecide: (d: Decision) 
   // lignes repliées à la largeur de la fenêtre : rien n'est coupé
   // largeur intérieure réelle (bords, marges, filet), en colonnes d'écran : aucune ligne n'est repliée une 2e fois
   const wrapped = () => (props.req.detail ?? "").split("\n").flatMap((l) => wrapToWidth(l, Math.max(20, w() - 13)))
-  const page = () => Math.max(3, props.height() - 16)
+  const page = () => Math.max(1, props.height() - 16)
+  // fenêtre trop petite pour montrer le détail sans le replier une 2e fois ni le couper : rien ne peut être autorisé
+  const tooSmall = () => props.height() - 16 < Math.min(3, wrapped().length) || w() - 13 < 20
   const maxOff = () => Math.max(0, wrapped().length - page())
   const lines = () => wrapped().slice(off(), off() + page())
   const allSeen = createSignal(false)
@@ -72,8 +74,8 @@ export function PermissionPrompt(props: { req: Request; onDecide: (d: Decision) 
   }
   // taille de la fenêtre changée : les coupures changent, la lecture reprend du début (et « Autoriser » se reverrouille)
   createEffect(on(() => [w(), page()], () => { setOff(0); allSeen[1](false) }, { defer: true }))
-  const blocked = (d: Decision) => d !== "deny" && props.req.mustRead && !seen()
-  const tryDecide = (d: Decision) => (blocked(d) ? scroll(page()) : decide(d))
+  const blocked = (d: Decision) => d !== "deny" && !!props.req.mustRead && (tooSmall() || !seen())
+  const tryDecide = (d: Decision) => (blocked(d) ? (tooSmall() ? undefined : scroll(page())) : decide(d))
   useKeyboard((k) => {
     k.preventDefault()
     k.stopPropagation()
@@ -102,6 +104,9 @@ export function PermissionPrompt(props: { req: Request; onDecide: (d: Decision) 
       <Show when={props.req.detail && props.req.detail !== props.req.summary}>
         <box flexDirection="column" marginTop={1} border={["left"]} borderColor={C.panelBorder} paddingX={1}>
           <For each={lines()}>{(l) => <text fg={lineColor(l)}>{l || " "}</text>}</For>
+          <Show when={props.req.mustRead && tooSmall()}>
+            <text fg={C.warn}>{"Fenêtre trop petite pour tout afficher : agrandissez le terminal pour pouvoir autoriser."}</text>
+          </Show>
           <Show when={maxOff() > 0}>
             <text fg={props.req.mustRead && !seen() ? C.warn : C.dim}>{`lignes ${off() + 1}–${Math.min(wrapped().length, off() + page())} sur ${wrapped().length} · ↑ ↓ ou espace pour faire défiler${props.req.mustRead && !seen() ? " · lisez jusqu'au bout pour pouvoir autoriser" : ""}`}</text>
           </Show>
