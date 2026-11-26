@@ -108,6 +108,10 @@ export function resolve(name: string): Command | undefined {
 /** Suggestions pendant la frappe : nom puis alias, commandes prêtes d'abord. */
 export function suggest(prefix: string, limit = 10): Command[] {
   const p = prefix.toLowerCase()
-  const hit = COMMANDS.filter((c) => c.name.startsWith(p) || c.aliases?.some((a) => a.startsWith(p)))
-  return hit.sort((a, b) => Number(b.ready) - Number(a.ready) || a.name.localeCompare(b.name)).slice(0, limit)
+  // ordre : nom qui commence par la saisie, puis alias qui commence par elle, puis la saisie ailleurs (nom, alias, description)
+  const byName = COMMANDS.filter((c) => c.name.startsWith(p))
+  const byAlias = COMMANDS.filter((c) => !byName.includes(c) && c.aliases?.some((a) => a.startsWith(p)))
+  const rest = p ? COMMANDS.filter((c) => !byName.includes(c) && !byAlias.includes(c) && (c.name.includes(p) || c.aliases?.some((a) => a.includes(p)) || c.desc.toLowerCase().includes(p))) : []
+  const order = (xs: Command[]) => xs.sort((a, b) => Number(b.ready) - Number(a.ready) || a.name.length - b.name.length || a.name.localeCompare(b.name))
+  return [...order(byName), ...order(byAlias), ...order(rest)].slice(0, limit)
 }

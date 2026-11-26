@@ -1,5 +1,5 @@
 /** Interface d'Eclipse, disposition façon OpenCode : accueil centré, fil de discussion, zone de saisie, barre du bas. */
-import { batch, createMemo, createSignal, For, onMount, Show } from "solid-js"
+import { batch, createEffect, createMemo, createSignal, For, on, onMount, Show } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/solid"
 import { SyntaxStyle, type TextareaRenderable } from "@opentui/core"
@@ -1500,22 +1500,45 @@ export function App(props: { cwd: string }) {
     if (!text) return
     if (busy()) return flash(t("Une réponse est en cours (échap pour interrompre)."))
     const sug = slashMatches()
+    const chosen = sug[Math.min(slashSel(), sug.length - 1)] // relevé AVANT de vider la saisie (qui remet la sélection à zéro)
     prompt?.clear()
     setDraft("")
     if (text.startsWith("/")) {
       const exact = resolve(text.slice(1).split(/\s/)[0])
-      runCommand(exact || !sug.length ? text : "/" + sug[0].name) // « /mod » + Entrée : la commande proposée, comme dans OpenCode
+      // « /pe » + Entrée : la commande sélectionnée dans la liste (↑↓), comme dans OpenCode
+      runCommand(exact || !chosen ? text : "/" + chosen.name)
     } else send(text)
   }
 
+  // liste des commandes pendant la frappe : ↑↓ pour choisir, Entrée pour lancer, Tab pour compléter, Échap pour fermer
+  const [slashSel, setSlashSel] = createSignal(0)
+  const [slashHidden, setSlashHidden] = createSignal("")
   const slashMatches = createMemo(() => {
     const d = draft()
-    if (!d.startsWith("/") || d.includes(" ") || d.includes("\n")) return []
-    return suggest(d.slice(1), 8)
+    if (!d.startsWith("/") || d.includes(" ") || d.includes("\n") || slashHidden() === d) return []
+    return suggest(d.slice(1), 100)
   })
+  createEffect(on(draft, () => setSlashSel(0)))
+  const SLASH_ROWS = 8
+  const slashStart = createMemo(() => Math.max(0, Math.min(slashSel() - Math.floor(SLASH_ROWS / 2), slashMatches().length - SLASH_ROWS)))
 
   useKeyboard((k) => {
     if (overlay()) return
+    const sm = slashMatches()
+    if (sm.length && !leader() && ["up", "down", "pageup", "pagedown", "escape", "tab"].includes(k.name) && !(k.name === "tab" && k.shift)) {
+      k.preventDefault() // la zone de saisie ne reçoit pas ces touches : elles pilotent la liste
+      k.stopPropagation()
+      if (k.name === "down") setSlashSel((s) => (s + 1) % sm.length)
+      else if (k.name === "up") setSlashSel((s) => (s - 1 + sm.length) % sm.length)
+      else if (k.name === "pagedown") setSlashSel((s) => Math.min(sm.length - 1, s + SLASH_ROWS))
+      else if (k.name === "pageup") setSlashSel((s) => Math.max(0, s - SLASH_ROWS))
+      else if (k.name === "escape") setSlashHidden(draft())
+      else if (k.name === "tab") {
+        prompt?.setText("/" + sm[Math.min(slashSel(), sm.length - 1)].name + " ")
+        setDraft(prompt?.plainText ?? "")
+      }
+      return
+    }
     if (leader()) {
       setLeader(false)
       const map: Record<string, string> = { m: "/models", n: "/new", l: "/sessions", t: "/themes", u: "/undo", r: "/redo", s: "/status", i: "/usage", y: "/copy", x: "/export", e: "/editor", a: "/agents", p: "/permissions", c: "/compact", g: "/timeline", h: "/details", b: "/sidebar" }
@@ -1540,25 +1563,27 @@ export function App(props: { cwd: string }) {
     else if (k.ctrl && k.name === "p") runCommand("/help")
     else if (k.ctrl && k.name === "t") runCommand("/effort")
     else if (k.name === "tab" && k.shift) runCommand("/mode " + (mode() === "build" ? "plan" : "build"))
-    else if (k.name === "tab" && slashMatches().length) {
-      prompt?.setText("/" + slashMatches()[0].name + " ")
-      setDraft(prompt?.plainText ?? "")
-    }
   })
 
   const PromptBox = () => (
     <box flexDirection="column" width="100%">
       <Show when={slashMatches().length}>
         <box flexDirection="column" border={["left"]} borderStyle="heavy" borderColor={C.panelBorder} paddingX={1} backgroundColor={C.panel}>
-          <For each={slashMatches()}>
-            {(c, i) => (
-              <box flexDirection="row" height={1}>
-                <text fg={i() === 0 ? C.accent : C.text} width={16}>{(i() === 0 ? "› /" : "  /") + c.name}</text>
-                <text fg={c.ready ? C.muted : C.dim} flexGrow={1}>{c.desc.slice(0, Math.max(10, dims().width - 50)) + (c.ready ? "" : ` (${t("à venir")})`)}</text>
-                <text fg={C.dim}>{c.keys ?? ""}</text>
-              </box>
-            )}
+          <For each={slashMatches().slice(slashStart(), slashStart() + SLASH_ROWS)}>
+            {(c, i) => {
+              const on = () => slashStart() + i() === slashSel()
+              return (
+                <box flexDirection="row" height={1} backgroundColor={on() ? C.selBg : undefined}>
+                  <text fg={on() ? C.accent : C.text} width={16}>{(on() ? "› /" : "  /") + c.name}</text>
+                  <text fg={c.ready ? C.muted : C.dim} flexGrow={1}>{c.desc.slice(0, Math.max(10, dims().width - 50)) + (c.ready ? "" : ` (${t("à venir")})`)}</text>
+                  <text fg={C.dim}>{c.keys ?? ""}</text>
+                </box>
+              )
+            }}
           </For>
+          <Show when={slashMatches().length > SLASH_ROWS}>
+            <text fg={C.dim}>{`${slashSel() + 1}/${slashMatches().length} · ↑↓ choisir · entrée lancer · tab compléter · échap fermer`}</text>
+          </Show>
         </box>
       </Show>
       <box flexDirection="column" border={["left"]} borderStyle="heavy" borderColor={busy() ? C.warn : mode() === "plan" ? C.other : C.accent} paddingX={2} paddingY={1} backgroundColor={C.panel}>
