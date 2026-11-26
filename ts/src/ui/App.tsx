@@ -180,6 +180,7 @@ export function App(props: { cwd: string }) {
   const [cgOn, setCgOn] = createSignal(false)
   const [cgPhase, setCgPhase] = createSignal("")
   const [cgTab, setCgTab] = createSignal("ensemble")
+  let beforeCg: number | null = null // discussion en cours avant d'entrer dans /cg, retrouvée à la sortie
   const emptyZone = (label: string): Zone => ({ status: "en attente", entries: [], input: 0, output: 0, label, subs: [] })
   const [cgModels, setCgModels] = createSignal<Partial<Record<CgAgent, AgentModel[]>>>({})
   /** Ajoute une ligne dans la zone d'un agent, ou dans celle de son sous-agent (parent). */
@@ -378,7 +379,7 @@ export function App(props: { cwd: string }) {
 
   function ensureConv(firstText: string): number {
     if (conv) return conv
-    const tt = firstText.replace(/\s+/g, " ").slice(0, 60)
+    const tt = (cgOn() ? "[cg] " : "") + firstText.replace(/\s+/g, " ").slice(0, 60)
     conv = mem.newConversation(district(), tt)
     setTitle(tt)
     return conv
@@ -393,6 +394,8 @@ export function App(props: { cwd: string }) {
   }
 
   function loadConversation(id: number) {
+    const tt = (mem.db.query("SELECT title FROM conversations WHERE id=?").get(id) as { title: string } | null)?.title ?? ""
+    if (tt.startsWith("[cg]") !== cgOn()) setCgOn(tt.startsWith("[cg]")) // une discussion /cg se rouvre dans /cg, une autre hors de /cg
     const msgs = mem.messages(id)
     const row = mem.db.query("SELECT title, district_id FROM conversations WHERE id=?").get(id) as { title: string; district_id: number } | null
     batch(() => {
@@ -548,6 +551,20 @@ export function App(props: { cwd: string }) {
     return `${CG_LABEL[a]}${s.model ? " · " + s.model : ""}${s.effort ? " · " + s.effort : ""} · ${s.power ?? (a === "codex" ? "commandes" : "modifications")}`
   }
 
+  /** Quitte /cg (/new ou /cg off) : retour au mode normal et à la discussion d'avant, s'il y en avait une. */
+  function leaveCg() {
+    if (busy()) return flash(t("Une réponse est en cours (échap pour interrompre)."))
+    setCgOn(false)
+    const back = beforeCg
+    beforeCg = null
+    if (back) {
+      loadConversation(back)
+      return note("Sortie de /cg : retour à votre discussion précédente. /sessions pour les autres.")
+    }
+    newChat()
+    note("Sortie de /cg. /sessions pour retrouver vos discussions.")
+  }
+
   /** Ouvre (ou rouvre) la discussion /cg avec les réglages du menu. */
   function startCg() {
     if (busy()) return flash(t("Une réponse est en cours (échap pour interrompre)."))
@@ -555,6 +572,7 @@ export function App(props: { cwd: string }) {
       refreshZones()
       return note(`Réglages /cg appliqués : ${cgSummary()}`)
     }
+    beforeCg = conv
     newChat()
     for (const k of Object.keys(cgSessions)) delete cgSessions[k as CgAgent]
     const miss = (["claude", "codex"] as CgAgent[]).filter((a) => !detected().find((x) => x.id === a)?.installed)
@@ -565,7 +583,7 @@ export function App(props: { cwd: string }) {
       setCgTab("ensemble")
       setCgOn(true)
     })
-    conv = mem.newConversation(district(), "Claude Code et Codex")
+    conv = mem.newConversation(district(), "[cg] Claude Code et Codex")
     setTitle("Claude Code et Codex")
     if (miss.length === 2) return note(`/cg : ni Claude Code ni Codex n'est installé.\n  Claude Code : ${detected().find((x) => x.id === "claude")?.install}\n  Codex : ${detected().find((x) => x.id === "codex")?.install}`, "error")
     for (const a of miss) note(`${CG_LABEL[a]} n'est pas installé : /cg fonctionnera avec l'autre agent seul, sans relecture croisée.\n  Pour l'installer : ${detected().find((x) => x.id === a)?.install}`, "warn")
@@ -909,10 +927,7 @@ export function App(props: { cwd: string }) {
       case "models":
         return openModels()
       case "cg": {
-        if (arg === "off") {
-          setCgOn(false)
-          return note("Discussion /cg terminée. Retour au modèle choisi.")
-        }
+        if (arg === "off") return leaveCg()
         const [sub, who] = arg.split(/\s+/)
         if (sub === "lead" && (who === "claude" || who === "codex")) {
           updatePrefs({ cgLead: who })
@@ -1030,12 +1045,13 @@ export function App(props: { cwd: string }) {
         return note(path ? `Chemin de ${aid} : ${path}` : `${aid} : retour à la détection automatique`)
       }
       case "new":
+        if (cgOn()) return leaveCg()
         newChat()
         return flash("Nouvelle discussion")
       case "sessions":
       case "open": {
         const all = c.name === "open"
-        const list = mem.conversations(all ? undefined : district(), 200)
+        const list = mem.conversations(all ? undefined : district(), 400).filter((x) => cgOn() === (x.title ?? "").startsWith("[cg]")).slice(0, 200)
         if (!list.length) return note("Aucune session enregistrée pour ce projet. /open pour tous les projets.", "warn")
         return openList(all ? "Sessions et projets" : t("Sessions"), () => list.map((x) => ({
           title: x.title || `Session ${x.id}`, detail: `${x.count} échanges` + (all ? ` · ${x.district}` : ""),
