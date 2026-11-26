@@ -82,14 +82,33 @@ function ZoneBox(props: { agent: CgAgent; zone: Zone; width: number | `${number}
   )
 }
 
-export function CgZones(props: { zones: Record<CgAgent, Zone>; phase: string; width: number; height: number; tick?: string; onOpenSub: (a: CgAgent, id: string) => void }) {
+export function cgTabs(zones: Record<CgAgent, Zone>): { id: string; label: string; color?: string }[] {
+  return [
+    { id: "ensemble", label: "Vue d'ensemble" },
+    { id: "claude", label: "Claude Code" },
+    { id: "codex", label: "Codex" },
+    ...(["claude", "codex"] as CgAgent[]).flatMap((a) => zones[a].subs.map((s) => ({ id: `sub:${a}:${s.id}`, label: `${subMark(s)} ${s.label.slice(0, 18)}`, color: s.color }))),
+  ]
+}
+
+export function CgZones(props: { zones: Record<CgAgent, Zone>; phase: string; width: number; height: number; tick?: string; tab?: string; onTab?: (id: string) => void; onOpenSub: (a: CgAgent, id: string) => void }) {
   const wide = () => props.width >= 100
   // 45 % de la hauteur, sans jamais prendre la place de la saisie (≈ 13 lignes : titre, saisie, barre du bas, un peu de fil)
   const h = () => Math.max(4, Math.min(Math.floor(props.height * 0.45), props.height - 13))
   // hauteur fixe qui ne rétrécit pas : le fil des résultats et la zone de saisie restent en dessous, sans chevauchement
   return (
-    <box flexDirection="column" width="100%" height={wide() ? h() + 1 : 2 * (Math.floor(h() / 2) + 2) + 1} flexShrink={0}>
+    <box flexDirection="column" width="100%" height={(wide() ? h() + 1 : 2 * (Math.floor(h() / 2) + 2) + 1) + 1} flexShrink={0}>
+      <box flexDirection="row" height={1} flexShrink={0}>
+        <For each={cgTabs(props.zones)}>
+          {(tb) => (
+            <text fg={(props.tab ?? "ensemble") === tb.id ? C.accent : tb.color ?? C.muted} bg={(props.tab ?? "ensemble") === tb.id ? C.selBg : undefined}
+                  onMouseDown={() => props.onTab?.(tb.id)}>{` ${(props.tab ?? "ensemble") === tb.id ? "▸ " : ""}${tb.label} `}</text>
+          )}
+        </For>
+        <text fg={C.dim}>{"  alt+← → onglets"}</text>
+      </box>
       <text fg={C.accent} height={1}><b>{`${props.tick && props.phase && !/approuvé|Désaccord|répondu|Réponse directe|verdict/i.test(props.phase) ? props.tick : I.model}  ${props.phase || "Claude Code et Codex : décrivez votre demande"}`}</b></text>
+      <Show when={(props.tab ?? "ensemble") === "ensemble"} fallback={<TabBody zones={props.zones} tab={props.tab!} height={wide() ? h() : 2 * (Math.floor(h() / 2) + 2)} tick={props.tick} onOpenSub={props.onOpenSub} />}>
       <Show when={wide()} fallback={
         <box flexDirection="column">
           <ZoneBox agent="claude" zone={props.zones.claude} width="100%" height={Math.floor(h() / 2) + 2} tick={props.tick} onOpenSub={props.onOpenSub} />
@@ -101,6 +120,28 @@ export function CgZones(props: { zones: Record<CgAgent, Zone>; phase: string; wi
           <ZoneBox agent="codex" zone={props.zones.codex} width="50%" tick={props.tick} onOpenSub={props.onOpenSub} />
         </box>
       </Show>
+      </Show>
+    </box>
+  )
+}
+
+/** Contenu d'un onglet : un agent en pleine largeur, ou un sous-agent. */
+function TabBody(props: { zones: Record<CgAgent, Zone>; tab: string; height: number; tick?: string; onOpenSub: (a: CgAgent, id: string) => void }) {
+  if (props.tab === "claude" || props.tab === "codex")
+    return <ZoneBox agent={props.tab} zone={props.zones[props.tab]} width="100%" height={props.height} tick={props.tick} onOpenSub={props.onOpenSub} />
+  const [, a, id] = props.tab.split(":")
+  const s = () => props.zones[a as CgAgent]?.subs.find((x) => x.id === id)
+  return (
+    <box flexDirection="column" height={props.height} border borderStyle="rounded" borderColor={s()?.color ?? C.panelBorder} paddingX={1}
+         title={` ${s() ? subMark(s()!) : ""} ${s()?.label ?? "sous-agent"} · sous-agent de ${CG_LABEL[a as CgAgent] ?? a} `} titleColor={s()?.color ?? C.text}>
+      <text fg={s()?.status === "travaille" ? C.warn : s()?.status === "échec" ? C.error : C.ok}>{(s()?.status === "travaille" && props.tick ? props.tick + " " : "") + (s()?.status ?? "terminé")}</text>
+      <scrollbox flexGrow={1} stickyScroll stickyStart="bottom">
+        <Entries entries={s()?.entries ?? []} empty="rien encore" />
+        <Show when={s()?.report}>
+          <text fg={C.accent} marginTop={1}><b>Rapport rendu à l'agent</b></text>
+          <text fg={C.text}>{s()!.report}</text>
+        </Show>
+      </scrollbox>
     </box>
   )
 }

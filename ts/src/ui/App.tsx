@@ -29,7 +29,7 @@ import { available as sandboxAvailable } from "../core/sandbox"
 import { McpManager } from "../core/mcp"
 import { discoverPlugins, discoverSkills, loadPlugins, setTrust, skillCatalog, type PluginCommand, type PluginInfo, type Skill } from "../core/extensions"
 import { cgTurn, CG_LABEL, parsePlan, type CgAgent, type CgMode } from "../core/cg"
-import { CgZones, SUB_COLORS, SubAgentView, type Zone, type ZoneEntry } from "./CgView"
+import { CgZones, cgTabs, SUB_COLORS, SubAgentView, type Zone, type ZoneEntry } from "./CgView"
 import { CgMenu } from "./CgMenu"
 import { type AgentModel, agentModels, AGENT_SUPPORT, POWER_LABEL, runAgent, type Power } from "../core/agents"
 import { coerce } from "../core/providers"
@@ -179,6 +179,7 @@ export function App(props: { cwd: string }) {
   // /cg : discussion commune Claude Code et Codex
   const [cgOn, setCgOn] = createSignal(false)
   const [cgPhase, setCgPhase] = createSignal("")
+  const [cgTab, setCgTab] = createSignal("ensemble")
   const emptyZone = (label: string): Zone => ({ status: "en attente", entries: [], input: 0, output: 0, label, subs: [] })
   const [cgModels, setCgModels] = createSignal<Partial<Record<CgAgent, AgentModel[]>>>({})
   /** Ajoute une ligne dans la zone d'un agent, ou dans celle de son sous-agent (parent). */
@@ -561,6 +562,7 @@ export function App(props: { cwd: string }) {
       for (const a of ["claude", "codex"] as CgAgent[]) setZones(a, emptyZone(zoneLabel(a)))
       for (const a of miss) setZones(a, "status", "absent")
       setCgPhase("")
+      setCgTab("ensemble")
       setCgOn(true)
     })
     conv = mem.newConversation(district(), "Claude Code et Codex")
@@ -1667,6 +1669,15 @@ export function App(props: { cwd: string }) {
 
   useKeyboard((k) => {
     if (overlay()) return
+    // /cg : Alt+← → passent d'un onglet à l'autre (vue d'ensemble, agents, sous-agents)
+    if (cgOn() && k.meta && (k.name === "left" || k.name === "right")) {
+      const tabs = cgTabs(zones)
+      const i = Math.max(0, tabs.findIndex((x) => x.id === cgTab()))
+      setCgTab(tabs[(i + (k.name === "right" ? 1 : -1) + tabs.length) % tabs.length].id)
+      k.preventDefault()
+      k.stopPropagation()
+      return
+    }
     const sm = slashMatches()
     if (sm.length && !leader() && ["up", "down", "pageup", "pagedown", "escape", "tab"].includes(k.name) && !(k.name === "tab" && k.shift)) {
       k.preventDefault() // la zone de saisie ne reçoit pas ces touches : elles pilotent la liste
@@ -1814,8 +1825,8 @@ export function App(props: { cwd: string }) {
   const Thread = () => (
     <box flexDirection="column" flexGrow={1} paddingX={2} paddingTop={1}>
       <text fg={C.text} height={1} flexShrink={0}><b>{(title() || items.find((i) => i.role === "user")?.text || "").split("\n")[0].slice(0, dims().width - 10)}</b></text>
-      <Show when={cgOn()}><CgZones zones={zones} phase={cgPhase()} tick={spinner()} width={dims().width - (sidebarOn() && dims().width >= 110 ? 36 : 0)} height={dims().height}
-                                   onOpenSub={(a, id) => setOverlay({ type: "sub", agent: a, id })} /></Show>
+      <Show when={cgOn()}><CgZones zones={zones} phase={cgPhase()} tick={spinner()} tab={cgTab()} onTab={setCgTab} width={dims().width - (sidebarOn() && dims().width >= 110 ? 36 : 0)} height={dims().height}
+                                   onOpenSub={(a, id) => setCgTab(`sub:${a}:${id}`)} /></Show>
       <scrollbox ref={(r: any) => (threadScroll = r)} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom" marginTop={1}>
         <For each={items}>
           {(it, i) => (
