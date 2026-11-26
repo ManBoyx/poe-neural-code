@@ -25,6 +25,7 @@ import { openAiTools, READ_ONLY_TOOLS, runTool, summarize, type Todo, type ToolE
 import { Snapshots } from "../core/snapshots"
 import { verifyPassword } from "../core/auth"
 import { available as sandboxAvailable } from "../core/sandbox"
+import { agentModels, AGENT_SUPPORT, POWER_LABEL, runAgent, type Power } from "../core/agents"
 import { coerce } from "../core/providers"
 import { VERSION_INFO } from "../core/version"
 import { Picker, type ProviderStatus } from "./Picker"
@@ -139,7 +140,13 @@ export function App(props: { cwd: string }) {
   const [goal, setGoal] = createSignal<{ text: string; active: boolean; rounds: number } | null>(null)
   const [attachments, setAttachments] = createSignal<string[]>([])
   const [showDetails, setShowDetails] = createSignal(true)
-  const noTools = new Set<string>() // modèles qui ont refusé les outils (HTTP 400) : on n'en renvoie plus
+  const agentSessions: Record<string, string> = {} // agent -> identifiant de sa session (reprise d'un message à l'autre)
+  const noTools = new Set<string>()
+  const [usageTick, setUsageTick] = createSignal(0)
+  const recordUsage = (e: Parameters<Budget["record"]>[0]) => {
+    budget.record(e)
+    setUsageTick((x) => x + 1) // après l'enregistrement : la colonne relit le bon total
+  } // modèles qui ont refusé les outils (HTTP 400) : on n'en renvoie plus
   let abort: AbortController | null = null
   let history: Msg[] = []
 
@@ -185,7 +192,10 @@ export function App(props: { cwd: string }) {
   const currentLabel = createMemo(() => {
     const c = current()
     if (!c) return t("aucun modèle — /models")
-    if (c.kind === "agent") return agentName(c.provider)
+    if (c.kind === "agent") {
+      const a = prefs().agents?.[c.provider] ?? {}
+      return `${agentName(c.provider)}${a.model ? " · " + a.model : ""}${a.effort ? " · " + a.effort : ""} · ${a.power ?? "modifications"}`
+    }
     return `${c.model} · ${provider(c.provider)?.label ?? c.provider}${effortLabel()}`
   })
 
@@ -256,6 +266,7 @@ export function App(props: { cwd: string }) {
   }
 
   function newChat() {
+    for (const k of Object.keys(agentSessions)) delete agentSessions[k]
     setItems([])
     history = []
     conv = null
@@ -272,6 +283,12 @@ export function App(props: { cwd: string }) {
       if (row) setDistrict(row.district_id)
       setItems(msgs.filter((m) => m.role === "user" || m.role === "assistant").map((m) => ({ role: m.role as Item["role"], text: m.content, archiveId: m.id })))
     })
+    for (const m of msgs) {
+      try {
+        const meta = JSON.parse(m.meta || "{}")
+        if (meta.agent && meta.agentSession) agentSessions[meta.agent] = meta.agentSession
+      } catch {}
+    }
     history = msgs.filter((m) => m.role === "user" || m.role === "assistant").slice(-40).map((m) => ({ role: m.role as Msg["role"], content: m.content }))
     flash(`Session reprise : ${msgs.length} échanges`)
   }
@@ -309,16 +326,100 @@ export function App(props: { cwd: string }) {
     return { content: text + extraText, notes }
   }
 
+  /** Tour d'un agent CLI : sortie lue au fil de l'eau, outils de l'agent montrés, session reprise au message suivant. */
+  async function askAgent(id: string, text: string, opts: { aside?: boolean; readOnly?: boolean } = {}) {
+    const d = detected().find((x) => x.id === id)
+    if (!d?.installed) return note(`${agentName(id)} n'est pas installé — ${d?.install ?? ""}`, "error")
+    if (!AGENT_SUPPORT[id]) return note(`${d.label} n'est pas encore pilotable depuis Eclipse (Claude Code, Codex, OpenCode et Gemini le sont).`, "warn")
+    const a = prefs().agents?.[id] ?? {}
+    let power: Power = opts.readOnly || mode() === "plan" || perms.mode === "lecture" ? "lecture" : (a.power ?? "modifications")
+    if (perms.mode.startsWith("bypass") && perms.bypassVerified && power !== "lecture") power = "bypass"
+    const blocked = budget.blocked(`cli:${id}`)
+    if (blocked) return note(`Envoi bloqué : ${blocked}.`, "error")
+    if (AGENT_SUPPORT[id] === "non vérifié") note(`${d.label} : pilotage par sa sortie texte, pas encore vérifié par un vrai essai.`, "warn")
+    const memCtx = mem.context(district(), text)
+    const system = [getLang() === "fr" ? "Tu travailles dans Eclipse, qui affiche ta réponse à l'utilisateur. Réponds en français." : "You are running inside Eclipse, which shows your answer to the user.",
+                    memCtx.text].filter(Boolean).join("\n\n")
+    const uc = buildUserContent(text)
+    for (const n of uc.notes) note(n, "info")
+    setBusy(true)
+    abort = new AbortController()
+    const signal = abort.signal
+    const snaps = power !== "lecture" && !opts.aside ? new Snapshots(cwd()) : null
+    const before = snaps ? await snaps.snapshot(`avant : ${text.slice(0, 60)}`) : null
+    const idx = items.length
+    setItems(idx, { role: "assistant", text: "", streaming: true, aside: opts.aside,
+                    memory: memCtx.used.length ? `${I.memory} ${t("Mémoire")} : ${memCtx.used.length} ${t("éléments utilisés")}` : undefined })
+    const toolIdx = new Map<string, number>()
+    let tin = 0, tout = 0, cost: number | undefined, measured = false, touched = false, failed = false
+    let cur = idx
+    const t0 = Date.now()
+    for await (const e of runAgent({ agent: id, binary: d.path!, cwd: cwd(), prompt: typeof uc.content === "string" ? uc.content : text, model: a.model, effort: a.effort,
+                                     power, resume: opts.aside ? undefined : agentSessions[id], system, signal, sandbox: sandboxOn(), idleMs: 180_000 })) {
+      if (e.type === "session") { if (!opts.aside) agentSessions[id] = e.id }
+      else if (e.type === "text") {
+        if (items[cur]?.role !== "assistant") {
+          cur = items.length
+          setItems(cur, { role: "assistant", text: "", streaming: true, aside: opts.aside })
+        }
+        setItems(cur, "text", (x) => (x ? x + (id === "claude" || id === "codex" ? "\n\n" : "") : "") + e.text)
+      } else if (e.type === "thinking") setItems(cur, "thinking", (x) => (x ?? "") + e.text)
+      else if (e.type === "tool") {
+        cur = -1 // le texte qui suit l'outil s'affiche en dessous de lui
+        if (!e.done) {
+          const ti = items.length
+          toolIdx.set(e.id, ti)
+          setItems(ti, { role: "tool", tool: `${d.label} · ${e.name}`, text: e.summary, running: true })
+        } else {
+          const ti = toolIdx.get(e.id) ?? items.length
+          if (!toolIdx.has(e.id)) setItems(ti, { role: "tool", tool: `${d.label} · ${e.name}`, text: e.summary })
+          setItems(ti, produce((it) => { it.running = false; it.ok = e.ok; it.output = e.output; if (e.summary) it.text = e.summary }))
+          if (e.ok && /edit|write|fichiers|commande|bash/i.test(e.name)) touched = true
+        }
+      } else if (e.type === "usage") {
+        measured = true
+        tin += e.input
+        tout += e.output
+        if (e.costUsd != null) cost = (cost ?? 0) + e.costUsd
+      } else if (e.type === "error") {
+        failed = true
+        setItems(items.length, { role: "notice", text: e.message, level: "error" })
+      }
+    }
+    for (let i = idx; i < items.length; i++) if (items[i].role === "assistant") setItems(i, "streaming", false)
+    if (snaps && before) {
+      const after = await snaps.snapshot(`après : ${text.slice(0, 60)}`)
+      touched = !!after && (await snaps.changed(before, after))
+    }
+    if (!items[idx]?.text && !items[idx]?.thinking) setItems((xs) => xs.filter((_, i) => i !== idx || xs[i].role !== "assistant"))
+    const interrupted = signal.aborted
+    abort = null
+    const s = (Date.now() - t0) / 1000
+    const finalText = items.filter((x, i) => i >= idx && x.role === "assistant").map((x) => x.text).join("\n\n")
+    if (!measured) { tin = estimateTokens(text); tout = estimateTokens(finalText) }
+    recordUsage({ session: sessionKey(), model: `cli:${id}`, tokensIn: tin, tokensOut: tout, measured, usd: null, note: `${d.label}${cost != null ? ` · équivalent API ${cost.toFixed(4)} $` : ""}` })
+    batch(() => {
+      setItems(items.length, { role: "notice", level: "info", text: `${power === "lecture" ? "Plan" : "Build"} · ${d.label}${a.model ? " · " + a.model : ""} · ${power} · ${s.toFixed(1)} s · ↓${tin} ↑${tout} tok${measured ? "" : " (estimés)"}` +
+        (cost != null ? ` · équivalent API ≈ $${cost.toFixed(4)} (abonnement)` : "") + (interrupted ? ` · ${t("interrompu")}` : "") + (touched ? " · fichiers modifiés : /undo pour annuler" : "") })
+      setBusy(false)
+    })
+    if (touched && before) {
+      undoStack.push({ before, label: text.slice(0, 60) })
+      redoStack.length = 0
+    }
+    if (opts.aside || !finalText || failed && !finalText) return
+    history.push({ role: "user", content: text }, { role: "assistant", content: finalText })
+    const aid = mem.append(ensureConv(text), "assistant", finalText, { agent: id, agentSession: agentSessions[id], model: a.model, interrupted })
+    for (let i = items.length - 1; i >= 0; i--) if (items[i].role === "assistant") { setItems(i, "archiveId", aid); break }
+  }
+
   async function ask(text: string, opts: { aside?: boolean; readOnly?: boolean } = {}) {
     const c = current()
     if (!c) {
       note(t("Aucun modèle choisi : /models"), "warn")
       return openModels()
     }
-    if (c.kind === "agent") {
-      note(`La conversation avec ${agentName(c.provider)} n'est pas encore branchée dans cette version (agents CLI, prochaine étape). Choisissez un modèle d'API avec /models pour discuter dès maintenant.`, "warn")
-      return
-    }
+    if (c.kind === "agent") return askAgent(c.provider, text, opts)
     const p = provider(c.provider)!
     const mi = modelInfo(c)
     const blocked = budget.blocked(c.model!)
@@ -412,7 +513,7 @@ export function App(props: { cwd: string }) {
       tin = estimateTokens(msgs.map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? ""))).join("\n"))
       tout = estimateTokens(finalText)
     }
-    if (tin || tout) budget.record({ session: sessionKey(), model: c.model!, tokensIn: tin, tokensOut: tout, measured, usd: estimateUsd(mi?.priceIn, mi?.priceOut, tin, tout), rate: rate(),
+    if (tin || tout) recordUsage({ session: sessionKey(), model: c.model!, tokensIn: tin, tokensOut: tout, measured, usd: estimateUsd(mi?.priceIn, mi?.priceOut, tin, tout), rate: rate(),
                                      note: `${c.provider}${opts.aside ? " · /btw" : ""}` })
     const u = usage[effortKey(c)] ?? { in: 0, out: 0, turns: 0 }
     batch(() => {
@@ -422,6 +523,10 @@ export function App(props: { cwd: string }) {
         (interrupted ? ` · ${t("interrompu")}` : "") + (opts.aside ? " · à part, non gardé" : "") + (touched ? " · fichiers modifiés : /undo pour annuler" : ""), level: "info" })
       setBusy(false)
     })
+    if (snaps && before) {
+      const after = await snaps.snapshot(`après : ${text.slice(0, 60)}`)
+      touched = !!after && (await snaps.changed(before, after))
+    }
     if (touched && before) {
       undoStack.push({ before, label: text.slice(0, 60) })
       redoStack.length = 0
@@ -501,7 +606,36 @@ export function App(props: { cwd: string }) {
         return openModels(arg && provider(arg) ? arg : undefined)
       case "models":
         return openModels()
+      case "power": {
+        const cur = current()
+        if (cur?.kind !== "agent") return note("/power règle un agent (Claude Code, Codex…). Pour les modèles d'API : /permissions.", "warn")
+        const setP = (v: string) => {
+          const ags = { ...(prefs().agents ?? {}) }
+          ags[cur.provider] = { ...(ags[cur.provider] ?? {}), power: v as any }
+          updatePrefs({ agents: ags })
+          closeOverlay()
+          flash(`Puissance de ${agentName(cur.provider)} → ${v}`)
+        }
+        if (["lecture", "modifications", "commandes"].includes(arg)) return setP(arg)
+        return openList(`Puissance — ${agentName(cur.provider)}`, () => (["lecture", "modifications", "commandes"] as Power[]).map((p) => ({ title: p, detail: POWER_LABEL[p], value: p })), setP)
+      }
       case "model": {
+        const curA = current()
+        if (curA?.kind === "agent") {
+          const d = detected().find((x) => x.id === curA.provider)
+          const setM = (v: string) => {
+            const ags = { ...(prefs().agents ?? {}) }
+            ags[curA.provider] = { ...(ags[curA.provider] ?? {}), model: v === "défaut" ? undefined : v }
+            updatePrefs({ agents: ags })
+            closeOverlay()
+            flash(`Modèle de ${agentName(curA.provider)} → ${v}`)
+          }
+          if (arg) return setM(arg)
+          flash("Lecture des modèles de l'agent…")
+          const ms = d?.path ? await agentModels(curA.provider, d.path) : []
+          if (!ms.length) return later({ type: "text", title: `Modèle de ${agentName(curA.provider)} (format propre à l'agent)`, initial: prefs().agents?.[curA.provider]?.model ?? "", onSubmit: (v) => setM(v || "défaut") })
+          return openList(`Modèles — ${agentName(curA.provider)}`, () => [{ title: "défaut de l'agent", value: "défaut" }, ...ms.map((m) => ({ title: m.id, detail: m.efforts.length ? "effort " + m.efforts.join("/") : "", value: m.id }))], setM)
+        }
         if (!arg) return openModels()
         const cur = current()
         const order = [...(cur?.kind === "api" ? [cur.provider] : []), ...PROVIDERS.map((p) => p.id)]
@@ -510,6 +644,23 @@ export function App(props: { cwd: string }) {
       }
       case "effort": {
         const cur = current()
+        if (cur?.kind === "agent") {
+          const d = detected().find((x) => x.id === cur.provider)
+          const ms = d?.path ? await agentModels(cur.provider, d.path) : []
+          const a0 = prefs().agents?.[cur.provider] ?? {}
+          const choices = ms.find((m) => m.id === a0.model)?.efforts ?? ms[0]?.efforts ?? []
+          const setE = (v: string) => {
+            const ags = { ...(prefs().agents ?? {}) }
+            const map: Record<string, string> = { rapide: "low", normal: "medium", profond: "high" }
+            ags[cur.provider] = { ...a0, effort: v === "défaut" ? undefined : map[v] ?? v }
+            updatePrefs({ agents: ags })
+            closeOverlay()
+            flash(`Effort de ${agentName(cur.provider)} → ${ags[cur.provider].effort ?? "défaut"}`)
+          }
+          if (arg) return setE(arg)
+          if (!choices.length) return note(`${agentName(cur.provider)} : réglage d'effort non disponible depuis Eclipse.`, "warn")
+          return openList(`Effort — ${agentName(cur.provider)}`, () => [{ title: "défaut de l'agent", value: "défaut" }, ...LEVELS.map((l) => ({ title: l, detail: `→ ${{ rapide: "low", normal: "medium", profond: "high" }[l]}`, value: l })), ...choices.map((x) => ({ title: x, detail: "valeur exacte", value: x }))], setE)
+        }
         const mi = modelInfo(cur)
         if (!mi?.effort?.length) return note(`${cur?.model ?? "Ce modèle"} n'annonce pas de réglage d'effort.`, "warn")
         const apply = (v: string) => {
@@ -1112,7 +1263,7 @@ export function App(props: { cwd: string }) {
 
   const Sidebar = () => {
     const its = () => mem.items(district()).slice(0, 5)
-    const s = () => (conv ? budget.totals(0, { session: sessionKey() }) : null)
+    const s = () => (usageTick(), conv ? budget.totals(0, { session: sessionKey() }) : null)
     const Head = (p: { t: string; c?: string }) => <text fg={p.c ?? C.accent} marginTop={1}><b>{p.t}</b></text>
     return (
       <box flexDirection="column" width={36} paddingX={1} border={["left"]} borderColor={C.panelBorder}>
