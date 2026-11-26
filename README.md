@@ -23,7 +23,15 @@ remplace chaque icône par un symbole texte simple.
 | Groq, Google AI Studio, Mistral, Cerebras, GitHub Models | clé gratuite chez le fournisseur | complet | quotas et conditions propres à chacun ; adresses à confirmer pour certains |
 
 ## Installation
-**Préversion privée (en ce moment)** : page « Releases » de ce dépôt (connecté à GitHub), version `prive-v0.3.0`.
+**Eclipse 5 (CLI, Linux x86-64)** : un seul exécutable autonome, installé dans `~/.local/bin/Eclipse` :
+```sh
+curl -fsSL https://github.com/ManBoyx/eclipse-releases/releases/latest/download/install.sh | sh
+```
+Depuis le code source : `cd ts && bun install && bun run src/main.tsx` (Bun ≥ 1.4) ; exécutable :
+`packaging/cli-ts/package.sh`. Les sections ci-dessous décrivent encore la version Python (0.x à 4.x), dont le moteur
+sert toujours à l'application desktop jusqu'à la fin de sa refonte.
+
+**Préversion privée (version Python)** : page « Releases » de ce dépôt (connecté à GitHub), version `prive-v0.3.0`.
 
 | Fichier | Contenu |
 |---|---|

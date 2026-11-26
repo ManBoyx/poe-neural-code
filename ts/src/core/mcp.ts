@@ -4,6 +4,7 @@
  * Chaque appel passe par les permissions (lecture libre seulement si le serveur annonce l'outil « readOnlyHint »).
  * Un serveur qui ne démarre pas n'empêche pas les autres ; son erreur est montrée par /mcp.
  */
+import { VERSION } from "./version"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
@@ -65,7 +66,7 @@ export class McpManager {
     await Promise.all(cfgs.map(async (c, i) => {
       if (c.cfg.disabled) return
       try {
-        const client = new Client({ name: "eclipse", version: "5.0.0" })
+        const client = new Client({ name: "eclipse", version: VERSION })
         const transport = c.cfg.url ? new StreamableHTTPClientTransport(new URL(c.cfg.url))
           : new StdioClientTransport({ command: c.cfg.command!, args: c.cfg.args ?? [], env: { ...(process.env as Record<string, string>), ...(c.cfg.env ?? {}) }, cwd, stderr: "ignore" })
         await Promise.race([client.connect(transport), new Promise((_, rej) => setTimeout(() => rej(new Error("pas de réponse en 20 s")), 20_000))])

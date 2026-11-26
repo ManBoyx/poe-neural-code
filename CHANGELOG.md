@@ -1,5 +1,35 @@
 # Journal des versions
 
+## 5.0.0 — CLI (26 novembre 2026)
+Eclipse est réécrit en TypeScript (Bun, OpenTUI, SolidJS), comme OpenCode. Les données de la version Python sont
+reprises telles quelles : mémoire, sessions, consommation, clés du trousseau.
+### Installation
+- Linux x86-64 : un seul exécutable autonome, sans Python ni Node à installer :
+  `curl -fsSL https://github.com/ManBoyx/eclipse-releases/releases/latest/download/install.sh | sh`
+  (installe `~/.local/bin/Eclipse`, vérifie l'empreinte SHA-256 avant toute installation).
+### Nouveautés
+- Interface refaite sur le modèle d'OpenCode : accueil, saisie multiligne, historique des messages avec ↑ ↓, liste des
+  commandes au clavier, colonne latérale, animations d'attente, défilement et redimensionnement stables.
+- `/provider` : aucun fournisseur imposé ; sélecteur avec recherche, modèles récents, API recommandées (dont Poe) et
+  agents détectés sur l'ordinateur. Poe : tous les modèles du catalogue reconnus, clé vérifiée sur le compte,
+  `/connect` reproposé quand la clé est changée ou supprimée, collage de la clé corrigé.
+- `/cg` : Claude Code et Codex travaillent ensemble. Menu (coordinateur, seul, délégation dans un sens ou dans
+  l'autre, modèle et effort par agent), un seul agent écrit à la fois, l'autre relit, onglets par agent et par
+  sous-agent (points de couleur cliquables). `/cg` a ses propres discussions ; `/new` en sort.
+- Permissions : `/perm` propose tous les modes ; le bypass demande le mot de passe de l'ordinateur une fois.
+  Sandbox (bubblewrap) active par défaut, `/sandbox` pour la couper ou la remettre.
+- Règle absolue : aucun modèle ni agent n'écrit dans les fichiers d'Eclipse. Le travail se fait dans `~/Projets`,
+  un dossier par projet, retrouvé quand on reprend le projet.
+- `/usage` en plein écran (périodes, 30 derniers jours, par modèle, budgets, solde Poe).
+- `/voice` : appel vocal avec le modèle ou l'agent choisi (Claude Code compris), transcription whisper.cpp et voix
+  piper sur l'ordinateur ; `/voice installer`, `/voice rapide | précis`.
+- `!commande` exécute une commande du shell (avec confirmation), commandes d'Eclipse et d'OpenCode réunies sans
+  doublon, serveurs MCP partagés avec le desktop.
+### Limites connues
+- Cet exécutable est pour Linux x86-64. Windows et macOS ne sont pas encore publiés : les clés d'API passent par
+  `secret-tool` (trousseau Linux).
+- L'application desktop et l'APK Android ne font pas partie de cette version.
+
 ## 4.0.0 — non publiée
 ### Correction : détection des agents installés
 - Lancée depuis le menu du bureau (AppImage, raccourci .desktop), l'application ne voyait plus que Gemini CLI : elle

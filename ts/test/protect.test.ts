@@ -58,3 +58,14 @@ test("un agent ne démarre pas pour écrire dans Eclipse", async () => {
   for await (const e of runAgent({ agent: "claude", binary: "/bin/false", cwd: eclipseRoot(), prompt: "x", power: "modifications" })) ev.push(e)
   expect(ev[0].message).toContain("dossier d'Eclipse")
 })
+
+test("une copie des sources d'Eclipse est protégée où qu'elle soit (exécutable compilé sans dépôt connu)", () => {
+  const copy = join(dir, "Projets", "eclipse-copie")
+  mkdirSync(join(copy, "ts", "src", "core"), { recursive: true })
+  mkdirSync(join(copy, "desktop", "src-tauri"), { recursive: true })
+  Bun.write(join(copy, "ts", "src", "core", "protect.ts"), "// copie")
+  expect(isProtected(join(copy, "README.md"))).toBe(true)
+  expect(isProtected(join(copy, "ts", "src", "nouveau", "fichier.ts"))).toBe(true)
+  expect(listProjects().some((p) => p.name === "eclipse-copie")).toBe(false)
+  expect(isProtected(join(dir, "Projets", "snake", "main.ts"))).toBe(false)
+})
