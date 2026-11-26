@@ -16,6 +16,8 @@ import { COMMANDS, resolve, suggest } from "../core/commands"
 import { estimateTokens, KIND_LABEL, Memory, rememberRequest, type Hit } from "../core/memory"
 import { LEVELS, levelValue } from "../core/effort"
 import { runCmd } from "../core/proc"
+import { Budget, estimateUsd } from "../core/budget"
+import { UsageScreen } from "./UsageScreen"
 import { Picker, type ProviderStatus } from "./Picker"
 import { KeyPrompt } from "./KeyPrompt"
 import { ListPicker, type ListEntry } from "./ListPicker"
@@ -41,6 +43,7 @@ type Overlay =
   | { type: "models"; view?: string }
   | { type: "key"; id: string }
   | { type: "list"; title: string; entries: () => ListEntry[]; onPick: (v: string) => void; hint?: string }
+  | { type: "usage" }
 
 const LOGO = [
   "█▀▀▀ █▀▀█ █    ▀█▀ █▀▀█ █▀▀▀ █▀▀▀",
@@ -81,6 +84,7 @@ export function App(props: { cwd: string }) {
 
   const [cwd, setCwd] = createSignal(props.cwd)
   const mem = new Memory()
+  const budget = new Budget()
   const [district, setDistrict] = createSignal(mem.district(props.cwd))
   let conv: number | null = null
   const [title, setTitle] = createSignal("")
@@ -106,6 +110,15 @@ export function App(props: { cwd: string }) {
     save(next)
   }
   const mode = () => prefs().mode ?? "build"
+  const sessionKey = () => (conv ? `ts:${conv}` : `ts:pid-${process.pid}`)
+  const rate = (): number | null => {
+    if (prefs().rate) return prefs().rate!
+    try {
+      return JSON.parse(readFileSync(join(dataDir(), "config.json"), "utf8")).points_per_usd ?? null
+    } catch {
+      return null
+    }
+  }
 
   const flash = (s: string) => {
     setToast(s)
@@ -233,6 +246,8 @@ export function App(props: { cwd: string }) {
     }
     const p = provider(c.provider)!
     const mi = modelInfo(c)
+    const blocked = budget.blocked(c.model!)
+    if (blocked) return note(`Envoi bloqué : ${blocked}. /usage pour le détail, /define-token ou /limit pour changer.`, "error")
     const memCtx = mem.context(district(), text)
     const extra: Record<string, unknown> = {}
     const lv = prefs().effort?.[effortKey(c)]
@@ -266,6 +281,13 @@ export function App(props: { cwd: string }) {
     abort = null
     const s = (Date.now() - t0) / 1000
     const u = usage[effortKey(c)] ?? { in: 0, out: 0, turns: 0 }
+    if (inTok || out || items[idx].text) {
+      const measured = !!(inTok || out)
+      const tin = measured ? inTok : estimateTokens(msgs.map((m) => m.content).join("\n"))
+      const tout = measured ? out : estimateTokens(items[idx].text)
+      budget.record({ session: sessionKey(), model: c.model!, tokensIn: tin, tokensOut: tout, measured, usd: estimateUsd(mi?.priceIn, mi?.priceOut, tin, tout), rate: rate(),
+                      note: `${c.provider}${opts.aside ? " · /btw" : ""}` })
+    }
     batch(() => {
       setUsage(effortKey(c), { in: u.in + inTok, out: u.out + out, turns: u.turns + 1 })
       setItems(idx, "streaming", false)
@@ -461,12 +483,8 @@ export function App(props: { cwd: string }) {
           { title: "plan", detail: "analyse et plan, sans modifications", value: "plan" },
         ], setMode)
       }
-      case "usage": {
-        const rows = Object.entries(usage)
-        if (!rows.length) return note("Aucune consommation dans cette session.")
-        return note("Consommation de cette session (tokens annoncés par le fournisseur) :\n" +
-          rows.map(([k, u]) => `  ${k.padEnd(40)} ${String(u.turns).padStart(3)} réponses  ↓${u.in}  ↑${u.out}`).join("\n"))
-      }
+      case "usage":
+        return later({ type: "usage" })
       case "reload":
         setSt(load())
         await refreshAll(true)
@@ -599,6 +617,7 @@ export function App(props: { cwd: string }) {
         ], (v) => { closeOverlay(); prompt?.setText("/" + v + " "); setDraft("/" + v + " ") }, "↑↓ · entrée : écrire la commande · tapez pour filtrer · échap")
       case "exit":
         mem.close()
+        budget.close()
         return renderer.destroy()
     }
   }
@@ -751,6 +770,18 @@ export function App(props: { cwd: string }) {
           </Show>
           <Show when={(() => { const o = overlay(); return o?.type === "list" ? o : null })()}>
             {(o) => <ListPicker title={o().title} entries={o().entries} onPick={o().onPick} onClose={closeOverlay} hint={o().hint} width={() => dims().width} height={() => dims().height} />}
+          </Show>
+          <Show when={overlay()?.type === "usage"}>
+            <UsageScreen budget={budget} session={conv ? sessionKey() : null} rate={rate()} onClose={closeOverlay} width={() => dims().width} height={() => dims().height}
+                         current={(() => {
+                           const c = current()
+                           const mi = modelInfo(c)
+                           if (!c) return { label: "aucun (/models)", billing: "—" }
+                           if (c.kind === "agent") return { label: agentName(c.provider) + " (agent)", provider: c.provider, billing: "abonnement de l'agent (quotas gérés par lui, non communiqués à Eclipse)" }
+                           const pv = provider(c.provider)
+                           return { label: `${pv?.label} · ${c.model}`, provider: c.provider, model: c.model, priceIn: mi?.priceIn, priceOut: mi?.priceOut,
+                                    billing: pv?.local ? "gratuit (serveur local)" : c.provider === "poe" ? "points Poe (prélevés sur ton compte)" : "facturation à l'usage par le fournisseur" }
+                         })()} />
           </Show>
           <Show when={(() => { const o = overlay(); return o?.type === "key" ? o : null })()}>
             {(o) => (
