@@ -48,10 +48,16 @@ case "$FORMAT" in
     mkdir -p "$TMP/x" "$HOME/.local/bin"
     tar -xzf "$TMP/$FILE" -C "$TMP/x"
     [ -f "$TMP/x/Eclipse" ] || die "archive incomplète : installation annulée."
-    install -m 755 "$TMP/x/Eclipse" "$HOME/.local/bin/Eclipse.new"
-    mv -f "$HOME/.local/bin/Eclipse.new" "$HOME/.local/bin/Eclipse"   # remplacement d'un bloc, même si Eclipse tourne
-    [ -e "$HOME/.local/bin/eclipse" ] || ln -s Eclipse "$HOME/.local/bin/eclipse"
-    say "Installé : $HOME/.local/bin/Eclipse ($("$HOME/.local/bin/Eclipse" --version 2>/dev/null || echo 'version illisible'))"
+    chmod 755 "$TMP/x/Eclipse"
+    VER=$("$TMP/x/Eclipse" --version 2>/dev/null) || die "le nouvel exécutable ne démarre pas sur cet ordinateur : rien n'a été remplacé."
+    DEST="$HOME/.local/bin/Eclipse"
+    if [ -d "$DEST" ] && [ ! -L "$DEST" ]; then die "$DEST est un dossier : rien n'a été remplacé."; fi
+    NEW=$(mktemp "$HOME/.local/bin/.Eclipse.XXXXXX")
+    install -m 755 "$TMP/x/Eclipse" "$NEW"
+    if [ -e "$DEST" ] || [ -L "$DEST" ]; then cp -P "$DEST" "$HOME/.local/bin/Eclipse.ancien" 2>/dev/null && say "Version précédente gardée : ~/.local/bin/Eclipse.ancien"; fi
+    mv -fT "$NEW" "$DEST" || { rm -f "$NEW"; die "remplacement impossible."; }   # d'un bloc, même si Eclipse tourne
+    [ -e "$HOME/.local/bin/eclipse" ] || [ -L "$HOME/.local/bin/eclipse" ] || ln -s Eclipse "$HOME/.local/bin/eclipse"
+    say "Installé : $DEST ($VER)"
     command -v secret-tool >/dev/null || say "Conseil : installez secret-tool (paquet libsecret-tools ou libsecret) pour enregistrer vos clés d'API dans le trousseau."
     case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) say "Ajoutez ~/.local/bin à votre PATH pour lancer Eclipse depuis n'importe quel dossier." ;; esac
     say "Terminé. Lancez : Eclipse"

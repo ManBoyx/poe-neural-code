@@ -8,7 +8,7 @@
  * l'agent reste sur l'abonnement de l'utilisateur.
  */
 import { killGroup } from "./proc"
-import { agentStateDirs, available as sandboxAvailable, wrap } from "./sandbox"
+import { agentStateDirs, available as sandboxAvailable, guard, wrap } from "./sandbox"
 import { isProtected, PROTECT_RULE } from "./protect"
 
 export type Power = "lecture" | "modifications" | "commandes" | "bypass"
@@ -189,8 +189,9 @@ export async function* runAgent(r: AgentRun): AsyncGenerator<AgentEvent> {
   const cmd = buildCommand(r)
   const textMode = r.agent === "opencode" || r.agent === "gemini"
   if (r.agent === "opencode" || r.agent === "gemini") cmd.push(r.agent === "gemini" ? "-p" : "--", promptFor(r))
-  // agents sans sandbox utilisable ici : enveloppés entiers dans bubblewrap (projet + leurs réglages en écriture)
-  const finalCmd = r.sandbox && textMode && sandboxAvailable().ok ? wrap(cmd, [r.cwd, ...agentStateDirs(r.agent)], r.cwd) : cmd
+  // agents sans sandbox utilisable ici : enveloppés entiers dans bubblewrap (projet + leurs réglages en écriture) ;
+  // les autres (et tous quand la sandbox est coupée) passent par la garde : fichiers d'Eclipse en lecture seule
+  const finalCmd = r.sandbox && textMode && sandboxAvailable().ok ? wrap(cmd, [r.cwd, ...agentStateDirs(r.agent)], r.cwd) : guard(cmd, r.cwd)
   let proc: ReturnType<typeof Bun.spawn>
   try {
     proc = Bun.spawn(finalCmd, { cwd: r.cwd, env, stdin: textMode ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe", detached: true })

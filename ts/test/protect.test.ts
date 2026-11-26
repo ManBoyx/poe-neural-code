@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { eclipseRoot, isProtected, listProjects, needsProject, openProject, slug } from "../src/core/protect"
+import { eclipseRoot, guardPaths, isProtected, listProjects, needsProject, openProject, slug } from "../src/core/protect"
 import { Memory } from "../src/core/memory"
 import { Permissions } from "../src/core/permissions"
 import { runTool } from "../src/core/tools"
@@ -62,10 +62,18 @@ test("un agent ne démarre pas pour écrire dans Eclipse", async () => {
 test("une copie des sources d'Eclipse est protégée où qu'elle soit (exécutable compilé sans dépôt connu)", () => {
   const copy = join(dir, "Projets", "eclipse-copie")
   mkdirSync(join(copy, "ts", "src", "core"), { recursive: true })
-  mkdirSync(join(copy, "desktop", "src-tauri"), { recursive: true })
-  Bun.write(join(copy, "ts", "src", "core", "protect.ts"), "// copie")
+  writeFileSync(join(copy, "ts", "src", "core", "protect.ts"), "// copie")
+  writeFileSync(join(copy, "ts", "src", "core", "cg.ts"), "// copie")
+  // copie réduite au CLI (le contenu du dossier ts/ seul)
+  const cli = join(dir, "Projets", "eclipse-cli-seul")
+  mkdirSync(join(cli, "src", "core"), { recursive: true })
+  writeFileSync(join(cli, "src", "core", "protect.ts"), "// copie")
+  writeFileSync(join(cli, "src", "core", "cg.ts"), "// copie")
+  expect(isProtected(join(cli, "package.json"))).toBe(true)
+  expect(guardPaths()).toContain(realpathSync(cli))
   expect(isProtected(join(copy, "README.md"))).toBe(true)
   expect(isProtected(join(copy, "ts", "src", "nouveau", "fichier.ts"))).toBe(true)
   expect(listProjects().some((p) => p.name === "eclipse-copie")).toBe(false)
   expect(isProtected(join(dir, "Projets", "snake", "main.ts"))).toBe(false)
+  expect(guardPaths()).toContain(realpathSync(copy))
 })

@@ -18,14 +18,14 @@ export function compiled(): boolean {
  * l'exécutable lui-même, ou son dossier d'installation quand il est rangé dans un dossier « engine » (application desktop).
  */
 export function eclipseRoot(): string {
-  if (process.env.ECLIPSE_ROOT) return resolve(process.env.ECLIPSE_ROOT)
   if (compiled()) return basename(dirname(process.execPath)) === "engine" ? dirname(dirname(process.execPath)) : process.execPath
   return resolve(import.meta.dir, "..", "..", "..")
 }
 
-/** Un dossier est-il une copie des sources d'Eclipse ? (reconnu à sa structure, où qu'il soit) */
+/** Un dossier est-il une copie des sources d'Eclipse (dépôt complet ou seulement le CLI) ? Reconnu à sa structure. */
 function isEclipseTree(dir: string): boolean {
-  return existsSync(join(dir, "ts", "src", "core", "protect.ts")) && existsSync(join(dir, "desktop", "src-tauri"))
+  const core = (d: string) => existsSync(join(d, "src", "core", "protect.ts")) && existsSync(join(d, "src", "core", "cg.ts"))
+  return core(join(dir, "ts")) || core(dir)
 }
 
 export function projectsRoot(): string {
@@ -47,7 +47,26 @@ const real = (p: string) => {
 }
 
 export function protectedRoots(): string[] {
-  return [eclipseRoot(), dataDir(), join(home(), ".local/share/eclipse")].map(real)
+  // ECLIPSE_ROOT ajoute un dossier protégé ; il ne retire jamais l'exécutable ni le dépôt de la liste
+  const extra = process.env.ECLIPSE_ROOT ? [resolve(process.env.ECLIPSE_ROOT)] : []
+  const exe = compiled() ? [process.execPath] : []
+  return [eclipseRoot(), ...exe, ...extra, dataDir(), join(home(), ".local/share/eclipse")].map(real)
+}
+
+/**
+ * Chemins à rendre inaccessibles en écriture aux processus lancés par les modèles (garde bubblewrap) : les racines
+ * protégées qui existent, plus les copies des sources d'Eclipse rangées dans le dossier des projets ou le dossier
+ * personnel (l'exécutable compilé ne connaît pas leur emplacement autrement).
+ */
+export function guardPaths(): string[] {
+  const out = new Set(protectedRoots().filter((p) => existsSync(p)))
+  for (const base of [projectsRoot(), home()]) {
+    try {
+      for (const e of readdirSync(base, { withFileTypes: true }))
+        if (e.isDirectory() && !e.name.startsWith(".") && isEclipseTree(join(base, e.name))) out.add(real(join(base, e.name)))
+    } catch {}
+  }
+  return [...out]
 }
 
 const inside = (p: string, root: string) => {

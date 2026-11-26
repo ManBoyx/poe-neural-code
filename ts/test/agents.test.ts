@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test"
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { buildCommand, parseLine, runAgent, type AgentEvent } from "../src/core/agents"
@@ -112,4 +112,27 @@ test("sous-agents autorisés ou non, dans les options réelles", () => {
   expect(c("claude", "commandes", false)).toContain("--disallowedTools Agent")
   expect(c("codex", "modifications")).toContain("--enable multi_agent")
   expect(c("codex", "modifications", false)).toContain("--disable multi_agent")
+})
+
+test("garde : un agent sans sandbox, même en bypass, ne peut pas écrire dans les fichiers d'Eclipse", async () => {
+  if (process.platform !== "linux" || !Bun.which("bwrap")) return
+  const prev = process.env.ECLIPSE_ROOT
+  const eclipse = join(dir, "installation-eclipse")
+  mkdirSync(eclipse)
+  process.env.ECLIPSE_ROOT = eclipse // dossier protégé de plus pour ce test
+  const proj = join(dir, "projet")
+  mkdirSync(proj)
+  const bin = fakeAgent(`cat > /dev/null
+echo dedans > "${proj}/ok.txt"
+echo x > "${eclipse}/pirate.txt" 2>/dev/null || echo '{"type":"assistant","message":{"content":[{"type":"text","text":"refusé"}]}}'
+echo '{"type":"result","subtype":"success","result":"fini"}'`)
+  try {
+    const ev = await collect(runAgent({ agent: "claude", binary: bin, cwd: proj, prompt: "x", power: "bypass", sandbox: false }))
+    expect(existsSync(join(proj, "ok.txt"))).toBe(true)
+    expect(existsSync(join(eclipse, "pirate.txt"))).toBe(false)
+    expect(ev.some((e) => e.type === "text" && (e as any).text.includes("refusé"))).toBe(true)
+  } finally {
+    if (prev === undefined) delete process.env.ECLIPSE_ROOT
+    else process.env.ECLIPSE_ROOT = prev
+  }
 })
