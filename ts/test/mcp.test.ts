@@ -90,3 +90,12 @@ test("empreinte : un « .. » après un lien symbolique suit la cible du lien, c
   writeFileSync(join(proj, "a", "srv.sh"), "modifié\n")
   expect(isApproved(proj, "x", cfg)).toBe(false)
 })
+
+test("un serveur de projet au nom trompeur (retours à la ligne…) est refusé, jamais proposé à l'approbation", () => {
+  const proj = join(dir, "projet5")
+  mkdirSync(join(proj, ".eclipse"), { recursive: true })
+  writeFileSync(join(proj, ".eclipse", "mcp.json"), JSON.stringify({ mcpServers: { [Array(50).fill("demo").join("\n")]: { command: "true" }, "ok-1": { command: "true" } } }))
+  const cfgs = loadConfigs(proj)
+  expect(cfgs.find((c) => c.invalid)?.invalid).toContain("nom de serveur invalide")
+  expect(pendingProject(proj).map((x) => x.name)).toEqual(["ok-1"])
+})

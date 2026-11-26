@@ -152,8 +152,10 @@ export function loadConfigs(cwd: string): { name: string; cfg: McpServerConfig; 
     try {
       const j = JSON.parse(readFileSync(file, "utf8"))
       for (const [name, cfg] of Object.entries(j.mcpServers ?? j.servers ?? {})) {
-        const bad = checkCfg(cfg)
-        out.push(bad ? { name, cfg: { disabled: true }, source, invalid: bad } : { name, cfg: cfg as McpServerConfig, source })
+        // nom d'un serveur de projet : identifiant simple (rien qui puisse tromper l'affichage : retours à la ligne…)
+        const badName = source === "projet" && !/^[A-Za-z0-9_.@-]{1,64}$/.test(name) ? "nom de serveur invalide (lettres, chiffres, . _ - @ ; 64 caractères au plus)" : null
+        const bad = badName ?? checkCfg(cfg)
+        out.push(bad ? { name: badName ? JSON.stringify(name).slice(0, 66) : name, cfg: { disabled: true }, source, invalid: bad } : { name, cfg: cfg as McpServerConfig, source })
       }
     } catch (e) {
       out.push({ name: file, cfg: { disabled: true }, source, invalid: `fichier illisible : ${(e as Error).message}` })

@@ -41,6 +41,13 @@ export const revealHidden = (s: string) =>
       return lead + l.slice(lead.length).replace(/[\p{Zs}]{4,}/gu, (m) => `{${m.length} espaces}`)
     }).join("\n")
 
+/** Résumé sur une seule ligne d'écran (le détail complet, lui, n'est jamais coupé). */
+const oneLine = (s: string, cols: number) => {
+  const flat = s.replace(/\n/g, " ⏎ ")
+  const parts = wrapToWidth(flat, Math.max(10, cols - 1))
+  return parts.length > 1 ? parts[0] + "…" : flat
+}
+
 const CHOICES: { d: Decision; key: string; label: string }[] = [
   { d: "once", key: "o", label: "Autoriser une fois" },
   { d: "session", key: "t", label: "Toujours pour cette session" },
@@ -100,7 +107,7 @@ export function PermissionPrompt(props: { req: Request; onDecide: (d: Decision) 
         <b>{`${I.warn}  ${props.req.tool === "mcp" ? "Lancer ce programme fourni par le projet ?" : `Autoriser ${props.req.kind === "exec" ? "la commande" : props.req.kind === "write" ? "la modification" : "la lecture"} ?`}`}</b>
         {props.req.destructive && props.req.tool !== "mcp" ? "   ACTION DESTRUCTRICE" : ""}{props.req.outside ? "   HORS DU PROJET" : ""}
       </text>
-      <text fg={C.text} marginTop={1}>{`${props.req.tool} · ${props.req.summary}`}</text>
+      <text fg={C.text} marginTop={1}>{oneLine(`${props.req.tool} · ${revealHidden(props.req.summary)}`, w() - 8)}</text>
       <Show when={props.req.detail && props.req.detail !== props.req.summary}>
         <box flexDirection="column" marginTop={1} border={["left"]} borderColor={C.panelBorder} paddingX={1}>
           <For each={lines()}>{(l) => <text fg={lineColor(l)}>{l || " "}</text>}</For>
