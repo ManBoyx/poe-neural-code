@@ -8,6 +8,7 @@
  * l'agent reste sur l'abonnement de l'utilisateur.
  */
 import { killGroup } from "./proc"
+import { agentStateDirs, available as sandboxAvailable, wrap } from "./sandbox"
 
 export type Power = "lecture" | "modifications" | "commandes" | "bypass"
 export const POWER_LABEL: Record<Power, string> = {
@@ -37,6 +38,7 @@ export interface AgentRun {
   resume?: string
   system?: string // consignes ajoutées (rôle dans /cg, mémoire)
   signal?: AbortSignal
+  sandbox?: boolean
   idleMs?: number // sans signe de vie (et sans commande en cours) : arrêt
   maxMs?: number
 }
@@ -54,6 +56,7 @@ export function buildCommand(r: AgentRun): string[] {
       if (r.effort) c.push("--effort", r.effort)
       if (r.resume) c.push("--resume", r.resume)
       if (r.system) c.push("--append-system-prompt", r.system)
+      if (r.sandbox) c.push("--settings", JSON.stringify({ sandbox: { enabled: true } }))
       if (r.power === "lecture") c.push("--tools", "Read,Grep,Glob")
       else if (r.power === "modifications") c.push("--permission-mode", "acceptEdits", "--tools", "Read,Grep,Glob,Edit,Write")
       else if (r.power === "commandes") c.push("--permission-mode", "acceptEdits", "--allowedTools", "Bash")
@@ -64,7 +67,8 @@ export function buildCommand(r: AgentRun): string[] {
       const c = r.resume ? [r.binary, "exec", "resume", r.resume, "--json", "--skip-git-repo-check"] : [r.binary, "exec", "--json", "--skip-git-repo-check"]
       if (r.model) c.push("-m", r.model)
       if (r.effort) c.push("-c", `model_reasoning_effort="${r.effort}"`)
-      if (r.power === "bypass") c.push("--dangerously-bypass-approvals-and-sandbox")
+      // bypass avec sandbox active : plus de confirmation, mais l'écriture reste limitée au projet
+      if (r.power === "bypass" && !r.sandbox) c.push("--dangerously-bypass-approvals-and-sandbox")
       else c.push("-c", `sandbox_mode="${r.power === "lecture" ? "read-only" : "workspace-write"}"`, "-c", 'approval_policy="never"')
       if (r.power === "modifications") c.push("-c", "sandbox_workspace_write.network_access=false")
       return c
@@ -163,9 +167,11 @@ export async function* runAgent(r: AgentRun): AsyncGenerator<AgentEvent> {
   const cmd = buildCommand(r)
   const textMode = r.agent === "opencode" || r.agent === "gemini"
   if (r.agent === "opencode" || r.agent === "gemini") cmd.push(r.agent === "gemini" ? "-p" : "--", promptFor(r))
+  // agents sans sandbox utilisable ici : enveloppés entiers dans bubblewrap (projet + leurs réglages en écriture)
+  const finalCmd = r.sandbox && textMode && sandboxAvailable().ok ? wrap(cmd, [r.cwd, ...agentStateDirs(r.agent)], r.cwd) : cmd
   let proc: ReturnType<typeof Bun.spawn>
   try {
-    proc = Bun.spawn(cmd, { cwd: r.cwd, env, stdin: textMode ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe", detached: true })
+    proc = Bun.spawn(finalCmd, { cwd: r.cwd, env, stdin: textMode ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe", detached: true })
   } catch (e) {
     yield { type: "error", message: `${r.agent} : lancement impossible (${(e as Error).message})` }
     return

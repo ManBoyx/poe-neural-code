@@ -24,6 +24,7 @@ import { Permissions, PERM_LABEL, type Decision, type PermMode, type Request } f
 import { openAiTools, READ_ONLY_TOOLS, runTool, summarize, type Todo, type ToolEnv } from "../core/tools"
 import { Snapshots } from "../core/snapshots"
 import { verifyPassword } from "../core/auth"
+import { available as sandboxAvailable } from "../core/sandbox"
 import { coerce } from "../core/providers"
 import { VERSION_INFO } from "../core/version"
 import { Picker, type ProviderStatus } from "./Picker"
@@ -149,6 +150,8 @@ export function App(props: { cwd: string }) {
     save(next)
   }
   const mode = () => prefs().mode ?? "build"
+  const sandboxOn = () => prefs().sandbox !== false && sandboxAvailable().ok
+  const sidebarOn = () => prefs().sidebar !== false // affichée par défaut sur un écran assez large
   const sessionKey = () => (conv ? `ts:${conv}` : `ts:pid-${process.pid}`)
   const rate = (): number | null => {
     if (prefs().rate) return prefs().rate!
@@ -335,7 +338,7 @@ export function App(props: { cwd: string }) {
     setBusy(true)
     abort = new AbortController()
     const signal = abort.signal
-    const env: ToolEnv = { roots: [cwd(), ...extraDirs()], perms, memory: mem, districtId: district(), todos: todoList, onTodos: syncTodos, signal }
+    const env: ToolEnv = { roots: [cwd(), ...extraDirs()], perms, memory: mem, districtId: district(), todos: todoList, onTodos: syncTodos, signal, sandbox: sandboxOn() }
     const saved = perms.mode
     if (opts.readOnly || mode() === "plan") perms.mode = "lecture"
     const snaps = useTools && !opts.aside ? new Snapshots(cwd()) : null
@@ -873,8 +876,8 @@ export function App(props: { cwd: string }) {
                         (v) => { closeOverlay(); setTimeout(() => threadScroll?.scrollChildIntoView(`msg-${v}`, { align: "start" }), 0) })
       }
       case "sidebar":
-        updatePrefs({ sidebar: !prefs().sidebar })
-        return flash(prefs().sidebar ? (dims().width >= 110 ? "Barre latérale affichée" : "Barre latérale activée (visible à partir de 110 colonnes)") : "Barre latérale masquée")
+        updatePrefs({ sidebar: !sidebarOn() })
+        return flash(sidebarOn() ? (dims().width >= 110 ? "Barre latérale affichée" : "Barre latérale activée (visible à partir de 110 colonnes)") : "Barre latérale masquée")
       case "permissions": {
         const apply = async (m: string) => {
           closeOverlay()
@@ -985,6 +988,14 @@ export function App(props: { cwd: string }) {
         if (!arg) return note(g ? `Objectif : ${g.text} (${g.active ? "en cours" : "en pause"}, ${g.rounds} tour(s))\n/goal pause · resume · clear` : "Usage : /goal OBJECTIF — Eclipse continue (20 tours au plus) jusqu'à ce que le modèle confirme « OBJECTIF ATTEINT ».")
         setGoal({ text: arg, active: true, rounds: 0 })
         return send(`Objectif : ${arg}\nTravaille jusqu'à ce qu'il soit entièrement atteint et vérifié (tests compris si c'est du code). Quand c'est le cas, termine ta réponse par la ligne « OBJECTIF ATTEINT ».`)
+      }
+      case "sandbox": {
+        const av = sandboxAvailable()
+        if (!av.ok) return note(`Sandbox indisponible : ${av.reason}. Les commandes restent soumises aux permissions.`, "warn")
+        const on = arg === "on" ? true : arg === "off" ? false : !sandboxOn()
+        updatePrefs({ sandbox: on })
+        return note(on ? `Sandbox active (${av.tool}) : les commandes des modèles et des agents n'écrivent que dans le projet, /tmp et les caches de build.`
+                       : "Sandbox désactivée : les commandes autorisées peuvent écrire partout où vous le pouvez. /sandbox pour la réactiver.", on ? "info" : "warn")
       }
       case "details":
         setShowDetails((x) => !x)
@@ -1121,6 +1132,10 @@ export function App(props: { cwd: string }) {
         <Show when={!its().length}><text fg={C.dim}>vide · « retiens que … »</text></Show>
         <Head t="Agents" c={C.detected} />
         <For each={detected().filter((d) => d.installed)}>{(d) => <text fg={C.muted}>{`${I.ok} ${d.label}`}</text>}</For>
+        <box flexGrow={1} />
+        <text fg={sandboxOn() ? C.ok : C.warn}><b>{sandboxOn() ? `${I.ok} Sandbox active` : `${I.warn} Sandbox désactivée`}</b></text>
+        <text fg={C.dim}>{sandboxAvailable().ok ? "/sandbox pour désactiver ou réactiver" : "bubblewrap absent : /sandbox"}</text>
+        <Show when={permMode() !== "demander"}><text fg={permMode().startsWith("bypass") ? C.error : C.other}>{"Permissions : " + permMode()}</text></Show>
       </box>
     )
   }
@@ -1185,7 +1200,7 @@ export function App(props: { cwd: string }) {
           }>
             <box flexDirection="row" flexGrow={1}>
               <box flexDirection="column" flexGrow={1}><Thread /></box>
-              <Show when={prefs().sidebar && dims().width >= 110}><Sidebar /></Show>
+              <Show when={sidebarOn() && dims().width >= 110}><Sidebar /></Show>
             </box>
           </Show>
           <Footer />

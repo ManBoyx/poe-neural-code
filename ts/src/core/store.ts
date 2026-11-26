@@ -27,6 +27,7 @@ export interface Prefs {
   rate?: number // taux points Poe par dollar, saisi par l'utilisateur (/rate)
   options?: Record<string, Record<string, unknown>> // « fournisseur/modèle » -> réglages du catalogue (/options)
   sidebar?: boolean
+  sandbox?: boolean // défaut : active
 }
 
 export interface State {
