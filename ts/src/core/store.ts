@@ -25,6 +25,8 @@ export interface Prefs {
   mode?: "build" | "plan"
   effort?: Record<string, string> // « fournisseur/modèle » -> rapide | normal | profond | valeur exacte
   rate?: number // taux points Poe par dollar, saisi par l'utilisateur (/rate)
+  options?: Record<string, Record<string, unknown>> // « fournisseur/modèle » -> réglages du catalogue (/options)
+  sidebar?: boolean
 }
 
 export interface State {
