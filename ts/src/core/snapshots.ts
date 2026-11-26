@@ -50,6 +50,12 @@ export class Snapshots {
     return r.code === 1
   }
 
+  /** Diff lisible entre deux instantanés (pour la relecture). */
+  async diff(a: string, b: string, maxChars = 60_000): Promise<string> {
+    const r = await this.git(["diff", "--no-color", a, b])
+    return r.out.length > maxChars ? r.out.slice(0, maxChars) + "\n… (diff coupé)" : r.out
+  }
+
   /** Remet le dossier dans l'état de `target` : fichiers modifiés restaurés, fichiers ajoutés depuis supprimés. */
   async restore(target: string): Promise<{ ok: boolean; changed: string[]; error?: string }> {
     const cur = await this.snapshot("avant restauration")

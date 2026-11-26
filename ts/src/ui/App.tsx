@@ -25,6 +25,8 @@ import { openAiTools, READ_ONLY_TOOLS, runTool, summarize, type Todo, type ToolE
 import { Snapshots } from "../core/snapshots"
 import { verifyPassword } from "../core/auth"
 import { available as sandboxAvailable } from "../core/sandbox"
+import { cgTurn, CG_LABEL, parsePlan, type CgAgent } from "../core/cg"
+import { CgZones, type Zone } from "./CgView"
 import { agentModels, AGENT_SUPPORT, POWER_LABEL, runAgent, type Power } from "../core/agents"
 import { coerce } from "../core/providers"
 import { VERSION_INFO } from "../core/version"
@@ -143,6 +145,12 @@ export function App(props: { cwd: string }) {
   const agentSessions: Record<string, string> = {} // agent -> identifiant de sa session (reprise d'un message à l'autre)
   const noTools = new Set<string>()
   const [usageTick, setUsageTick] = createSignal(0)
+  // /cg : discussion commune Claude Code et Codex
+  const [cgOn, setCgOn] = createSignal(false)
+  const [cgPhase, setCgPhase] = createSignal("")
+  const emptyZone = (label: string): Zone => ({ status: "en attente", entries: [], input: 0, output: 0, label })
+  const [zones, setZones] = createStore<Record<CgAgent, Zone>>({ claude: emptyZone("Claude Code"), codex: emptyZone("Codex") })
+  const cgSessions: Partial<Record<CgAgent, string>> = {}
   const recordUsage = (e: Parameters<Budget["record"]>[0]) => {
     budget.record(e)
     setUsageTick((x) => x + 1) // après l'enregistrement : la colonne relit le bon total
@@ -155,6 +163,7 @@ export function App(props: { cwd: string }) {
     const next = { ...st(), prefs: { ...st().prefs, ...p } }
     setSt(next)
     save(next)
+    if (p.agents) setTimeout(() => refreshZones(), 0)
   }
   const mode = () => prefs().mode ?? "build"
   const sandboxOn = () => prefs().sandbox !== false && sandboxAvailable().ok
@@ -243,6 +252,8 @@ export function App(props: { cwd: string }) {
     refreshAll()
     if (!st().current) openModels() // premier lancement : aucun fournisseur n'est imposé
   })
+
+  const refreshZones = () => { for (const a of ["claude", "codex"] as CgAgent[]) setZones(a, "label", zoneLabel(a)) }
 
   function pick(c: Choice) {
     const next = choose(st(), c)
@@ -413,7 +424,81 @@ export function App(props: { cwd: string }) {
     for (let i = items.length - 1; i >= 0; i--) if (items[i].role === "assistant") { setItems(i, "archiveId", aid); break }
   }
 
+  const zoneLabel = (a: CgAgent) => {
+    const s = prefs().agents?.[a] ?? {}
+    return `${CG_LABEL[a]}${s.model ? " · " + s.model : ""}${s.effort ? " · " + s.effort : ""} · ${s.power ?? (a === "codex" ? "commandes" : "modifications")}`
+  }
+
+  async function askCg(text: string) {
+    const cfgs: Partial<Record<CgAgent, any>> = {}
+    for (const a of ["claude", "codex"] as CgAgent[]) {
+      const d = detected().find((x) => x.id === a)
+      const s = prefs().agents?.[a] ?? {}
+      let power: Power = s.power ?? (a === "codex" ? "commandes" : "modifications")
+      if (perms.mode === "lecture" || mode() === "plan") power = "lecture"
+      else if (perms.mode.startsWith("bypass") && perms.bypassVerified) power = "bypass"
+      if (d?.installed) cfgs[a] = { binary: d.path!, model: s.model, effort: s.effort, power }
+    }
+    if (!cfgs.claude && !cfgs.codex) return note("/cg : ni Claude Code ni Codex n'est installé.", "error")
+    setBusy(true)
+    abort = new AbortController()
+    batch(() => {
+      for (const a of ["claude", "codex"] as CgAgent[]) setZones(a, { status: cfgs[a] ? "en attente" : "absent", entries: [], input: 0, output: 0, label: zoneLabel(a) })
+    })
+    const snaps = new Snapshots(cwd())
+    const sup = await snaps.unsupported()
+    if (sup) note(`Instantanés indisponibles (${sup}) : /undo ne pourra pas annuler ce que feront les agents.`, "warn")
+    const t0 = Date.now()
+    const memCtx = mem.context(district(), text)
+    const r = await cgTurn({
+      text, cwd: cwd(), agents: cfgs, lead: prefs().cgLead ?? "claude", sessions: cgSessions, memory: memCtx.text, sandbox: sandboxOn(), signal: abort.signal,
+      snapshot: sup ? undefined : (l) => snaps.snapshot(l), diff: sup ? undefined : (a, b) => snaps.diff(a, b),
+    }, {
+      phase: setCgPhase,
+      status: (a, s) => setZones(a, "status", s),
+      event: (a, e) => {
+        if (e.type === "text") {
+          // le plan du coordinateur s'affiche en clair, pas en JSON
+          const pl = zones[a].status === "coordonne" ? parsePlan(e.text, ["claude", "codex"], a) : null
+          const shown = pl ? (pl.simple ? "Réponse directe (demande simple)." : `Plan : ${CG_LABEL[pl.writer]} écrit — ${pl.task}${pl.review ? `\nÀ vérifier : ${pl.review}` : ""}`) : e.text
+          setZones(a, "entries", (xs) => [...xs, { kind: "text" as const, text: shown }])
+        }
+        else if (e.type === "thinking") setZones(a, "entries", (xs) => [...xs, { kind: "thinking" as const, text: e.text }])
+        else if (e.type === "tool") {
+          if (!e.done) setZones(a, "entries", (xs) => [...xs, { kind: "tool" as const, text: `${e.name} ${e.summary}`, running: true }])
+          else setZones(a, "entries", (xs) => {
+            const i = xs.map((x) => x.kind === "tool" && x.running).lastIndexOf(true)
+            if (i < 0) return [...xs, { kind: "tool" as const, text: `${e.name} ${e.summary}`, ok: e.ok }]
+            const c = [...xs]
+            c[i] = { ...c[i], running: false, ok: e.ok }
+            return c
+          })
+        } else if (e.type === "usage") {
+          setZones(a, "input", (x) => x + e.input)
+          setZones(a, "output", (x) => x + e.output)
+        } else if (e.type === "error") setZones(a, "entries", (xs) => [...xs, { kind: "error" as const, text: e.message }])
+      },
+    })
+    abort = null
+    for (const a of ["claude", "codex"] as CgAgent[]) {
+      const u = r.usage[a]
+      if (u) recordUsage({ session: sessionKey(), model: `cli:${a}`, tokensIn: u.input, tokensOut: u.output, measured: true, usd: null, note: `/cg${u.costUsd != null ? ` · équivalent API ${u.costUsd.toFixed(4)} $` : ""}` })
+    }
+    const s = (Date.now() - t0) / 1000
+    const idx = items.length
+    setItems(idx, { role: "assistant", text: r.markdown })
+    const tot = (["claude", "codex"] as CgAgent[]).map((a) => r.usage[a] ? `${CG_LABEL[a]} ↓${r.usage[a]!.input} ↑${r.usage[a]!.output}` : "").filter(Boolean).join(" · ")
+    setItems(items.length, { role: "notice", level: "info", text: `/cg · ${s.toFixed(1)} s · ${r.plan?.simple ? "réponse directe" : r.plan ? `écrit : ${CG_LABEL[r.plan.writer]} · ${r.rounds} relecture(s) · ${r.verdict}` : "sans plan"} · ${tot}` +
+      (r.interrupted ? ` · ${t("interrompu")}` : "") + (r.wrote ? " · fichiers modifiés : /undo pour annuler" : "") })
+    setBusy(false)
+    if (r.interrupted || !r.markdown) return
+    history.push({ role: "user", content: text }, { role: "assistant", content: r.markdown })
+    const aid = mem.append(ensureConv(text), "assistant", r.markdown, { cg: true, verdict: r.verdict, writer: r.plan?.writer })
+    setItems(idx, "archiveId", aid)
+  }
+
   async function ask(text: string, opts: { aside?: boolean; readOnly?: boolean } = {}) {
+    if (cgOn() && !opts.aside) return askCg(text)
     const c = current()
     if (!c) {
       note(t("Aucun modèle choisi : /models"), "warn")
@@ -583,8 +668,17 @@ export function App(props: { cwd: string }) {
   async function runCommand(raw: string) {
     const body = raw.slice(1).trim()
     const [name, ...rest] = body.split(/\s+/)
-    const arg = rest.join(" ").trim()
+    let arg = rest.join(" ").trim()
     const c = resolve(name)
+    // dans /cg, « /model codex NOM », « /effort claude high », « /power codex lecture » visent un agent précis
+    let cgTarget: Choice | null = null
+    if (cgOn() && c && ["model", "effort", "power"].includes(c.name)) {
+      const m = arg.match(/^(claude|codex)\b\s*(.*)$/)
+      if (m) {
+        cgTarget = { kind: "agent", provider: m[1] }
+        arg = m[2]
+      } else if (!arg) return note(`Dans /cg, précisez l'agent : /${c.name} claude … ou /${c.name} codex …`, "warn")
+    }
     if (!c) return note(`${t("Commande inconnue")} : /${name}  (/help)`, "error")
     if (!c.ready) return note(`/${c.name} : pas encore disponible dans cette version (étape « ${c.step} » du plan). La liste complète : /help.`, "warn")
     switch (c.name) {
@@ -606,8 +700,37 @@ export function App(props: { cwd: string }) {
         return openModels(arg && provider(arg) ? arg : undefined)
       case "models":
         return openModels()
+      case "cg": {
+        if (arg === "off") {
+          setCgOn(false)
+          return note("Discussion /cg terminée. Retour au modèle choisi.")
+        }
+        const [sub, who] = arg.split(/\s+/)
+        if (sub === "lead" && (who === "claude" || who === "codex")) {
+          updatePrefs({ cgLead: who })
+          return flash(`Coordinateur /cg : ${CG_LABEL[who as CgAgent]}`)
+        }
+        if (busy()) return flash(t("Une réponse est en cours (échap pour interrompre)."))
+        newChat()
+        for (const k of Object.keys(cgSessions)) delete cgSessions[k as CgAgent]
+        const miss = (["claude", "codex"] as CgAgent[]).filter((a) => !detected().find((x) => x.id === a)?.installed)
+        batch(() => {
+          for (const a of ["claude", "codex"] as CgAgent[]) setZones(a, emptyZone(zoneLabel(a)))
+          for (const a of miss) setZones(a, "status", "absent")
+          setCgPhase("")
+          setCgOn(true)
+        })
+        conv = mem.newConversation(district(), "Claude Code et Codex")
+        setTitle("Claude Code et Codex")
+        if (miss.length === 2) return note(`/cg : ni Claude Code ni Codex n'est installé.\n  Claude Code : ${detected().find((x) => x.id === "claude")?.install}\n  Codex : ${detected().find((x) => x.id === "codex")?.install}`, "error")
+        for (const a of miss) note(`${CG_LABEL[a]} n'est pas installé : /cg fonctionnera avec l'autre agent seul, sans relecture croisée.
+  Pour l'installer : ${detected().find((x) => x.id === a)?.install}`, "warn")
+        return note(`Discussion /cg ouverte : coordinateur ${CG_LABEL[prefs().cgLead ?? "claude"]}. Une question simple reçoit une réponse directe ; un travail est fait par un agent et relu par l'autre.
+` +
+                    "Réglages : /model claude|codex NOM · /effort claude|codex NIVEAU · /power claude|codex lecture|modifications|commandes · /cg lead codex · /cg off")
+      }
       case "power": {
-        const cur = current()
+        const cur = cgTarget ?? current()
         if (cur?.kind !== "agent") return note("/power règle un agent (Claude Code, Codex…). Pour les modèles d'API : /permissions.", "warn")
         const setP = (v: string) => {
           const ags = { ...(prefs().agents ?? {}) }
@@ -620,7 +743,7 @@ export function App(props: { cwd: string }) {
         return openList(`Puissance — ${agentName(cur.provider)}`, () => (["lecture", "modifications", "commandes"] as Power[]).map((p) => ({ title: p, detail: POWER_LABEL[p], value: p })), setP)
       }
       case "model": {
-        const curA = current()
+        const curA = cgTarget ?? current()
         if (curA?.kind === "agent") {
           const d = detected().find((x) => x.id === curA.provider)
           const setM = (v: string) => {
@@ -643,7 +766,7 @@ export function App(props: { cwd: string }) {
         return note(`Modèle introuvable dans les catalogues chargés : ${arg}. Cherchez-le avec /models.`, "error")
       }
       case "effort": {
-        const cur = current()
+        const cur = cgTarget ?? current()
         if (cur?.kind === "agent") {
           const d = detected().find((x) => x.id === cur.provider)
           const ms = d?.path ? await agentModels(cur.provider, d.path) : []
@@ -1242,7 +1365,7 @@ export function App(props: { cwd: string }) {
                   onSubmit={submit} onContentChange={() => setDraft(prompt?.plainText ?? "")} />
         <box flexDirection="row" marginTop={1} height={1}>
           <text fg={mode() === "plan" ? C.other : C.accent}><b>{mode() === "plan" ? "Plan" : "Build"}</b></text>
-          <text fg={C.muted}>{"  " + currentLabel()}</text>
+          <text fg={C.muted}>{"  " + (cgOn() ? "Claude Code et Codex (/cg)" : currentLabel())}</text>
           <Show when={permMode() !== "demander"}><text fg={permMode().startsWith("bypass") ? C.error : C.other}>{"  · " + permMode().toUpperCase()}</text></Show>
           <Show when={attachments().length}><text fg={C.recent}>{`  · ${attachments().length} pièce(s) jointe(s)`}</text></Show>
           <Show when={goal()?.active}><text fg={C.detected}>{"  · objectif en cours"}</text></Show>
@@ -1294,6 +1417,7 @@ export function App(props: { cwd: string }) {
   const Thread = () => (
     <box flexDirection="column" flexGrow={1} paddingX={2} paddingTop={1}>
       <text fg={C.text} height={1}><b>{(title() || items.find((i) => i.role === "user")?.text || "").split("\n")[0].slice(0, dims().width - 10)}</b></text>
+      <Show when={cgOn()}><CgZones zones={zones} phase={cgPhase()} width={dims().width - (sidebarOn() && dims().width >= 110 ? 36 : 0)} height={dims().height} /></Show>
       <scrollbox ref={(r: any) => (threadScroll = r)} flexGrow={1} stickyScroll stickyStart="bottom" marginTop={1}>
         <For each={items}>
           {(it, i) => (

@@ -34,7 +34,7 @@ export const COMMANDS: Command[] = [
   { name: "detect", desc: "Détecter à nouveau les agents installés", origin: "eclipse", ready: true },
   { name: "agent-path", desc: "Indiquer à la main l'exécutable d'un agent", usage: "/agent-path ID [CHEMIN]", origin: "eclipse", ready: true },
   { name: "fusion", desc: "Le modèle actif peut consulter d'autres modèles ou agents", usage: "/fusion [on|off|list|add ID|remove ID]", origin: "eclipse", ready: false, step: S.agents },
-  { name: "cg", desc: "Discussion commune Claude Code et Codex", origin: "eclipse", ready: false, step: S.cg },
+  { name: "cg", desc: "Discussion commune Claude Code et Codex : un écrit, l'autre relit, un seul résultat", usage: "/cg [off | lead claude|codex]", origin: "eclipse", ready: true },
   // --- session et conversation
   { name: "new", aliases: ["clear"], desc: "Nouvelle discussion", keys: "ctrl+x n", origin: "les deux", ready: true },
   { name: "sessions", aliases: ["resume", "continue"], desc: "Lister et reprendre une session", keys: "ctrl+x l", origin: "les deux", ready: true },
