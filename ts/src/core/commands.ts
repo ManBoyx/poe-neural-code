@@ -29,6 +29,7 @@ export const COMMANDS: Command[] = [
   { name: "model", desc: "Choisir directement un modèle", usage: "/model NOM", origin: "eclipse", ready: true },
   { name: "effort", aliases: ["variant"], desc: "Effort du modèle : rapide, normal, profond", usage: "/effort [rapide|normal|profond|défaut]", keys: "ctrl+t", origin: "les deux", ready: true },
   { name: "options", aliases: ["params"], desc: "Tous les réglages du modèle actif", origin: "eclipse", ready: true },
+  { name: "power", aliases: ["puissance"], desc: "Puissance de l'agent : lecture, modifications, commandes", usage: "/power lecture|modifications|commandes", origin: "eclipse", ready: true },
   { name: "free", desc: "Modèles gratuits disponibles", origin: "eclipse", ready: true },
   { name: "detect", desc: "Détecter à nouveau les agents installés", origin: "eclipse", ready: true },
   { name: "agent-path", desc: "Indiquer à la main l'exécutable d'un agent", usage: "/agent-path ID [CHEMIN]", origin: "eclipse", ready: true },

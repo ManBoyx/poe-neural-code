@@ -28,6 +28,7 @@ export interface Prefs {
   options?: Record<string, Record<string, unknown>> // « fournisseur/modèle » -> réglages du catalogue (/options)
   sidebar?: boolean
   sandbox?: boolean // défaut : active
+  agents?: Record<string, { model?: string; effort?: string; power?: "lecture" | "modifications" | "commandes" }> // réglages par agent
 }
 
 export interface State {

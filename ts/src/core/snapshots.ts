@@ -44,6 +44,12 @@ export class Snapshots {
     return h.code === 0 ? h.out.trim() : null
   }
 
+  /** Vrai si les fichiers diffèrent entre deux instantanés (et pas seulement leurs commits). */
+  async changed(a: string, b: string): Promise<boolean> {
+    const r = await this.git(["diff", "--quiet", a, b])
+    return r.code === 1
+  }
+
   /** Remet le dossier dans l'état de `target` : fichiers modifiés restaurés, fichiers ajoutés depuis supprimés. */
   async restore(target: string): Promise<{ ok: boolean; changed: string[]; error?: string }> {
     const cur = await this.snapshot("avant restauration")

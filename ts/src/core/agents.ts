@@ -234,3 +234,29 @@ export async function* runAgent(r: AgentRun): AsyncGenerator<AgentEvent> {
     killGroup(proc.pid)
   }
 }
+
+export interface AgentModel {
+  id: string
+  efforts: string[]
+  defaultEffort?: string
+}
+
+/** Modèles proposés par un agent installé : catalogue local de Codex (`codex debug models`), alias de Claude Code. */
+export async function agentModels(agent: string, binary: string): Promise<AgentModel[]> {
+  if (agent === "claude") return CLAUDE_MODELS.map((id) => ({ id, efforts: CLAUDE_EFFORTS }))
+  if (agent === "codex") {
+    const { runCmd } = await import("./proc")
+    const r = await runCmd([binary, "debug", "models"], { timeoutMs: 30_000 })
+    try {
+      const d = JSON.parse(r.out)
+      const ms: any[] = Array.isArray(d) ? d : d.models ?? []
+      return ms.filter((m) => m.visibility !== "hide" && m.slug).map((m) => ({
+        id: m.slug, defaultEffort: m.default_reasoning_level,
+        efforts: (m.supported_reasoning_levels ?? []).map((x: any) => (typeof x === "string" ? x : x.effort)).filter(Boolean),
+      }))
+    } catch {
+      return []
+    }
+  }
+  return []
+}
