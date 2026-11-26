@@ -1,67 +1,40 @@
 # Eclipse
 
-Application de programmation avec agents IA (Claude Code, Poe, OpenCode, Codex, fournisseurs compatibles OpenAI) :
-conversations par projet, chaque modification montrée avant d'être appliquée, mémoire de projet qui économise les
-tokens, budgets locaux, MCP. Linux, Windows et Android (terminal SSH).
+Agent de programmation dans le terminal : Claude Code, Codex, OpenCode, Gemini CLI et les fournisseurs par clé
+d'API (Poe, OpenRouter, OpenAI…) dans une seule interface. Claude Code et Codex peuvent travailler ensemble (`/cg`),
+la mémoire de projet économise les tokens, la consommation est suivie, les serveurs MCP sont pris en charge.
 
-Ce dépôt ne contient **que les versions publiées** (binaires, sommes de contrôle, signatures). Le code source est privé.
+Ce dépôt contient les versions publiées (exécutables, sommes de contrôle, installateur).
 
 ## Installation
 
-### Linux
-**AppImage** (sans droits administrateur, mises à jour automatiques) :
+### Linux (x86-64) : le CLI, version 5
+En une ligne, sans droits administrateur :
 ```sh
 curl -fsSL https://github.com/ManBoyx/eclipse-releases/releases/latest/download/install.sh | sh
 ```
-**Debian, Ubuntu (.deb)** ou **Fedora, openSUSE (.rpm)** :
-```sh
-curl -fsSL https://github.com/ManBoyx/eclipse-releases/releases/latest/download/install.sh | sh -s -- deb
-curl -fsSL https://github.com/ManBoyx/eclipse-releases/releases/latest/download/install.sh | sh -s -- rpm
-```
-Le script fait une cinquantaine de lignes. Lisez-le avant de l'exécuter :
-[install.sh](https://github.com/ManBoyx/eclipse-releases/releases/latest/download/install.sh).
+Puis lancez `Eclipse` dans le dossier de votre projet. À la première ouverture, choisissez votre fournisseur
+(`/provider`) ; `/help` liste toutes les commandes.
 
-Il effectue, dans l'ordre :
-1. le téléchargement du paquet ;
-2. la vérification de la signature de `SHA256SUMS`, si `minisign` est installé ;
-3. le contrôle de l'empreinte SHA-256 du paquet ;
-4. l'installation.
+Le script est court ; lisez-le avant de l'exécuter :
+[install.sh](https://github.com/ManBoyx/eclipse-releases/releases/latest/download/install.sh). Dans l'ordre, il :
+1. télécharge l'archive et `SHA256SUMS` ;
+2. contrôle l'empreinte SHA-256 de l'archive (rien n'est exécuté avant) ;
+3. vérifie que le nouvel exécutable démarre sur votre ordinateur ;
+4. l'installe dans `~/.local/bin/Eclipse`, en gardant la version précédente sous `~/.local/bin/Eclipse.ancien`.
 
-Rien n'est exécuté avant ces contrôles.
+Relancez la même commande pour mettre Eclipse à jour.
 
-### Windows 10 (1809+) et 11
-- **Installateur** : [Eclipse_x64-setup.exe](https://github.com/ManBoyx/eclipse-releases/releases/latest/download/Eclipse_x64-setup.exe).
-  Il s'installe sans droits administrateur et se met à jour automatiquement.
-- **MSI** (déploiement en entreprise) : [Eclipse_x64.msi](https://github.com/ManBoyx/eclipse-releases/releases/latest/download/Eclipse_x64.msi).
-- **Portable** (.zip à décompresser, données dans `data\`) : [Eclipse_x64_portable.zip](https://github.com/ManBoyx/eclipse-releases/releases/latest/download/Eclipse_x64_portable.zip).
-- **Scoop** :
-  ```powershell
-  scoop bucket add eclipse https://github.com/ManBoyx/eclipse-releases
-  scoop install eclipse/eclipse
-  ```
-- **winget** : `winget install ManBoyx.Eclipse` (disponible une fois le paquet accepté dans le catalogue de Microsoft).
+À la main : téléchargez `eclipse-cli_linux-x86_64.tar.gz`, vérifiez-le (`sha256sum -c --ignore-missing SHA256SUMS`),
+décompressez-le et copiez `Eclipse` dans un dossier de votre PATH.
 
-Les binaires ne sont pas signés avec un certificat de signature de code. Windows SmartScreen affiche donc
-« Windows a protégé votre ordinateur » : cliquez sur **Informations complémentaires** puis sur **Exécuter quand même**.
-Vérifiez d'abord l'empreinte :
-```powershell
-(Get-FileHash .\Eclipse_x64-setup.exe -Algorithm SHA256).Hash   # à comparer avec SHA256SUMS
-```
+Recommandé :
+- `secret-tool` (paquet `libsecret-tools` ou `libsecret`) : vos clés d'API restent dans le trousseau du système, jamais en clair ;
+- `bubblewrap` : la sandbox des commandes et la protection des fichiers d'Eclipse ;
+- `alsa-utils` : l'appel vocal (`/voice`).
 
-### Android
-APK (installation hors Play Store) : [Eclipse.apk](https://github.com/ManBoyx/eclipse-releases/releases/latest/download/Eclipse.apk).
-Android demande d'autoriser l'installation depuis votre navigateur ou votre gestionnaire de fichiers.
-
-## Vérifier un téléchargement à la main
-```sh
-sha256sum -c --ignore-missing SHA256SUMS
-minisign -Vm SHA256SUMS -x SHA256SUMS.minisig -P <clé publique indiquée dans install.sh>
-```
-
-## Mises à jour
-L'application vérifie les nouvelles versions sur ce dépôt. Avant toute installation, elle affiche le journal des
-changements, puis contrôle l'empreinte SHA-256 et la signature. Canaux disponibles : **stable** et **bêta**.
-La vérification automatique se désactive dans les réglages ; aucune autre donnée n'est envoyée.
+### Windows, macOS, application desktop, Android
+Pas encore publiés pour la version 5. Ils arriveront sur cette même page.
 
 ## Licence
 Logiciel propriétaire, gratuit : voir [LICENSE](LICENSE). Failles de sécurité : voir [SECURITY.md](SECURITY.md).

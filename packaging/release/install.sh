@@ -55,10 +55,12 @@ case "$FORMAT" in
     if [ -d "$DEST" ] && [ ! -L "$DEST" ]; then die "$DEST est un dossier : rien n'a été remplacé."; fi
     NEW=$(mktemp "$HOME/.local/bin/.Eclipse.XXXXXX")
     install -m 755 "$TMP/x/Eclipse" "$NEW"
-    if [ -e "$DEST" ] || [ -L "$DEST" ]; then
-      OLD="$HOME/.local/bin/Eclipse.ancien"
-      rm -f "$OLD"   # retire aussi un éventuel lien symbolique (la copie ne doit jamais écrire ailleurs)
-      cp -P "$DEST" "$OLD" || { rm -f "$NEW"; die "sauvegarde de la version actuelle impossible : rien n'a été remplacé."; }
+    if [ -e "$DEST" ]; then
+      # copie du CONTENU de la version actuelle (même si Eclipse est un lien) dans un fichier neuf, puis remplacement
+      # d'un bloc de Eclipse.ancien : rien n'est écrit à travers un lien, rien n'est supprimé avant que la copie existe
+      BK=$(mktemp "$HOME/.local/bin/.Eclipse.ancien.XXXXXX")
+      cp -L "$DEST" "$BK" && chmod 755 "$BK" && mv -fT "$BK" "$HOME/.local/bin/Eclipse.ancien" \
+        || { rm -f "$NEW" "$BK"; die "sauvegarde de la version actuelle impossible : rien n'a été remplacé."; }
       say "Version précédente gardée : ~/.local/bin/Eclipse.ancien"
     fi
     mv -fT "$NEW" "$DEST" || { rm -f "$NEW"; die "remplacement impossible."; }   # d'un bloc, même si Eclipse tourne

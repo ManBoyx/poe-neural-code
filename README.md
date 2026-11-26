@@ -28,7 +28,7 @@ remplace chaque icône par un symbole texte simple.
 curl -fsSL https://github.com/ManBoyx/eclipse-releases/releases/latest/download/install.sh | sh
 ```
 Depuis le code source : `cd ts && bun install && bun run src/main.tsx` (Bun ≥ 1.4) ; exécutable :
-`packaging/cli-ts/package.sh`. Les sections ci-dessous décrivent encore la version Python (0.x à 4.x), dont le moteur
+`packaging/cli-ts/package.sh` (son test de démarrage demande Python avec `pyte` : `pip install pyte`). Les sections ci-dessous décrivent encore la version Python (0.x à 4.x), dont le moteur
 sert toujours à l'application desktop jusqu'à la fin de sa refonte.
 
 **Préversion privée (version Python)** : page « Releases » de ce dépôt (connecté à GitHub), version `prive-v0.3.0`.

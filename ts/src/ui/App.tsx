@@ -27,7 +27,7 @@ import { verifyPassword } from "../core/auth"
 import * as V from "../core/voice"
 import { isProtected, listProjects, needsProject, openProject, projectsRoot, PROTECT_RULE, slug } from "../core/protect"
 import { available as sandboxAvailable } from "../core/sandbox"
-import { approve as approveMcp, loadConfigs as loadMcpConfigs, McpManager } from "../core/mcp"
+import { approveFingerprint as approveMcpFingerprint, McpManager, revoke as revokeMcp } from "../core/mcp"
 import { discoverPlugins, discoverSkills, loadPlugins, setTrust, skillCatalog, type PluginCommand, type PluginInfo, type Skill } from "../core/extensions"
 import { cgTurn, CG_LABEL, parsePlan, type CgAgent, type CgMode } from "../core/cg"
 import { CgZones, cgTabs, SUB_COLORS, SubAgentView, type Zone, type ZoneEntry } from "./CgView"
@@ -269,14 +269,15 @@ export function App(props: { cwd: string }) {
   async function loadExtensions() {
     skills = discoverSkills(cwd())
     plugins = discoverPlugins(cwd())
-    pluginCmds = await loadPlugins(plugins)
-    await mcp.start(cwd(), () => setMcpTick((x) => x + 1))
-    const waiting = mcp.status.filter((x) => x.state === "à approuver")
-    if (waiting.length) note(`Ce projet déclare ${waiting.length} serveur(s) MCP (${waiting.map((x) => x.name).join(", ")}) : rien n'est lancé sans votre accord. /mcp pour voir les commandes, puis /mcp approuver NOM.`, "warn")
     if (process.platform === "linux" && !sandboxAvailable().ok && !warnedNoBwrap) {
       warnedNoBwrap = true
       note("bubblewrap n'est pas installé : sandbox et garde des fichiers d'Eclipse indisponibles pour les commandes et les agents (seuls les outils d'Eclipse refusent d'y écrire). Installez le paquet bubblewrap.", "warn")
     }
+    pluginCmds = await loadPlugins(plugins)
+    const started = mcp.start(cwd(), () => setMcpTick((x) => x + 1)) // statut connu tout de suite, connexions ensuite
+    const waiting = mcp.status.filter((x) => x.state === "à approuver")
+    if (waiting.length) note(`Ce projet déclare ${waiting.length} serveur(s) MCP (${waiting.map((x) => x.name).join(", ")}) : rien n'est lancé sans votre accord. /mcp pour voir les commandes, puis /mcp approuver NOM.`, "warn")
+    await started.catch(() => {})
   }
   let warnedNoBwrap = false
   /** Consignes du projet (AGENTS.md, CLAUDE.md, .eclipse/instructions.md) et personnelles, bornées. */
@@ -1683,17 +1684,27 @@ export function App(props: { cwd: string }) {
         const [sub, ...rest] = arg.split(/\s+/)
         if (sub === "approuver" || sub === "retirer") {
           const name = rest.join(" ").trim()
-          const cfgs = loadMcpConfigs(cwd()).filter((c) => c.source === "projet" && (name === "tout" || c.name === name))
-          if (!name || !cfgs.length) return note(`Usage : /mcp ${sub} NOM (serveur déclaré dans .eclipse/mcp.json du projet) ou /mcp ${sub} tout`, "error")
-          for (const c of cfgs) approveMcp(cwd(), c.name, c.cfg, sub === "approuver")
+          const all = name === "--tous"
+          if (!name) return note(`Usage : /mcp ${sub} NOM (serveur déclaré dans .eclipse/mcp.json du projet) ou /mcp ${sub} --tous`, "error")
+          if (sub === "retirer") {
+            await mcp.stopAll() // arrête aussi un démarrage en cours
+            const gone = revokeMcp(cwd(), all ? "*" : name)
+            mcp.start(cwd(), () => setMcpTick((x) => x + 1))
+            return note(gone.length ? `Approbation retirée et serveur arrêté : ${gone.join(", ")}` : `Aucune approbation pour « ${name} » dans ce projet.`)
+          }
+          // on approuve exactement ce qui a été montré par /mcp (l'empreinte affichée), pas une nouvelle lecture du fichier
+          const shown = mcp.status.filter((x) => x.state === "à approuver" && x.fingerprint && (all || x.name === name))
+          if (!shown.length) return note(`Rien à approuver sous ce nom. /mcp montre les serveurs du projet en attente.`, "error")
+          for (const x of shown) approveMcpFingerprint(cwd(), x.name, x.fingerprint!)
           await mcp.start(cwd(), () => setMcpTick((x) => x + 1))
-          return note(`${sub === "approuver" ? "Approuvé et lancé" : "Approbation retirée"} : ${cfgs.map((c) => c.name).join(", ")}`)
+          const still = mcp.status.filter((x) => shown.some((y) => y.name === x.name) && x.state === "à approuver")
+          return note(still.length ? `Le fichier a changé depuis l'affichage : ${still.map((x) => x.name).join(", ")} toujours en attente. Relisez /mcp.` : `Approuvé et lancé : ${shown.map((x) => x.name).join(", ")}`, still.length ? "warn" : "info")
         }
         mcpTick()
         if (!mcp.status.length) return note(`Aucun serveur MCP configuré. Fichier : ${short(join(dataDir(), "mcp.json"))} (ou .eclipse/mcp.json du projet), format {"mcpServers": {"nom": {"command": "…", "args": []}}}.`)
         const waiting = mcp.status.filter((s) => s.state === "à approuver")
         return note("Serveurs MCP (outils donnés aux modèles d'API) :\n" + mcp.status.map((s) => `  ${s.state === "connecté" ? I.ok : s.state === "erreur" ? I.error : s.state === "à approuver" ? I.warn : I.off} ${s.name.padEnd(20)} ${s.state}${s.tools ? ` · ${s.tools} outil(s)` : ""}${s.error ? " · " + s.error : ""} (${s.source})${s.launch ? `\n      lancerait : ${s.launch}` : ""}`).join("\n")
-          + (waiting.length ? `\n\nServeurs déclarés par le projet : rien n'est lancé sans votre accord. Vérifiez la commande, puis /mcp approuver NOM (ou tout).` : "") + "\n\n/mcp reload pour relancer")
+          + (waiting.length ? `\n\nServeurs déclarés par le projet : rien n'est lancé sans votre accord. Vérifiez la commande, puis /mcp approuver NOM (ou --tous).` : "") + "\n\n/mcp reload pour relancer")
       }
       case "fusion": {
         const [sub, ...r] = arg.split(/\s+/)
@@ -1738,7 +1749,7 @@ export function App(props: { cwd: string }) {
         ], (v) => { closeOverlay(); prompt?.setText("/" + v + " "); setDraft("/" + v + " ") }, "↑↓ · entrée : écrire la commande · tapez pour filtrer · échap")
       case "exit":
         if (voiceOn()) hangUp()
-        await mcp.close()
+        await mcp.stopAll()
         mem.close()
         budget.close()
         return renderer.destroy()

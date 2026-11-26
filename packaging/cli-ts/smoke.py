@@ -19,22 +19,29 @@ try:
     screen = pyte.Screen(cols, rows)
     stream = pyte.ByteStream(screen)
     end = time.time() + 6
+    closed = False
     while time.time() < end:
         r, _, _ = select.select([fd], [], [], 0.1)
         if r:
             try:
-                stream.feed(os.read(fd, 65536))
+                data = os.read(fd, 65536)
             except OSError:
+                data = b""
+            if not data:  # terminal fermé avant la fin du délai : échec, même si le processus vit encore
+                closed = True
                 break
-    alive = os.waitpid(pid, os.WNOHANG) == (0, 0)
+            stream.feed(data)
+    alive = not closed and os.waitpid(pid, os.WNOHANG) == (0, 0)
     text = "\n".join(line.rstrip() for line in screen.display)
-    if alive:
+    try:
         os.kill(pid, 9)
         os.waitpid(pid, 0)
+    except (ProcessLookupError, ChildProcessError):
+        pass
     # accueil, ou au tout premier lancement (aucun modèle choisi) le sélecteur de modèle
     drawn = any(m in text for m in ("Eclipse 5", "Demandez", "Choisir un modèle"))
     if not alive or not drawn:
-        print("échec : " + ("l'interface s'est arrêtée" if not alive else "accueil non dessiné") + "\n" + text, file=sys.stderr)
+        print("échec : " + ("terminal fermé avant 6 s" if closed else "l'interface s'est arrêtée" if not alive else "accueil non dessiné") + "\n" + text, file=sys.stderr)
         sys.exit(1)
     print("interface : démarrage vérifié (accueil affiché, toujours en marche après 6 s)")
 finally:
