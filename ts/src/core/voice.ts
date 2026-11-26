@@ -309,7 +309,7 @@ export async function install(progress: (step: string) => void): Promise<{ ok: b
       await step("piper (extraction)", ["tar", "-xzf", join(v, "dl/piper.tar.gz"), "-C", v])
     }
     for (const f of ["fr_FR-siwis-medium.onnx", "fr_FR-siwis-medium.onnx.json"])
-      if (!existsSync(join(v, "voices", f))) await step(`voix française (${f.endsWith("json") ? "réglages" : "63 Mo"})`, ["curl", "-fsSL", "-o", join(v, "voices", f), `https://huggingface.co/rhasspy/piper-voices/resolve/main/fr/fr_FR/siwis/medium/${f}`])
+      if (!existsSync(join(v, "voices", f))) await step(`voix française (${f.endsWith("json") ? "réglages" : "63 Mo"})`, ["curl", "-fsSL", "-o", join(v, "voices", f), `https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/fr/fr_FR/siwis/medium/${f}`])
     return { ok: true, message: "Voix installée : transcription whisper.cpp (small) et voix française piper." }
   } catch (e) {
     return { ok: false, message: (e as Error).message }

@@ -8,6 +8,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { isDestructive, type Permissions } from "./permissions"
 import { runCmd } from "./proc"
 import { available as sandboxAvailable, wrap } from "./sandbox"
+import { isProtected } from "./protect"
 import type { Kind, Memory } from "./memory"
 import type { McpManager } from "./mcp"
 import type { Skill } from "./extensions"
@@ -175,6 +176,7 @@ export async function runTool(env: ToolEnv, call: ToolCall): Promise<ToolResult>
       case "write_file":
       case "edit_file": {
         const l = locate(env, a.path)
+        if (isProtected(l.abs)) return { ok: false, output: "refusé : c'est un fichier d'Eclipse. Les modèles n'écrivent jamais dans Eclipse ; travaille dans le dossier du projet." }
         const before = existsSync(l.abs) ? readFileSync(l.abs, "utf8") : ""
         let after: string
         if (call.name === "write_file") after = String(a.content ?? "")
@@ -195,6 +197,7 @@ export async function runTool(env: ToolEnv, call: ToolCall): Promise<ToolResult>
       case "run_command": {
         const cmd = String(a.command ?? "").trim()
         if (!cmd) return { ok: false, output: "commande vide" }
+        if (isProtected(env.roots[0])) return { ok: false, output: "refusé : le dossier de travail est un dossier d'Eclipse. Ouvrez un projet (/projet NOM)." }
         if (/(^|[;&|]\s*)sudo\b/.test(cmd)) return { ok: false, output: "sudo n'est pas permis aux modèles : lancez la commande vous-même si elle est nécessaire" }
         const ok = await env.perms.authorize({ tool: "run_command", kind: "exec", summary: cmd, detail: cmd, destructive: isDestructive(cmd), grantKey: `exec:${cmd.split(/\s+/)[0]}` })
         if (!ok) return { ok: false, output: "commande refusée par l'utilisateur" }
