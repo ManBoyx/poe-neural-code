@@ -14,3 +14,12 @@ test("caractères invisibles ou trompeurs rendus visibles", () => {
   expect(revealHidden("a​b")).toBe("a\\u{200B}b")
   expect(revealHidden("ligne 1\nligne 2 é")).toBe("ligne 1\nligne 2 é")
 })
+
+test("une suite d'espaces est repliée elle aussi, et montrée en clair dans l'approbation", () => {
+  const line = " ".repeat(4000) + "ARGUMENT_A_VERIFIER"
+  const parts = wrapToWidth(line, 60)
+  for (const p of parts) expect(Bun.stringWidth(p)).toBeLessThanOrEqual(60)
+  expect(parts.length).toBeGreaterThan(60)
+  expect(revealHidden(`"${" ".repeat(4000)}ARGUMENT_A_VERIFIER"`)).toBe('"{4000 espaces}ARGUMENT_A_VERIFIER"')
+  expect(revealHidden("a    b")).toBe("a{4 espaces}b")
+})
