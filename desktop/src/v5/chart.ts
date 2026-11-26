@@ -159,7 +159,8 @@ function pieChart(spec: ChartSpec): string {
     a0 = a1 + (parts.length > 1 ? 0.012 : 0);
   });
   const total = parts.reduce((a, p) => a + p.value, 0);
-  marks += `<text class="hero" x="${cx}" y="${cy + 2}" text-anchor="middle">${esc(compact.format(total))}</text><text class="ax" x="${cx}" y="${cy + 20}" text-anchor="middle">total</text>`;
+  // total au centre, sauf pour des pourcentages (il vaudrait 100 et n'apprendrait rien)
+  if (spec.unit !== "%") marks += `<text class="hero" x="${cx}" y="${cy + 2}" text-anchor="middle">${esc(compact.format(total))}</text><text class="ax" x="${cx}" y="${cy + 20}" text-anchor="middle">total</text>`;
   return `<svg viewBox="0 0 280 260" class="pie" role="img" aria-label="${esc(spec.title ?? "répartition")}">${marks}</svg>`;
 }
 
