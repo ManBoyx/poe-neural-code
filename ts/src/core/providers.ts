@@ -89,7 +89,7 @@ export function parsePoe(data: any[]): ModelInfo[] {
     // ils s'appellent comme les autres (la réponse contient le lien du média) et alimentent l'espace Médias
     const outMods: string[] = arch.output_modalities ?? ["text"]
     const price = d.pricing ?? {}
-    const effP = (d.parameters ?? []).find((p: any) => /effort/i.test(p.name ?? ""))
+    const effP = (d.parameters ?? []).find((p: any) => /effort|^thinking_level$/i.test(p.name ?? "") && Array.isArray(p.schema?.enum))
     const eff = effP?.schema?.enum
     const pIn = price.prompt != null ? Number(price.prompt) * 1e6 : undefined
     const pOut = price.completion != null ? Number(price.completion) * 1e6 : undefined

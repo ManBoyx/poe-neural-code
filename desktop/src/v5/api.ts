@@ -84,6 +84,8 @@ export interface EngineState {
   cwd: string; cwdShort: string; protectedCwd: boolean; needsProject: boolean; projectsRoot: string;
   projects: { name: string; path: string; mtime: number }[];
   current: Choice | null; label: string; effort: string | null; efforts: string[];
+  modelParams: { name: string; kind: string; choices?: string[]; description?: string }[];
+  modelOptions: Record<string, unknown>; modelOutput: string[] | null; deepResearch: { provider: string; id: string }[];
   recents: (Choice & { at: number })[]; busy: boolean; title: string; conv: number | null; space: Space;
   perm: string; bypassVerified: boolean; sandbox: boolean;
   agents: { id: string; label: string; installed: boolean; version?: string; install?: string }[];

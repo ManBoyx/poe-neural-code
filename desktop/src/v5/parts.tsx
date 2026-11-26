@@ -43,16 +43,17 @@ function humanText(t: string): string {
   return t;
 }
 
-function Steps({ blocks, running }: { blocks: Block[]; running: boolean }) {
+function Steps({ blocks, running, showThinking = true }: { blocks: Block[]; running: boolean; showThinking?: boolean }) {
   const tools = blocks.filter((b) => b.k === "tool") as Extract<Block, { k: "tool" }>[];
   const thinking = blocks.filter((b) => b.k === "thinking");
   if (!tools.length && !thinking.length) return null;
+  if (!tools.length && !showThinking) return null;
   const cur = [...tools].reverse().find((t) => !t.done);
   const label = running && cur ? `${stepOf(cur).verb} ${stepOf(cur).obj}` : tools.length ? `${tools.length} étape${tools.length > 1 ? "s" : ""}` : "Réflexion";
   return (
     <details class="details">
       <summary class="press">{running && cur ? <span class="spin" /> : <Ic i={I.chevron} />}<span>{label}</span></summary>
-      {thinking.map((b) => <p class="step"><Ic i={I.brain} /><span class="obj selectable">{(b as any).text.slice(-400)}</span></p>)}
+      {showThinking && thinking.map((b) => <p class="step"><Ic i={I.brain} /><span class="obj selectable">{(b as any).text.slice(-400)}</span></p>)}
       {tools.map((b) => <StepRow b={b} />)}
     </details>
   );
@@ -72,6 +73,36 @@ function StepRow({ b }: { b: Extract<Block, { k: "tool" }> }) {
       {open && b.diff && <pre class="diff">{b.diff.split("\n").map((l) => <span class={l.startsWith("+") && !l.startsWith("+++") ? "add" : l.startsWith("-") && !l.startsWith("---") ? "del" : ""}>{l + "\n"}</span>)}</pre>}
       {open && b.output && !b.diff && <pre class="out">{b.output}</pre>}
     </>
+  );
+}
+
+// ------------------------------------------------------------------ horloge et réflexion
+const secs = (ms: number) => `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0).replace(".", ",")} s`;
+/** Temps écoulé depuis `from`, mis à jour en direct tant que `to` n'est pas connu. */
+export function Elapsed({ from, to }: { from?: number; to?: number }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!from || to) return;
+    const id = setInterval(() => tick((x) => x + 1), 100);
+    return () => clearInterval(id);
+  }, [from, to]);
+  if (!from) return null;
+  return <span class="elapsed">{secs((to ?? Date.now()) - from)}</span>;
+}
+
+function Thinking({ m, running }: { m: Msg; running: boolean }) {
+  const text = m.blocks.filter((b) => b.k === "thinking").map((b) => (b as any).text).join("");
+  if (!text.trim()) return null;
+  const live = running && !m.thinkEnd;
+  return (
+    <details class="thinking" open={live}>
+      <summary class="press">
+        {live ? <span class="shimmer">Réfléchit…</span> : <span>A réfléchi</span>}
+        <Elapsed from={m.thinkStart} to={m.thinkEnd} />
+        <Ic i={I.chevron} />
+      </summary>
+      <div class="think-text selectable">{live ? text.slice(-1600) : text}</div>
+    </details>
   );
 }
 
@@ -142,23 +173,37 @@ export function Sidebar(p: {
 }
 
 // ------------------------------------------------------------------ fil
-export function MessageView({ m, busy }: { m: Msg; busy: boolean }) {
+/** Le bloc HTML d'une réponse en mode canevas est remplacé, dans le fil, par une carte qui ouvre le canevas. */
+function splitCanvas(text: string): { before: string; after: string; has: boolean } {
+  const i = text.indexOf("```html");
+  if (i < 0) return { before: text, after: "", has: false };
+  const j = text.indexOf("```", i + 7);
+  return { before: text.slice(0, i), after: j < 0 ? "" : text.slice(j + 3), has: true };
+}
+
+export function MessageView({ m, busy, onCanvas }: { m: Msg; busy: boolean; onCanvas?: () => void }) {
   if (m.role === "user") return <div class="msg user"><div class="bubble">{m.text}</div></div>;
   const running = !m.done && busy;
   const texts = m.blocks.filter((b) => b.k === "text") as Extract<Block, { k: "text" }>[];
   const notices = m.blocks.filter((b) => b.k === "notice") as Extract<Block, { k: "notice" }>[];
   const shown = m.cg ? m.text : texts.map((b) => b.text).join("") || m.text;
+  const cv = m.canvas ? splitCanvas(shown) : null;
+  const md = (t: string) => (t.trim() ? <div class="md" dangerouslySetInnerHTML={{ __html: renderMarkdown(t) }} /> : null);
   return (
     <div class="msg bot">
       <div class="body">
-        {!m.cg && <Steps blocks={m.blocks} running={running} />}
-        {!shown && running && <div class="typing" aria-label="En cours"><span /><span /><span /><em>{m.cg ? "Les agents travaillent…" : ""}</em></div>}
-        {shown && <div class="md" dangerouslySetInnerHTML={{ __html: renderMarkdown(shown) }} />}
+        {!m.cg && <Thinking m={m} running={running} />}
+        {!m.cg && <Steps blocks={m.blocks} running={running} showThinking={false} />}
+        {!shown && running && !m.thinkStart && (
+          <div class="generating" aria-live="polite"><span class="pulse-dot" /><span class="shimmer">{m.cg ? "Les agents travaillent" : "Génère la réponse"}</span><Elapsed from={m.started} /></div>
+        )}
+        {cv ? <>{md(cv.before)}{cv.has && <button class="canvas-card press" onClick={onCanvas}><Ic i={I.pencil} /><span><b>Canevas</b><span class="dim">{running ? "S'écrit en direct…" : "Ouvrir à côté pour voir et retoucher"}</span></span>{running && <span class="spin" />}</button>}{md(cv.after)}</> : md(shown)}
         {notices.filter((n) => n.level === "error").map((n) => <p class="notice error"><Ic i={I.alert} />{n.text}</p>)}
+        {running && shown && <div class="gen-foot"><span class="pulse-dot" /><Elapsed from={m.started} /></div>}
         {m.done && (
           <div class="msg-foot">
+            <span>{m.interrupted ? "Interrompu · " : ""}{m.seconds ? secs(m.seconds * 1000) : ""}{m.tokens ? ` · ${fmtTok(m.tokens)} tokens` : ""}</span>
             <button class="mini press" title="Copier la réponse" onClick={() => navigator.clipboard?.writeText(msgText(m)).catch(() => {})}><Ic i={I.copy} /></button>
-            <span>{m.interrupted ? "Interrompu · " : ""}{m.seconds ? `${m.seconds.toFixed(1).replace(".", ",")} s` : ""}{m.tokens ? ` · ${fmtTok(m.tokens)} tokens` : ""}</span>
           </div>
         )}
       </div>
@@ -262,13 +307,63 @@ export function AgentSheet({ t, which, onClose }: { t: ThreadState; which: strin
 }
 
 // ------------------------------------------------------------------ saisie
+// options que le modèle actif annonce dans son catalogue
+const WEB_PARAMS = ["web_search", "tool_web_search", "enable_web_search", "web_search_linkup"];
+export function capabilities(st: EngineState) {
+  const ps = st.modelParams ?? [];
+  const bool = (n: string) => ps.find((x) => x.name === n && x.kind === "boolean")?.name;
+  const textModel = !st.modelOutput || st.modelOutput.includes("text");
+  return {
+    web: WEB_PARAMS.map(bool).find(Boolean),
+    think: bool("enable_thinking"),
+    showThink: bool("thinking_display") ?? bool("show_reasoning"),
+    deep: /deep-research|researcher/i.test(st.current?.model ?? ""),
+    canvas: st.current?.kind === "api" && textModel,
+  };
+}
+const LEVELS: [string, string][] = [["", "Auto"], ["rapide", "Rapide"], ["normal", "Normal"], ["profond", "Approfondi"]];
+
+function OptionsMenu(p: { st: EngineState; canvasOn: boolean; setCanvasOn: (b: boolean) => void; onOption: (name: string, v: boolean) => void; onDeep: () => void; onClose: () => void }) {
+  const c = capabilities(p.st);
+  const on = (n?: string) => !!n && p.st.modelOptions?.[n] === true;
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const out = (e: PointerEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) p.onClose(); };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && p.onClose();
+    setTimeout(() => addEventListener("pointerdown", out), 0);
+    addEventListener("keydown", esc);
+    return () => { removeEventListener("pointerdown", out); removeEventListener("keydown", esc); };
+  }, []);
+  const Item = ({ icon, label, hint, active, onClick, disabled }: { icon: string; label: string; hint: string; active?: boolean; onClick: () => void; disabled?: boolean }) => (
+    <button class="menu-item press" onClick={onClick} disabled={disabled} role="menuitemcheckbox" aria-checked={!!active}>
+      <Ic i={icon} /><span class="grow"><span>{label}</span><span class="dim small">{hint}</span></span>{active && <Ic i={I.check} />}
+    </button>
+  );
+  const none = !c.web && !c.think && !c.canvas && !p.st.deepResearch.length;
+  return (
+    <div class="menu" ref={ref} role="menu">
+      {c.web && <Item icon={I.search} label="Recherche sur le web" hint="Le modèle consulte des sources récentes" active={on(c.web)} onClick={() => p.onOption(c.web!, !on(c.web))} />}
+      {c.think && <Item icon={I.brain} label="Réflexion" hint="Il raisonne avant de répondre" active={on(c.think)} onClick={() => p.onOption(c.think!, !on(c.think))} />}
+      {c.showThink && <Item icon={I.brain} label="Montrer la réflexion" hint="Afficher son raisonnement pendant qu'il pense" active={on(c.showThink)} onClick={() => p.onOption(c.showThink!, !on(c.showThink))} />}
+      {p.st.deepResearch.length > 0 && <Item icon={I.search} label="Recherche approfondie" hint={c.deep ? "Modèle de recherche approfondie actif" : `Passe sur ${p.st.deepResearch[0].id}`} active={c.deep} onClick={p.onDeep} disabled={c.deep} />}
+      {c.canvas && <Item icon={I.pencil} label="Canevas" hint="Un design ou un document à côté, modifiable en direct" active={p.canvasOn} onClick={() => p.setCanvasOn(!p.canvasOn)} />}
+      {none && <p class="menu-empty dim small">Ce modèle n'annonce pas d'option.</p>}
+    </div>
+  );
+}
+
 export function Composer(p: {
   st: EngineState; space: Space; busy: boolean; cgOn: boolean; setCgOn: (b: boolean) => void; onSend: (t: string) => void; onStop: () => void;
+  canvasOn: boolean; setCanvasOn: (b: boolean) => void; onOption: (name: string, v: boolean) => void; onDeep: () => void;
   onModels: () => void; onEffort: (v: string | null) => void; media: MediaModel[]; mediaModel: MediaModel | null; setMediaModel: (m: MediaModel | null) => void;
   voice: { state: string; level: number }; onDictate: () => void; onStopDictate: () => void; draft: string; setDraft: (s: string) => void; history: string[];
 }) {
   const ta = useRef<HTMLTextAreaElement>(null);
   const [hi, setHi] = useState(-1);
+  const [menu, setMenu] = useState(false);
+  const caps = capabilities(p.st);
+  const optOn = (n?: string) => !!n && p.st.modelOptions?.[n] === true;
+  const apiModel = p.space !== "medias" && !(p.space === "work" && p.cgOn);
   useEffect(() => {
     const el = ta.current;
     if (!el) return;
@@ -329,12 +424,21 @@ export function Composer(p: {
         ) : (
           <span class="chip-btn" style={{ cursor: "default" }}><span class="lbl">Claude Code et Codex</span></span>
         )}
-        {p.space !== "medias" && !(p.space === "work" && p.cgOn) && p.st.efforts.length > 0 && (
-          <select class="chip-btn" value={p.st.effort ?? ""} onChange={(e) => p.onEffort((e.target as HTMLSelectElement).value || null)} aria-label="Effort de réflexion">
-            <option value="">Effort auto</option>
-            {p.st.efforts.map((x) => <option value={x}>Effort {x}</option>)}
-          </select>
+        {apiModel && p.st.efforts.length > 0 && (
+          <div class="mini-seg" role="radiogroup" aria-label="Effort de réflexion" title="Effort de réflexion">
+            {LEVELS.map(([v, l]) => <button role="radio" aria-checked={(p.st.effort ?? "") === v} class={`press ${(p.st.effort ?? "") === v ? "on" : ""}`} onClick={() => p.onEffort(v || null)}>{l}</button>)}
+          </div>
         )}
+        {apiModel && (
+          <div class="menu-wrap">
+            <button class={`icon-btn press ${menu ? "on" : ""}`} onClick={() => setMenu(!menu)} title="Options du modèle : recherche web, réflexion, canevas…" aria-haspopup="menu" aria-expanded={menu}><Ic i={I.plus} /></button>
+            {menu && <OptionsMenu st={p.st} canvasOn={p.canvasOn} setCanvasOn={p.setCanvasOn} onOption={p.onOption} onDeep={() => { setMenu(false); p.onDeep(); }} onClose={() => setMenu(false)} />}
+          </div>
+        )}
+        {apiModel && optOn(caps.web) && <button class="opt-pill press" onClick={() => p.onOption(caps.web!, false)} title="Retirer"><Ic i={I.search} />Web<Ic i={I.close} /></button>}
+        {apiModel && optOn(caps.think) && <button class="opt-pill press" onClick={() => p.onOption(caps.think!, false)} title="Retirer"><Ic i={I.brain} />Réflexion<Ic i={I.close} /></button>}
+        {apiModel && caps.deep && <span class="opt-pill"><Ic i={I.search} />Recherche approfondie</span>}
+        {apiModel && p.canvasOn && caps.canvas && <button class="opt-pill press" onClick={() => p.setCanvasOn(false)} title="Retirer"><Ic i={I.pencil} />Canevas<Ic i={I.close} /></button>}
         {p.space === "work" && (
           <div class="mini-seg" role="radiogroup" aria-label="Mode de travail">
             <button role="radio" aria-checked={!p.cgOn} class={`press ${!p.cgOn ? "on" : ""}`} onClick={() => p.setCgOn(false)}>{p.st.current?.kind === "agent" ? "Agent" : "Modèle"}</button>
@@ -410,3 +514,35 @@ export function Rail({ t, st, space, onClose, onMedia }: { t: ThreadState; st: E
 }
 
 export const railHasContent = (t: ThreadState) => t.msgs.some((m) => m.role === "assistant" && (chartsIn(msgText(m)).length > 0 || mediaIn(msgText(m)).length > 0));
+
+// ------------------------------------------------------------------ canevas : aperçu en direct et code modifiable
+export function CanvasPanel(p: { html: string; streaming: boolean; edited: boolean; onEdit: (html: string) => void; onReset: () => void; onClose: () => void }) {
+  const [tab, setTab] = useState<"apercu" | "code">("apercu");
+  const [shown, setShown] = useState(p.html);
+  // pendant l'écriture, l'aperçu suit le texte sans clignoter (au plus 4 rafraîchissements par seconde)
+  useEffect(() => {
+    if (!p.streaming) { setShown(p.html); return; }
+    const id = setTimeout(() => setShown(p.html), 250);
+    return () => clearTimeout(id);
+  }, [p.html, p.streaming]);
+  return (
+    <aside class="canvas" aria-label="Canevas">
+      <div class="canvas-head">
+        <div class="segmented" style={{ width: "190px" }}>
+          <button class={`press ${tab === "apercu" ? "on" : ""}`} onClick={() => setTab("apercu")}>Aperçu</button>
+          <button class={`press ${tab === "code" ? "on" : ""}`} onClick={() => setTab("code")}>Code</button>
+        </div>
+        {p.streaming && <span class="dim small" style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}><span class="spin" />S'écrit en direct</span>}
+        {p.edited && !p.streaming && <button class="chip-btn press" onClick={p.onReset} title="Revenir à la version du modèle">Retouché à la main · annuler</button>}
+        <span class="grow" />
+        <button class="icon-btn press" title="Copier le HTML" onClick={() => navigator.clipboard?.writeText(p.html).catch(() => {})}><Ic i={I.copy} /></button>
+        <button class="icon-btn press" title="Fermer le canevas" onClick={p.onClose}><Ic i={I.close} /></button>
+      </div>
+      {tab === "apercu"
+        // bac à sable sans scripts ni accès à l'application : le design s'affiche, il ne peut rien faire d'autre
+        ? <iframe class="canvas-frame" title="Aperçu du canevas" sandbox="" srcdoc={shown || "<p style='font:14px system-ui;color:#888;padding:24px'>Le canevas s'affichera ici.</p>"} />
+        : <textarea class="canvas-code mono" spellcheck={false} value={p.html} onInput={(e) => p.onEdit((e.target as HTMLTextAreaElement).value)} aria-label="Code HTML du canevas" />}
+      <p class="canvas-hint dim small">Demande une modification dans la discussion, ou retouche le code : le modèle repart de ta version.</p>
+    </aside>
+  );
+}

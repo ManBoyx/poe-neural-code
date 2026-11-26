@@ -21,6 +21,10 @@ export interface Msg {
   seconds?: number;
   interrupted?: boolean;
   tokens?: number;
+  started?: number; // début de la génération (horloge de l'interface)
+  thinkStart?: number; // début et fin de la réflexion visible
+  thinkEnd?: number;
+  canvas?: boolean; // réponse en mode canevas (le document s'affiche à côté)
 }
 
 export const SUB_COLORS = ["#e87ba4", "#3987e5", "#c98500", "#199e70", "#d95926", "#9085e9", "#22b8cf", "#e66767"];
@@ -73,19 +77,24 @@ function toZone(s: ThreadState, who: string | undefined, b: Block): ThreadState 
 }
 
 /** Applique un événement du moteur. `cg` : le message envoyé était un tour /cg (connu de l'interface). */
-export function reduce(s: ThreadState, e: any, opts: { cg: boolean } = { cg: false }): ThreadState {
+export function reduce(s: ThreadState, e: any, opts: { cg: boolean; canvas?: boolean } = { cg: false }): ThreadState {
+  const now = Date.now();
   switch (e.type) {
     case "turn": {
       const seq = s.seq + 2;
       const user: Msg = { id: seq - 1, role: "user", text: e.text, blocks: [], space: e.space };
-      const bot: Msg = { id: seq, role: "assistant", text: "", blocks: [], space: e.space, cg: opts.cg };
+      const bot: Msg = { id: seq, role: "assistant", text: "", blocks: [], space: e.space, cg: opts.cg, started: now, canvas: !!opts.canvas };
       const fresh = opts.cg ? { zones: emptyThread().zones, phase: "Le coordinateur lit la demande…" } : {};
       return { ...s, ...fresh, subs: [], cgTurn: opts.cg, seq, msgs: [...s.msgs, user, bot] };
     }
     case "text":
     case "thinking": {
       const b: Block = { k: e.type, text: String(e.text ?? "") };
-      return (e.parent && toSub(s, e.parent, b)) || toZone(s, e.who, b) || lastAssistant(s, (m) => ({ ...m, blocks: push(m.blocks, b) }));
+      return (e.parent && toSub(s, e.parent, b)) || toZone(s, e.who, b) || lastAssistant(s, (m) => ({
+        ...m, blocks: push(m.blocks, b),
+        thinkStart: e.type === "thinking" ? m.thinkStart ?? now : m.thinkStart,
+        thinkEnd: e.type === "text" && m.thinkStart && !m.thinkEnd ? now : m.thinkEnd,
+      }));
     }
     case "tool": {
       const b: Block = { k: "tool", id: e.id, name: e.name, summary: e.summary ?? "", done: !!e.done, ok: e.ok, output: e.output, diff: e.diff };
@@ -116,7 +125,7 @@ export function reduce(s: ThreadState, e: any, opts: { cg: boolean } = { cg: fal
         const hasText = m.blocks.some((b) => b.k === "text" && b.text.trim());
         // /cg : la réponse finale (synthèse) remplace le fil des agents, qui reste lisible dans leurs onglets
         const text = m.cg || !hasText ? String(e.text ?? "") : "";
-        return { ...m, done: true, seconds: e.seconds, interrupted: !!e.interrupted, text };
+        return { ...m, done: true, seconds: e.seconds, interrupted: !!e.interrupted, text, thinkEnd: m.thinkStart && !m.thinkEnd ? now : m.thinkEnd };
       });
     default:
       return s;
@@ -139,4 +148,17 @@ export function settle(s: ThreadState): ThreadState {
   const last = s.msgs[s.msgs.length - 1];
   if (!last || last.role !== "assistant" || last.done) return s;
   return { ...s, msgs: s.msgs.map((m, i) => (i === s.msgs.length - 1 ? { ...m, done: true, interrupted: true } : m)) };
+}
+
+/** Dernier document du canevas dans le fil (bloc ```html, même s'il est encore en cours d'écriture). */
+export function lastCanvas(t: ThreadState): { html: string; streaming: boolean; msgId: number } | null {
+  for (let i = t.msgs.length - 1; i >= 0; i--) {
+    const m = t.msgs[i];
+    if (m.role !== "assistant" || !m.canvas) continue;
+    const text = msgText(m);
+    const all = [...text.matchAll(/```html[^\n]*\n([\s\S]*?)(```|$)/g)];
+    const last = all[all.length - 1];
+    if (last) return { html: last[1], streaming: !last[2] && !m.done, msgId: m.id };
+  }
+  return null;
 }

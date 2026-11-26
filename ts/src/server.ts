@@ -145,7 +145,7 @@ const server = Bun.serve({
         const space = (b.space ?? "conversation") as Space
         if (S.busy) return json({ error: "une réponse est en cours" }, 409)
         if (space === "work" && needsProject(S.cwd)) return json({ error: "projet requis", propose: S.proposeProject(String(b.text ?? "")) }, 412)
-        S.send(String(b.text ?? ""), space, { cg: !!b.cg, mediaModel: b.mediaModel }).catch(() => {})
+        S.send(String(b.text ?? ""), space, { cg: !!b.cg, mediaModel: b.mediaModel, canvas: typeof b.canvas === "string" ? b.canvas : b.canvas === true ? "" : undefined }).catch(() => {})
         return json({ ok: true }, 202)
       }
       if (p === "/api/interrupt") return (S.interrupt(), json({ ok: true }))
@@ -165,6 +165,7 @@ const server = Bun.serve({
         return json({ ok: true, state: S.state() })
       }
       if (p === "/api/prefs") return (S.savePrefs(await body()), json(S.state()))
+      if (p === "/api/model-options") return (S.setModelOptions((await body()).values ?? {}), json(S.state()))
       // pendant une réponse, on ne change ni de discussion ni de projet (la réponse en cours s'enregistrerait ailleurs)
       if ((p === "/api/sessions/open" || p === "/api/new" || p === "/api/project") && S.busy) return json({ error: "une réponse est en cours : attendez la fin ou arrêtez-la" }, 409)
       if (p === "/api/project") {

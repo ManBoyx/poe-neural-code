@@ -9,11 +9,11 @@ import { ApiError, connect, events, get, isDesktop, post, restartEngine, type En
 import { I } from "./icons";
 import { safeUrl } from "./markdown";
 import { Lightbox, ModelPicker, PermModal, ProjectChooser, Settings, UsageView } from "./modals";
-import { AgentSheet, AgentsStrip, Composer, MessageView, Rail, railHasContent, Sidebar, StatusBar, Welcome } from "./parts";
-import { emptyThread, fromHistory, reduce, settle, type ThreadState } from "./thread";
+import { AgentSheet, AgentsStrip, CanvasPanel, Composer, MessageView, Rail, railHasContent, Sidebar, StatusBar, Welcome } from "./parts";
+import { emptyThread, fromHistory, lastCanvas, reduce, settle, type ThreadState } from "./thread";
 
-type Action = { t: "ev"; e: any; cg: boolean } | { t: "set"; s: ThreadState } | { t: "settle" };
-const threadReducer = (s: ThreadState, a: Action) => (a.t === "set" ? a.s : a.t === "settle" ? settle(s) : reduce(s, a.e, { cg: a.cg }));
+type Action = { t: "ev"; e: any; cg: boolean; canvas?: boolean } | { t: "set"; s: ThreadState } | { t: "settle" };
+const threadReducer = (s: ThreadState, a: Action) => (a.t === "set" ? a.s : a.t === "settle" ? settle(s) : reduce(s, a.e, { cg: a.cg, canvas: a.canvas }));
 
 type Overlay = { kind: "models" } | { kind: "settings"; tab?: string } | { kind: "usage" } | { kind: "project"; propose?: string; text?: string } | { kind: "image"; url: string };
 interface Toast { id: number; text: string; level: string }
@@ -52,6 +52,10 @@ export function App() {
   const [draft, setDraft] = useState("");
   const [today, setToday] = useState(0);
   const cgPending = useRef(false);
+  const canvasPending = useRef(false);
+  const [canvasOn, setCanvasOnRaw] = useState(() => store.get("canvas", "0") === "1");
+  const [canvasOpen, setCanvasOpen] = useState(false);
+  const [canvasEdit, setCanvasEdit] = useState<string | null>(null); // version retouchée à la main
   const busyRef = useRef(false);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -63,6 +67,7 @@ export function App() {
   };
   const setTheme = (t: string) => { setThemeRaw(t); store.set("theme", t); applyTheme(t); };
   const setCgOn = (b: boolean) => { setCgOnRaw(b); store.set("cg", b ? "1" : "0"); };
+  const setCanvasOn = (b: boolean) => { setCanvasOnRaw(b); store.set("canvas", b ? "1" : "0"); if (!b) setCanvasOpen(false); };
   const setMediaModel = (m: MediaModel | null) => { setMediaModelRaw(m); store.set("media", m ? `${m.provider}/${m.id}` : ""); };
 
   // ---------------------------------------------------------------- moteur
@@ -124,16 +129,16 @@ export function App() {
       case "voice-level": return setVoice((v) => ({ ...v, level: e.level ?? 0 }));
       case "notice":
         // pendant une réponse, l'avis s'inscrit dans le fil ; sinon (ou si c'est une erreur) il s'affiche en bulle
-        if (e.level === "error" || !busyRef.current) toast(e.text, e.level);
-        dispatch({ t: "ev", e, cg: cgPending.current });
+        if (e.level === "error" || e.level === "warn") toast(e.text, e.level); // les simples informations restent discrètes
+        dispatch({ t: "ev", e, cg: cgPending.current, canvas: canvasPending.current });
         return;
       case "done":
-        dispatch({ t: "ev", e, cg: cgPending.current });
+        dispatch({ t: "ev", e, cg: cgPending.current, canvas: canvasPending.current });
         loadUsage();
         reload();
         return;
       default:
-        dispatch({ t: "ev", e, cg: cgPending.current });
+        dispatch({ t: "ev", e, cg: cgPending.current, canvas: canvasPending.current });
     }
   }
 
@@ -203,6 +208,8 @@ export function App() {
     try { await post("/api/new"); } catch (e: any) { return toast(e.message, "error"); }
     dispatch({ t: "set", s: emptyThread() });
     setSheet(null);
+    setCanvasEdit(null);
+    setCanvasOpen(false);
     stick.current = true;
   };
   const setSpace = (s: Space) => {
@@ -230,9 +237,13 @@ export function App() {
     if (!st || st.busy || !text.trim()) return;
     if (sp === "medias" && !mediaModel) return toast("Choisissez d'abord un modèle d'image, de vidéo ou de son.", "warn");
     cgPending.current = sp === "work" && cgOn;
+    canvasPending.current = canvasOn && sp !== "medias" && !cgPending.current && st.current?.kind === "api";
     stick.current = true;
     try {
-      await post("/api/send", { text, space: sp, cg: cgPending.current, mediaModel: sp === "medias" ? mediaModel : undefined });
+      // canevas : le modèle repart de la version affichée (celle du modèle, ou celle retouchée à la main)
+      const cur = canvasPending.current ? canvasEdit ?? lastCanvas(thread)?.html ?? "" : undefined;
+      await post("/api/send", { text, space: sp, cg: cgPending.current, mediaModel: sp === "medias" ? mediaModel : undefined, canvas: cur });
+      if (canvasPending.current) { setCanvasEdit(null); setCanvasOpen(true); }
       setDraft("");
     } catch (e: any) {
       if (e instanceof ApiError && e.status === 412) setOverlay({ kind: "project", propose: e.body?.propose, text });
@@ -249,6 +260,12 @@ export function App() {
     } catch (e: any) { toast(e.message, "error"); }
   };
   const stopDictate = () => post("/api/voice/stop").catch(() => {});
+  const setOption = (name: string, v: boolean) => post("/api/model-options", { values: { [name]: v ? true : null } }).then((s2: any) => setSt(s2)).catch((e) => toast(e.message, "error"));
+  const goDeep = () => {
+    const d = st?.deepResearch[0];
+    if (!d) return;
+    post("/api/choose", { kind: "api", provider: d.provider, model: d.id }).then(() => toast(`Recherche approfondie : ${d.id}. Change de modèle pour revenir.`)).catch((e) => toast(e.message, "error"));
+  };
   const toggleSide = () => setSideCollapsed((c) => { store.set("side", c ? "0" : "1"); return !c; });
   const toggleRail = () => setRailOpen((r) => { store.set("rail", r ? "0" : "1"); return !r; });
 
@@ -269,13 +286,17 @@ export function App() {
     );
 
   const cgView = space === "work" && cgOn;
+  const canvas = lastCanvas(thread);
+  const canvasHtml = canvasEdit ?? canvas?.html ?? "";
+  const showCanvas = canvasOpen && (!!canvas || canvasEdit !== null);
   const empty = !thread.msgs.length;
   const railDot = !railOpen && railHasContent(thread);
   return (
-    <div class={`app ${sideCollapsed ? "side-min" : ""} ${railOpen ? "rail-on" : ""}`}>
+    <div class={`app ${sideCollapsed ? "side-min" : ""} ${railOpen && !showCanvas ? "rail-on" : ""} ${showCanvas ? "canvas-on" : ""}`}>
       <Sidebar st={st} sessions={sessions} space={space} onSpace={setSpace} onNew={newChat} onOpen={openSession} onCollapse={toggleSide}
         onUsage={() => setOverlay({ kind: "usage" })} onSettings={() => setOverlay({ kind: "settings" })} onProjects={() => setOverlay({ kind: "project" })} />
       <main class="main">
+        {busy && <div class="progress" role="progressbar" aria-label="Génération en cours" />}
         <header class={`top ${scrolled ? "scrolled" : ""}`}>
           {sideCollapsed && <button class="icon-btn press" onClick={toggleSide} title="Afficher la barre latérale (Ctrl+B)"><span class="ic">{I.menu}</span></button>}
           <div class="title">{(!empty && st.title) || (space === "work" ? "Nouveau travail" : space === "medias" ? "Nouvelle création" : "Nouvelle discussion")}</div>
@@ -289,13 +310,14 @@ export function App() {
         <div class="scroller" ref={scroller} onScroll={onScroll}>
           <div class="thread">
             {empty ? <Welcome space={space} st={st} onPick={(t) => (space === "work" && st.needsProject ? setOverlay({ kind: "project", text: t }) : setDraft(t))} />
-              : thread.msgs.map((m) => <MessageView m={m} busy={busy} />)}
+              : thread.msgs.map((m) => <MessageView m={m} busy={busy} onCanvas={() => setCanvasOpen(true)} />)}
           </div>
         </div>
         <div class="dock">
           <div class="dock-inner">
             {space === "work" && st.needsProject && <button class="need-project press" onClick={() => setOverlay({ kind: "project" })}><span class="ic">{I.folder}</span>Choisis ou crée un projet pour travailler</button>}
             <Composer st={st} space={space} busy={busy} cgOn={cgOn} setCgOn={setCgOn} onSend={(t) => send(t)} onStop={() => post("/api/interrupt").catch(() => {})}
+              canvasOn={canvasOn} setCanvasOn={setCanvasOn} onOption={setOption} onDeep={goDeep}
               onModels={() => setOverlay({ kind: "models" })} onEffort={(v) => post("/api/effort", { value: v }).catch((e) => toast(e.message, "error"))}
               media={media} mediaModel={mediaModel} setMediaModel={setMediaModel} voice={voice} onDictate={dictate} onStopDictate={stopDictate} draft={draft} setDraft={setDraft} history={history} />
           </div>
@@ -303,7 +325,9 @@ export function App() {
         <StatusBar st={st} today={today} connected={connected} />
         <AgentSheet t={thread} which={cgView || thread.subs.length ? sheet : null} onClose={() => setSheet(null)} />
       </main>
-      {railOpen && <Rail t={thread} st={st} space={space} onClose={toggleRail} onMedia={(url) => setOverlay({ kind: "image", url })} />}
+      {showCanvas
+        ? <CanvasPanel html={canvasHtml} streaming={!!canvas?.streaming && canvasEdit === null} edited={canvasEdit !== null} onEdit={setCanvasEdit} onReset={() => setCanvasEdit(null)} onClose={() => setCanvasOpen(false)} />
+        : railOpen && <Rail t={thread} st={st} space={space} onClose={toggleRail} onMedia={(url) => setOverlay({ kind: "image", url })} />}
 
       {overlay?.kind === "models" && <ModelPicker onClose={() => setOverlay(null)} onKeys={() => setOverlay({ kind: "settings", tab: "keys" })} toast={toast} />}
       {overlay?.kind === "settings" && <Settings st={st} start={overlay.tab} onClose={() => setOverlay(null)} toast={toast} theme={theme} setTheme={setTheme} />}

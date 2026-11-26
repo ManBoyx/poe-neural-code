@@ -43,6 +43,13 @@ export type EngineEvent =
   | { type: "done"; text: string; interrupted: boolean; seconds: number }
   | { type: "state" }
 
+/** Canevas : un document que l'on voit à côté de la discussion et qui se met à jour en direct. */
+export const CANVAS_RULE =
+  "Mode canevas : quand on te demande une page, une interface, une affiche, un document ou tout design, réponds avec UN document HTML complet " +
+  "dans un bloc ```html (CSS dans une balise <style>, sans JavaScript ni ressource externe sauf polices et images en https). " +
+  "Il s'affiche en direct dans un panneau à côté de la discussion. Pour une modification, renvoie le document complet modifié. " +
+  "Avant le bloc, une phrase courte sur ce que tu fais ; après, rien de plus."
+
 export const CHART_RULE =
   "Pour illustrer des chiffres, tu peux insérer un graphique : un bloc ```chart contenant du JSON " +
   '{"type":"bar"|"line"|"pie","title":"…","labels":["…"],"series":[{"name":"…","data":[nombres]}]}. Il s\'affiche directement dans la discussion.'
@@ -134,6 +141,17 @@ export class EngineSession {
     this.emit({ type: "state" })
   }
 
+  /** Réglages du modèle actif (recherche web, réflexion…), fusionnés avec ceux déjà choisis ; null efface un réglage. */
+  setModelOptions(values: Record<string, unknown>): void {
+    const c = this.st.current
+    if (!c || c.kind !== "api") return
+    const key = `${c.provider}/${c.model ?? ""}`
+    const cur: Record<string, unknown> = { ...(this.st.prefs.options?.[key] ?? {}) }
+    for (const [k, v] of Object.entries(values)) if (v === null || v === undefined) delete cur[k]
+    else cur[k] = v
+    this.savePrefs({ options: { ...(this.st.prefs.options ?? {}), [key]: cur } })
+  }
+
   setPerm(m: PermMode): void {
     this.perms.setMode(m)
     this.emit({ type: "state" })
@@ -200,6 +218,10 @@ export class EngineSession {
       cwd: this.cwd, cwdShort: short(this.cwd), protectedCwd: isProtected(this.cwd), needsProject: needsProject(this.cwd), projectsRoot: short(projectsRoot()),
       projects: listProjects().slice(0, 60).map((p) => ({ name: p.name, path: short(p.path), mtime: p.mtime })),
       current: c ?? null, label: this.label(), effort: c ? this.st.prefs.effort?.[`${c.provider}/${c.model ?? ""}`] ?? null : null, efforts: mi?.effort ?? [],
+      modelParams: (mi?.params ?? []).map((p) => ({ name: p.name, kind: p.kind, choices: p.choices, description: p.description })),
+      modelOptions: c ? this.st.prefs.options?.[`${c.provider}/${c.model ?? ""}`] ?? {} : {},
+      modelOutput: mi?.output ?? null,
+      deepResearch: Object.values(this.models).flat().filter((m) => /deep-research|researcher/i.test(m.id)).map((m) => ({ provider: m.provider, id: m.id })),
       recents: this.st.recents.slice(0, 8), busy: this.busy, title: this.title, conv: this.conv, space: this.space,
       perm: this.perms.mode, bypassVerified: this.perms.bypassVerified, sandbox: this.st.prefs.sandbox !== false && sandboxAvailable().ok,
       agents: this.detected.map((d) => ({ id: d.id, label: d.label, installed: d.installed, version: d.version, install: d.install })),
@@ -241,7 +263,7 @@ export class EngineSession {
   }
 
   /** Un message de l'utilisateur dans un espace. `cg` : Claude Code et Codex ensemble (espace work). */
-  async send(text: string, space: Space, opts: { cg?: boolean; mediaModel?: { provider: string; id: string } } = {}): Promise<void> {
+  async send(text: string, space: Space, opts: { cg?: boolean; mediaModel?: { provider: string; id: string }; canvas?: string | null } = {}): Promise<void> {
     if (this.busy) throw new Error("une réponse est déjà en cours")
     if (space === "work" && needsProject(this.cwd)) throw new Error("projet requis")
     this.space = space
@@ -262,7 +284,7 @@ export class EngineSession {
       if (space === "medias") final = await this.media(text, opts.mediaModel)
       else if (space === "work" && opts.cg) final = await this.cg(text)
       else if (this.st.current?.kind === "agent" && space === "work") final = await this.agent(this.st.current.provider, text)
-      else final = await this.api(text, space)
+      else final = await this.api(text, space, opts.canvas)
       if (final && !this.abort.signal.aborted) {
         this.history.push({ role: "user", content: text }, { role: "assistant", content: final })
         this.mem.append(this.conv!, "assistant", final, { space, model: this.st.current?.model })
@@ -296,7 +318,7 @@ export class EngineSession {
     this.emit({ type: "usage", input: tin, output: tout, measured, usd })
   }
 
-  private async api(text: string, space: Space): Promise<string> {
+  private async api(text: string, space: Space, canvas?: string | null): Promise<string> {
     const c = this.st.current
     if (!c || c.kind !== "api") throw new Error(space === "work" ? "Choisissez un modèle d'API ou un agent pour l'espace Work." : "Choisissez un modèle d'API (les agents travaillent dans l'espace Work).")
     const p = provider(c.provider)!
@@ -311,7 +333,9 @@ export class EngineSession {
     const useTools = space === "work" && (mi ? mi.tools !== false : c.provider !== "poe") // bot Poe hors catalogue : sans outils
     const env: ToolEnv = { roots: [this.cwd], perms: this.perms, memory: this.mem, districtId: this.district, todos: this.todos, signal: this.abort!.signal,
                            sandbox: this.st.prefs.sandbox !== false, skills: this.skills, mcp: this.mcp }
-    const msgs: Msg[] = [{ role: "system", content: this.system(space, useTools, memCtx.text) }, ...this.history, { role: "user", content: text }]
+    // canevas actif : la règle, et la version actuelle du document (éventuellement retouchée à la main par l'utilisateur)
+    const canvasPart = canvas === undefined ? "" : "\n\n" + CANVAS_RULE + (canvas ? `\n\nVersion actuelle du canevas :\n\`\`\`html\n${canvas.slice(0, 60_000)}\n\`\`\`` : "")
+    const msgs: Msg[] = [{ role: "system", content: this.system(space, useTools, memCtx.text) + canvasPart }, ...this.history, { role: "user", content: text }]
     if (memCtx.used.length) this.emit({ type: "notice", text: `Mémoire : ${memCtx.used.length} élément(s) utilisé(s)`, level: "info" })
     let final = ""
     let tin = 0, tout = 0, measured = false
