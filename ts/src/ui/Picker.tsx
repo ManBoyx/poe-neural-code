@@ -147,6 +147,11 @@ export function Picker(props: PickerProps) {
   const current = () => selectable()[Math.min(sel(), Math.max(0, selectable().length - 1))] ?? -1
 
   useKeyboard((k) => {
+    // seules les touches gérées ici sont consommées : les lettres vont au champ de recherche
+    if (["escape", "return", "up", "down", "pageup", "pagedown"].includes(k.name)) {
+      k.preventDefault()
+      k.stopPropagation()
+    }
     if (k.name === "escape") {
       if (view()) {
         setView(null)

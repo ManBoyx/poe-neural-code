@@ -56,6 +56,8 @@ export function UsageScreen(props: UsageProps) {
   })
 
   useKeyboard((k) => {
+    k.preventDefault()
+    k.stopPropagation()
     if (k.name === "escape" || (k.name === "q" && !k.ctrl)) props.onClose()
     else if (k.name === "tab") setPeriod((p) => (p + (k.shift ? PERIODS.length - 1 : 1)) % PERIODS.length)
     else if (k.name === "down") scroll?.scrollBy(1)
