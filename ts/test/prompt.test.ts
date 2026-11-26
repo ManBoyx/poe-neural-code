@@ -23,3 +23,7 @@ test("une suite d'espaces est repliée elle aussi, et montrée en clair dans l'a
   expect(revealHidden(`"${" ".repeat(4000)}ARGUMENT_A_VERIFIER"`)).toBe('"{4000 espaces}ARGUMENT_A_VERIFIER"')
   expect(revealHidden("a    b")).toBe("a{4 espaces}b")
 })
+
+test("l'indentation du JSON reste lisible", () => {
+  expect(revealHidden('{\n    "args": [\n        "x"\n    ]\n}')).toBe('{\n    "args": [\n        "x"\n    ]\n}')
+})
