@@ -30,7 +30,7 @@ function ZoneBox(props: { name: string; zone: Zone; width: number | `${number}%`
         <text fg={C.dim}>{props.zone.input || props.zone.output ? `↓${props.zone.input} ↑${props.zone.output} tok` : ""}</text>
       </box>
       <scrollbox flexGrow={1} stickyScroll stickyStart="bottom">
-        <Show when={props.zone.entries.length} fallback={<text fg={C.dim}>{props.zone.status === "absent" ? "non installé" : "en attente"}</text>}>
+        <Show when={props.zone.entries.length} fallback={<text fg={C.dim}>{props.zone.status === "absent" ? "non installé : /cg continue avec l'autre agent" : " "}</text>}>
           <For each={props.zone.entries}>
             {(e) => e.kind === "tool" ? (
               <text fg={e.running ? C.warn : e.ok === false ? C.error : C.muted}>{`${e.running ? I.recent : e.ok === false ? I.error : I.ok} ${e.text}`}</text>
@@ -50,7 +50,8 @@ function ZoneBox(props: { name: string; zone: Zone; width: number | `${number}%`
 
 export function CgZones(props: { zones: Record<CgAgent, Zone>; phase: string; width: number; height: number }) {
   const wide = () => props.width >= 100
-  const h = () => Math.max(8, Math.floor(props.height * 0.45))
+  // 45 % de la hauteur, sans jamais prendre la place de la saisie (≈ 13 lignes : titre, saisie, barre du bas, un peu de fil)
+  const h = () => Math.max(4, Math.min(Math.floor(props.height * 0.45), props.height - 13))
   // hauteur fixe qui ne rétrécit pas : le fil des résultats et la zone de saisie restent en dessous, sans chevauchement
   return (
     <box flexDirection="column" width="100%" height={wide() ? h() + 1 : 2 * (Math.floor(h() / 2) + 2) + 1} flexShrink={0}>
