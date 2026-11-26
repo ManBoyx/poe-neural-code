@@ -1499,6 +1499,7 @@ export function App(props: { cwd: string }) {
     const text = (prompt?.plainText ?? "").trim()
     if (!text) return
     if (busy()) return flash(t("Une réponse est en cours (échap pour interrompre)."))
+    remember(text)
     const sug = slashMatches()
     const chosen = sug[Math.min(slashSel(), sug.length - 1)] // relevé AVANT de vider la saisie (qui remet la sélection à zéro)
     prompt?.clear()
@@ -1520,6 +1521,15 @@ export function App(props: { cwd: string }) {
   })
   createEffect(on(draft, () => setSlashSel(0)))
   const SLASH_ROWS = 8
+  // rappel des messages précédents (↑ ↓ quand la saisie tient sur une ligne) : ceux du projet, puis ceux de la session
+  const promptHistory: string[] = (mem.db.query(`SELECT a.content FROM archive a JOIN conversations c ON c.id=a.conversation_id
+      WHERE a.role='user' AND c.district_id=? ORDER BY a.id DESC LIMIT 200`).all(district()) as { content: string }[]).map((r) => r.content).reverse()
+  let histPos: number | null = null
+  let histDraft = ""
+  const remember = (s: string) => {
+    if (s.trim() && promptHistory[promptHistory.length - 1] !== s) promptHistory.push(s)
+    histPos = null
+  }
   const slashStart = createMemo(() => Math.max(0, Math.min(slashSel() - Math.floor(SLASH_ROWS / 2), slashMatches().length - SLASH_ROWS)))
 
   useKeyboard((k) => {
@@ -1537,6 +1547,28 @@ export function App(props: { cwd: string }) {
         prompt?.setText("/" + sm[Math.min(slashSel(), sm.length - 1)].name + " ")
         setDraft(prompt?.plainText ?? "")
       }
+      return
+    }
+    // historique : ↑ remonte, ↓ redescend (puis retrouve le brouillon)
+    const cur = prompt?.plainText ?? ""
+    if (!sm.length && !leader() && (k.name === "up" || k.name === "down") && !k.ctrl && !k.meta && !cur.includes("\n") && promptHistory.length) {
+      if (k.name === "up") {
+        if (histPos === null) {
+          histDraft = cur
+          histPos = promptHistory.length
+        }
+        if (histPos > 0) histPos--
+      } else {
+        if (histPos === null) return
+        histPos++
+      }
+      k.preventDefault()
+      k.stopPropagation()
+      const v = histPos !== null && histPos < promptHistory.length ? promptHistory[histPos] : histDraft
+      if (histPos !== null && histPos >= promptHistory.length) histPos = null
+      prompt?.setText(v)
+      setDraft(v)
+      setSlashHidden(v) // un ancien « /commande » rappelé n'ouvre pas la liste
       return
     }
     if (leader()) {
