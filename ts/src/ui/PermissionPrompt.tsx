@@ -3,7 +3,7 @@
  * Le détail n'est jamais tronqué : les lignes longues sont repliées et ↑ ↓ (pg préc. / pg suiv.) font défiler.
  * Avec `mustRead`, « Autoriser » n'est possible qu'une fois tout le détail affiché.
  */
-import { createSignal, For, Show } from "solid-js"
+import { createEffect, createSignal, For, on, Show } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import type { Decision, Request } from "../core/permissions"
 import { C, I } from "./theme"
@@ -70,6 +70,8 @@ export function PermissionPrompt(props: { req: Request; onDecide: (d: Decision) 
     setOff((o) => Math.min(maxOff(), Math.max(0, o + d)))
     if (off() >= maxOff()) allSeen[1](true)
   }
+  // taille de la fenêtre changée : les coupures changent, la lecture reprend du début (et « Autoriser » se reverrouille)
+  createEffect(on(() => [w(), page()], () => { setOff(0); allSeen[1](false) }, { defer: true }))
   const blocked = (d: Decision) => d !== "deny" && props.req.mustRead && !seen()
   const tryDecide = (d: Decision) => (blocked(d) ? scroll(page()) : decide(d))
   useKeyboard((k) => {
