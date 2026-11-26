@@ -44,8 +44,9 @@ jobs:
           bun test
       - name: Exécutable autonome (Linux x86-64)
         run: |
-          bun packaging/cli-ts/build.ts bun-linux-x64-baseline 2>&1 | grep -v '^Downloading' | tail -3
+          bun packaging/cli-ts/build.ts bun-linux-x64-baseline > build-cli.log 2>&1 || { grep -v '^Downloading' build-cli.log | tail -30; exit 1; }
           build/cli-ts/linux-x64-baseline/Eclipse --version
+          sh packaging/cli-ts/smoke.sh build/cli-ts/linux-x64-baseline/Eclipse
 
   desktop:
     name: Application desktop (Rust + interface)

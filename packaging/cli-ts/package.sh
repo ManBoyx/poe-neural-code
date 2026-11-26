@@ -8,9 +8,15 @@ cd "$ROOT/ts"
 bun install --frozen-lockfile >/dev/null
 bun test >/dev/null 2>&1 || { echo "tests en échec : rien n'est empaqueté" >&2; bun test 2>&1 | tail -20; exit 1; }
 cd "$ROOT"
-bun packaging/cli-ts/build.ts bun-linux-x64-baseline 2>&1 | grep -v '^Downloading' | tail -3
 BIN="$ROOT/build/cli-ts/linux-x64-baseline/Eclipse"
+rm -f "$BIN"
+LOG=$(mktemp); trap 'rm -f "$LOG"' EXIT
+if ! bun packaging/cli-ts/build.ts bun-linux-x64-baseline >"$LOG" 2>&1; then
+  grep -v '^Downloading' "$LOG" | tail -20 >&2; echo "construction en échec : rien n'est empaqueté" >&2; exit 1
+fi
 "$BIN" --version
+# l'interface démarre-t-elle vraiment ? (--version s'arrête avant de charger OpenTUI)
+sh "$ROOT/packaging/cli-ts/smoke.sh" "$BIN"
 OUT="$ROOT/build/cli-ts/release"; STAGE="$ROOT/build/cli-ts/stage"
 rm -rf "$OUT" "$STAGE"; mkdir -p "$OUT" "$STAGE"
 cp "$BIN" "$STAGE/Eclipse"; cp "$ROOT/LICENSE" "$STAGE/LICENSE"

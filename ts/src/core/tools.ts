@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSyn
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { isDestructive, type Permissions } from "./permissions"
 import { runCmd } from "./proc"
-import { available as sandboxAvailable, wrap } from "./sandbox"
+import { available as sandboxAvailable, guard, wrap } from "./sandbox"
 import { isProtected } from "./protect"
 import type { Kind, Memory } from "./memory"
 import type { McpManager } from "./mcp"
@@ -202,7 +202,7 @@ export async function runTool(env: ToolEnv, call: ToolCall): Promise<ToolResult>
         const ok = await env.perms.authorize({ tool: "run_command", kind: "exec", summary: cmd, detail: cmd, destructive: isDestructive(cmd), grantKey: `exec:${cmd.split(/\s+/)[0]}` })
         if (!ok) return { ok: false, output: "commande refusée par l'utilisateur" }
         let sh = process.platform === "win32" ? ["cmd", "/c", cmd] : [process.env.SHELL?.endsWith("zsh") ? "zsh" : "bash", "-lc", cmd]
-        if (env.sandbox && sandboxAvailable().ok) sh = wrap(sh, env.roots, env.roots[0])
+        sh = env.sandbox && sandboxAvailable().ok ? wrap(sh, env.roots, env.roots[0]) : guard(sh, env.roots[0])
         const r = await runCmd(sh, { cwd: env.roots[0], timeoutMs: Math.min(3600, a.timeout_s ?? 120) * 1000, signal: env.signal })
         let out = (r.out + (r.err ? (r.out ? "\n" : "") + r.err : "")).trim()
         if (out.length > MAX_OUT) out = out.slice(0, MAX_OUT / 2) + `\n… ${out.length - MAX_OUT} caractères coupés …\n` + out.slice(-MAX_OUT / 2)

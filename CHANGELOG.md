@@ -19,7 +19,11 @@ reprises telles quelles : mémoire, sessions, consommation, clés du trousseau.
 - Permissions : `/perm` propose tous les modes ; le bypass demande le mot de passe de l'ordinateur une fois.
   Sandbox (bubblewrap) active par défaut, `/sandbox` pour la couper ou la remettre.
 - Règle absolue : aucun modèle ni agent n'écrit dans les fichiers d'Eclipse. Le travail se fait dans `~/Projets`,
-  un dossier par projet, retrouvé quand on reprend le projet.
+  un dossier par projet, retrouvé quand on reprend le projet. Les outils d'Eclipse refusent ces écritures, et avec
+  bubblewrap les commandes et les agents voient les fichiers d'Eclipse en lecture seule, même sandbox coupée et en
+  bypass (sans bubblewrap, seuls les outils d'Eclipse refusent).
+- Un projet ne peut pas modifier le comportement d'Eclipse : l'exécutable ne lit jamais les fichiers `.env` ou
+  `bunfig.toml` du dossier ouvert.
 - `/usage` en plein écran (périodes, 30 derniers jours, par modèle, budgets, solde Poe).
 - `/voice` : appel vocal avec le modèle ou l'agent choisi (Claude Code compris), transcription whisper.cpp et voix
   piper sur l'ordinateur ; `/voice installer`, `/voice rapide | précis`.
@@ -29,6 +33,7 @@ reprises telles quelles : mémoire, sessions, consommation, clés du trousseau.
 - Cet exécutable est pour Linux x86-64. Windows et macOS ne sont pas encore publiés : les clés d'API passent par
   `secret-tool` (trousseau Linux).
 - L'application desktop et l'APK Android ne font pas partie de cette version.
+- L'installateur contrôle l'empreinte SHA-256 de l'archive ; la signature minisign n'est pas encore en place.
 
 ## 4.0.0 — non publiée
 ### Correction : détection des agents installés

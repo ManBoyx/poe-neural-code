@@ -141,3 +141,29 @@ test("sandbox : la commande écrit dans le projet, pas ailleurs ; le bypass ne l
   expect(existsSync(outside)).toBe(true)
   rmSync(outside)
 })
+
+test("garde : sandbox coupée et bypass total, une commande ne peut toujours pas écrire dans les fichiers d'Eclipse", async () => {
+  if (process.platform !== "linux" || !Bun.which("bwrap")) return
+  mkdirSync(process.env.PNC_HOME!, { recursive: true }) // dossier de données d'Eclipse (protégé)
+  env.sandbox = false
+  env.perms.bypassVerified = true
+  env.perms.setMode("bypass-total")
+  const target = join(process.env.PNC_HOME!, "ecrit-par-un-modele.txt")
+  const r = await call("run_command", { command: `echo dedans > ok.txt; echo x > ${target}; echo fin` })
+  expect(readFileSync(join(proj, "ok.txt"), "utf8")).toBe("dedans\n") // le projet reste modifiable
+  expect(existsSync(target)).toBe(false)
+  expect(r.output).toMatch(/lecture seule|Read-only/i)
+})
+
+test("garde : l'arrêt sur délai tue aussi les petits-enfants (aucun orphelin)", async () => {
+  if (process.platform !== "linux" || !Bun.which("bwrap")) return
+  env.sandbox = false
+  env.perms.bypassVerified = true
+  env.perms.setMode("bypass")
+  const mark = 300 + (process.pid % 600)
+  const r = await call("run_command", { command: `sh -c 'sleep ${mark}.5 & wait' & wait`, timeout_s: 1 })
+  expect(r.ok).toBe(false)
+  await Bun.sleep(300)
+  const left = Bun.spawnSync(["pgrep", "-f", `^sleep ${mark}\\.5$`]).stdout.toString().trim()
+  expect(left).toBe("")
+})
