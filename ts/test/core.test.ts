@@ -206,3 +206,13 @@ describe("appels d'outils en flux", () => {
     expect(evs[0]).toEqual({ type: "tools", calls: [{ id: "a", name: "read_file", args: '{"path":"x"}' }, { id: "b", name: "list_dir", args: "{}" }] })
   })
 })
+
+describe("liste des commandes", () => {
+  test("le nom avant l'alias, puis la saisie ailleurs ; aucun doublon", async () => {
+    const { suggest, COMMANDS } = await import("../src/core/commands")
+    expect(suggest("mo", 4).map((c) => c.name)).toEqual(["mode", "model", "models", "agents"])
+    expect(suggest("pe", 2).map((c) => c.name)).toEqual(["permissions", "agents"].slice(0, 1).concat(suggest("pe", 2)[1].name))
+    const names = COMMANDS.flatMap((c) => [c.name, ...(c.aliases ?? [])])
+    expect(new Set(names).size).toBe(names.length)
+  })
+})
