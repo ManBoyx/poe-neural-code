@@ -9,6 +9,7 @@
  */
 import { killGroup } from "./proc"
 import { agentStateDirs, available as sandboxAvailable, wrap } from "./sandbox"
+import { isProtected, PROTECT_RULE } from "./protect"
 
 export type Power = "lecture" | "modifications" | "commandes" | "bypass"
 export const POWER_LABEL: Record<Power, string> = {
@@ -176,6 +177,12 @@ export function parseLine(agent: string, line: string, state: { tools: Map<strin
 
 /** Lance l'agent et renvoie ses événements au fil de l'eau. */
 export async function* runAgent(r: AgentRun): AsyncGenerator<AgentEvent> {
+  if (r.power !== "lecture" && isProtected(r.cwd)) {
+    yield { type: "error", message: `${r.agent} : refusé, le dossier de travail est un dossier d'Eclipse (les agents n'y écrivent jamais). Ouvrez un projet : /projet NOM.` }
+    yield { type: "done" }
+    return
+  }
+  r = { ...r, system: [r.system, PROTECT_RULE].filter(Boolean).join("\n\n") }
   const env: Record<string, string> = {}
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "POE_API_KEY"].includes(k)) env[k] = v
   env.NO_COLOR = "1"

@@ -24,6 +24,7 @@ import { Permissions, PERM_LABEL, type Decision, type PermMode, type Request } f
 import { openAiTools, READ_ONLY_TOOLS, runTool, summarize, type Todo, type ToolEnv } from "../core/tools"
 import { Snapshots } from "../core/snapshots"
 import { verifyPassword } from "../core/auth"
+import { isProtected, listProjects, needsProject, openProject, projectsRoot, PROTECT_RULE, slug } from "../core/protect"
 import { available as sandboxAvailable } from "../core/sandbox"
 import { McpManager } from "../core/mcp"
 import { discoverPlugins, discoverSkills, loadPlugins, setTrust, skillCatalog, type PluginCommand, type PluginInfo, type Skill } from "../core/extensions"
@@ -108,6 +109,7 @@ function systemPrompt(mode: "build" | "plan", lang: Lang, cwd: string, tools = f
     mode === "plan"
       ? (fr ? "Mode plan : lecture seule. Analyse et propose un plan, sans rien modifier." : "Plan mode: read-only. Analyse and propose a plan, without changing anything.")
       : "",
+    PROTECT_RULE,
   ].filter(Boolean).join("\n")
 }
 
@@ -792,7 +794,44 @@ export function App(props: { cwd: string }) {
     }
   }
 
+  /** Ouvre (ou crée) un projet et y place la discussion. */
+  function enterProject(name: string): boolean {
+    try {
+      const p = openProject(name)
+      setCwd(p)
+      setDistrict(mem.district(p))
+      loadExtensions()
+      note(`Projet : ${short(p)} — les modèles et les agents travaillent dans ce dossier.`)
+      return true
+    } catch (e) {
+      note((e as Error).message, "error")
+      return false
+    }
+  }
+
+  /** Travail qui peut écrire alors qu'on est dans Eclipse, le dossier personnel ou ~/Projets : choisir le projet d'abord. */
+  function chooseProjectThen(text: string, then: () => void) {
+    const proposed = slug(text)
+    const existing = listProjects()
+    openList(`Dans quel projet ? (dossiers de ${short(projectsRoot())})`, () => [
+      { title: `Nouveau : ${proposed}`, detail: "crée le dossier et y travaille", value: `new:${proposed}` },
+      { title: "Nouveau, autre nom…", value: "ask" },
+      ...(existing.length ? [{ title: "REPRENDRE UN PROJET", header: true } as ListEntry] : []),
+      ...existing.slice(0, 40).map((x) => ({ title: x.name, detail: new Date(x.mtime).toLocaleDateString("fr-FR"), right: short(x.path), value: `old:${x.name}` })),
+    ], (v) => {
+      closeOverlay()
+      if (v === "ask") return later({ type: "text", title: "Nom du nouveau projet", initial: proposed, onSubmit: (n) => n && enterProject(n) && then() })
+      if (enterProject(v.slice(4))) then()
+    }, "entrée : ouvrir · échap : annuler (rien n'est envoyé)")
+  }
+
   async function send(text: string) {
+    const writes = !(mode() === "plan" || perms.mode === "lecture")
+    if (writes && needsProject(cwd())) {
+      prompt?.setText(text)
+      setDraft(text)
+      return chooseProjectThen(text, () => { prompt?.clear(); setDraft(""); send(text) })
+    }
     const idx = items.length
     setItems(idx, { role: "user", text })
     const id = mem.append(ensureConv(text), "user", text)
@@ -1001,6 +1040,10 @@ export function App(props: { cwd: string }) {
           right: new Date(x.last * 1000).toLocaleString(getLang() === "fr" ? "fr-FR" : "en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }),
           value: String(x.id),
         })), (v) => { closeOverlay(); loadConversation(Number(v)) })
+      }
+      case "projet": {
+        if (arg) return enterProject(arg)
+        return chooseProjectThen("", () => {})
       }
       case "cd": {
         const target = resolvePath(cwd(), (arg || "~").replace(/^~/, home()))
