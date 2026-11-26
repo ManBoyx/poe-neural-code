@@ -59,6 +59,7 @@ export const COMMANDS: Command[] = [
   { name: "mode", desc: "Changer de mode", usage: "/mode build|plan|NOM", origin: "eclipse", ready: true },
   { name: "permissions", aliases: ["perm"], desc: "Permissions : demander, modifications, lecture seule, bypass (mot de passe de l'ordinateur)", keys: "ctrl+x p", origin: "eclipse", ready: true },
   { name: "bypass", desc: "Plus aucune confirmation (mot de passe de l'ordinateur demandé)", usage: "/bypass [on|all|off]", origin: "eclipse", ready: true },
+  { name: "sandbox", desc: "Sandbox des commandes et des agents : activer ou désactiver (active par défaut)", usage: "/sandbox [on|off]", origin: "eclipse", ready: true },
   { name: "add-dir", desc: "Autoriser un dossier en plus du projet", usage: "/add-dir CHEMIN", origin: "eclipse", ready: true },
   // --- mémoire, instructions, contexte
   { name: "memory", desc: "Mémoire du projet : voir, chercher, ajouter, épingler, oublier", usage: "/memory [REQUÊTE] | add TEXTE | pin N | forget N", origin: "eclipse", ready: true },

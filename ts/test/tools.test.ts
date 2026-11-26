@@ -122,3 +122,22 @@ test("bypass : mot de passe vérifié par polkit, jamais par sudo ; échec et an
   expect(await verifyPassword(async () => 126)).toEqual({ ok: false, reason: "authentification refusée ou annulée" })
   expect(await verifyPassword(async () => 127)).toEqual({ ok: false, reason: "aucune fenêtre d'authentification disponible" })
 })
+
+test("sandbox : la commande écrit dans le projet, pas ailleurs ; le bypass ne la désactive pas", async () => {
+  const { available } = await import("../src/core/sandbox")
+  if (!available().ok) return
+  env.sandbox = true
+  env.perms.bypassVerified = true
+  env.perms.setMode("bypass-total")
+  // hors du projet et hors de /tmp (la sandbox donne un /tmp privé) : dans le dossier personnel
+  const outside = join(require("node:os").homedir(), `.eclipse-test-hors-projet-${process.pid}.txt`)
+  const r = await call("run_command", { command: `echo dedans > ok.txt && cat ok.txt; echo x > ${outside}` })
+  expect(r.output).toContain("dedans")
+  expect(readFileSync(join(proj, "ok.txt"), "utf8")).toBe("dedans\n")
+  expect(existsSync(outside)).toBe(false)
+  expect(r.output).toMatch(/lecture seule|Read-only/i)
+  env.sandbox = false
+  await call("run_command", { command: `echo x > ${outside}` })
+  expect(existsSync(outside)).toBe(true)
+  rmSync(outside)
+})

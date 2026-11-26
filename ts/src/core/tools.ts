@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSyn
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { isDestructive, type Permissions } from "./permissions"
 import { runCmd } from "./proc"
+import { available as sandboxAvailable, wrap } from "./sandbox"
 import type { Kind, Memory } from "./memory"
 
 export interface ToolCall {
@@ -34,6 +35,7 @@ export interface ToolEnv {
   todos: Todo[]
   onTodos?: () => void
   signal?: AbortSignal
+  sandbox?: boolean // true : commandes dans bubblewrap (écriture limitée au projet)
 }
 
 const MAX_OUT = 20_000
@@ -179,7 +181,8 @@ export async function runTool(env: ToolEnv, call: ToolCall): Promise<ToolResult>
         if (/(^|[;&|]\s*)sudo\b/.test(cmd)) return { ok: false, output: "sudo n'est pas permis aux modèles : lancez la commande vous-même si elle est nécessaire" }
         const ok = await env.perms.authorize({ tool: "run_command", kind: "exec", summary: cmd, detail: cmd, destructive: isDestructive(cmd), grantKey: `exec:${cmd.split(/\s+/)[0]}` })
         if (!ok) return { ok: false, output: "commande refusée par l'utilisateur" }
-        const sh = process.platform === "win32" ? ["cmd", "/c", cmd] : [process.env.SHELL?.endsWith("zsh") ? "zsh" : "bash", "-lc", cmd]
+        let sh = process.platform === "win32" ? ["cmd", "/c", cmd] : [process.env.SHELL?.endsWith("zsh") ? "zsh" : "bash", "-lc", cmd]
+        if (env.sandbox && sandboxAvailable().ok) sh = wrap(sh, env.roots, env.roots[0])
         const r = await runCmd(sh, { cwd: env.roots[0], timeoutMs: Math.min(3600, a.timeout_s ?? 120) * 1000, signal: env.signal })
         let out = (r.out + (r.err ? (r.out ? "\n" : "") + r.err : "")).trim()
         if (out.length > MAX_OUT) out = out.slice(0, MAX_OUT / 2) + `\n… ${out.length - MAX_OUT} caractères coupés …\n` + out.slice(-MAX_OUT / 2)
