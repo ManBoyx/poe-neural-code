@@ -18,7 +18,8 @@ export function wrapToWidth(line: string, cols: number): string[] {
   let wcur = 0
   for (const ch of line) {
     const cw = charWidth(ch)
-    if (wcur + cw > cols && cur.trim()) {
+    // coupe dès que la ligne est pleine, même si elle n'est faite que d'espaces (seule la marge de suite est exclue)
+    if (wcur + cw > cols && wcur > (out.length ? 2 : 0)) {
       out.push(cur)
       cur = "  "
       wcur = 2
@@ -31,7 +32,10 @@ export function wrapToWidth(line: string, cols: number): string[] {
 }
 
 /** Rend visibles les caractères invisibles ou trompeurs (contrôle, sens d'écriture, largeur nulle) : \u{…}. */
-export const revealHidden = (s: string) => s.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (c) => (c === "\n" ? c : `\\u{${c.codePointAt(0)!.toString(16).toUpperCase()}}`))
+export const revealHidden = (s: string) =>
+  s.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (c) => (c === "\n" ? c : `\\u{${c.codePointAt(0)!.toString(16).toUpperCase()}}`))
+    // longues suites d'espaces (ordinaires ou non) : affichées en clair, elles ne peuvent pas repousser un argument hors de la vue
+    .replace(/[\p{Zs}]{4,}/gu, (m) => `{${m.length} espaces}`)
 
 const CHOICES: { d: Decision; key: string; label: string }[] = [
   { d: "once", key: "o", label: "Autoriser une fois" },
