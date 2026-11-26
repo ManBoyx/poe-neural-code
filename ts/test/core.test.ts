@@ -231,7 +231,12 @@ describe("modèles d'images, de vidéos et de sons", () => {
     const ev: any[] = []
     for await (const e of streamChat(lm, "nano-banana", [{ role: "user", content: "un chat" }], { fetchImpl, noStream: true })) ev.push(e)
     expect(body.stream).toBe(false)
-    expect(ev[0]).toEqual({ type: "text", text: "Voici :\n\n![image](https://exemple.org/a.png)" })
-    expect(contentToMarkdown([{ type: "video_url", video_url: { url: "https://x/v.mp4" } }])).toBe("[video](https://x/v.mp4)")
+    expect(ev[0]).toEqual({ type: "text", text: "Voici :\n\n![image](https://exemple.org/a.png)\n\nhttps://exemple.org/a.png" })
+    expect(contentToMarkdown([{ type: "video_url", video_url: { url: "https://x/v.mp4" } }])).toBe("[video](https://x/v.mp4)\n\nhttps://x/v.mp4")
+    // réponse tronquée (JSON incomplet) : une erreur, pas un tour « terminé » vide
+    const cut = (async () => new Response('{"choices": [', { status: 200 })) as any
+    const ev2: any[] = []
+    for await (const e of streamChat(lm, "nano-banana", [{ role: "user", content: "x" }], { fetchImpl: cut, noStream: true })) ev2.push(e)
+    expect(ev2[0].type).toBe("error")
   })
 })

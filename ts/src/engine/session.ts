@@ -354,7 +354,7 @@ export class EngineSession {
           measured = true
           tin += e.input ?? 0
           tout += e.output ?? 0
-        } else if (e.type === "tools") calls = e.calls
+        } else if (e.type === "tools") calls = useTools && !mediaOnly ? e.calls : [] // outils non proposés : aucun appel n'est exécuté
         else if (e.type === "error") throw new Error(e.message)
       }
       if (stepText) final += (final ? "\n\n" : "") + stepText

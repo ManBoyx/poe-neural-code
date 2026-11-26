@@ -1,5 +1,16 @@
 # Journal des versions
 
+## 5.0.1 — CLI (26 novembre 2026)
+- Poe : les 299 modèles du catalogue, y compris les 99 modèles d'images, de vidéos et de sons (Veo, Kling, Runway,
+  Flux, Nano Banana, GPT Image, ElevenLabs, Lyria…), qui étaient écartés. Ils répondent en une fois, comme Poe le
+  recommande ; le lien du média est affiché.
+- N'importe quel bot public de poe.com s'utilise par son nom : tapez-le dans `/models` (ou `/provider poe`), puis
+  « Utiliser le bot Poe ». Un bot hors catalogue ne reçoit pas les outils d'Eclipse, et ses éventuels appels d'outils
+  ne sont jamais exécutés.
+- Effort réglable aussi pour les modèles qui l'appellent `thinking_level` (Gemini…).
+- Une image jointe est acceptée par les modèles qui créent ou retouchent des images.
+- Une réponse vide ou tronquée d'un modèle de médias est signalée comme une erreur.
+
 ## 5.0.0 — CLI (26 novembre 2026)
 Eclipse est réécrit en TypeScript (Bun, OpenTUI, SolidJS), comme OpenCode. Les données de la version Python sont
 reprises telles quelles : mémoire, sessions, consommation, clés du trousseau.

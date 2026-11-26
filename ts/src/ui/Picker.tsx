@@ -94,7 +94,10 @@ export function Picker(props: PickerProps) {
       else {
         const ms = (s.models ?? []).filter((m) => !q || m.id.toLowerCase().includes(q))
         for (const m of ms) out.push({ kind: "item", title: m.id, detail: modelDetail(m), color: C.text, run: () => props.onChoose({ kind: "api", provider: v, model: m.id }) })
-        if (!ms.length) out.push({ kind: "item", title: "Aucun modèle ne correspond", detail: "", color: C.muted, dim: true, run: () => {} })
+        const raw = query().trim()
+        if (v === "poe" && /^[\w.-]{2,60}$/.test(raw) && !ms.some((m) => m.id.toLowerCase() === q))
+          out.push({ kind: "item", title: `Utiliser le bot Poe « ${raw} »`, detail: "n'importe quel bot public de poe.com, par son nom", color: C.api, run: () => props.onChoose({ kind: "api", provider: "poe", model: raw }) })
+        else if (!ms.length) out.push({ kind: "item", title: "Aucun modèle ne correspond", detail: "", color: C.muted, dim: true, run: () => {} })
       }
       return out
     }

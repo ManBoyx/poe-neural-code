@@ -31,7 +31,8 @@ export function contentToMarkdown(c: unknown): string {
     if (!part || typeof part !== "object") return String(part ?? "")
     if (part.type === "text") return String(part.text ?? "")
     const url = part.image_url?.url ?? part.video_url?.url ?? part.audio_url?.url ?? part.file?.url ?? part.url
-    if (typeof url === "string") return part.type === "image_url" ? `![image](${url})` : `[${part.type?.replace("_url", "") ?? "média"}](${url})`
+    // l'adresse est aussi écrite en clair : le terminal n'affiche pas les images, il montre le lien
+    if (typeof url === "string") return part.type === "image_url" ? `![image](${url})\n\n${url}` : `[${part.type?.replace("_url", "") ?? "média"}](${url})\n\n${url}`
     if (part.type === "input_audio" || part.audio) return "(son reçu, format non affichable)"
     return ""
   }).filter(Boolean).join("\n\n")
@@ -62,8 +63,16 @@ export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[
       yield { type: "error", message: `HTTP ${r.status} — ${HINTS[r.status] ?? "erreur du fournisseur"}${j?.error?.message ? " : " + String(j.error.message).slice(0, 300) : ""}` }
       return
     }
-    const text = contentToMarkdown(j?.choices?.[0]?.message?.content)
-    if (text) yield { type: "text", text }
+    if (!j || !Array.isArray(j.choices)) {
+      yield { type: "error", message: `${p.label} : réponse illisible ou incomplète (aucun résultat reçu)` }
+      return
+    }
+    const text = contentToMarkdown(j.choices[0]?.message?.content)
+    if (!text) {
+      yield { type: "error", message: `${p.label} : réponse vide (le modèle n'a rien renvoyé)` }
+      return
+    }
+    yield { type: "text", text }
     if (j?.usage) yield { type: "usage", input: j.usage.prompt_tokens, output: j.usage.completion_tokens }
     yield { type: "done" }
     return

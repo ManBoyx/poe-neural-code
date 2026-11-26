@@ -497,7 +497,7 @@ export function App(props: { cwd: string }) {
         continue
       }
       if (/\.(png|jpe?g|webp|gif)$/i.test(abs)) {
-        if (!mi?.input?.includes("image")) {
+        if (!mi?.input?.includes("image") && !mi?.output?.includes("image")) { // un modèle d'image peut retoucher l'image jointe
           notes.push(`${short(abs)} : ce modèle n'annonce pas les images, non envoyée`)
           continue
         }
@@ -801,7 +801,7 @@ export function App(props: { cwd: string }) {
             measured = true
             tin += e.input ?? 0
             tout += e.output ?? 0
-          } else if (e.type === "tools") calls = e.calls
+          } else if (e.type === "tools") calls = useTools && !mediaOnly ? e.calls : [] // outils non proposés : aucun appel n'est exécuté
           else if (e.type === "error") {
             failed = true
             if (useTools && /HTTP 400/.test(e.message) && /tool/i.test(e.message) && step === 0) {
