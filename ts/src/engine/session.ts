@@ -444,7 +444,7 @@ export class EngineSession {
 
   close(): void {
     this.interrupt()
-    this.mcp.close()
+    this.mcp.stopAll()
     this.mem.close()
     this.budget.close()
   }

@@ -12,8 +12,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { createHash } from "node:crypto"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { isAbsolute, join, relative, resolve } from "node:path"
 import { dataDir } from "./paths"
 
 export interface McpServerConfig {
@@ -40,6 +40,7 @@ export interface McpStatus {
   tools: number
   error?: string
   launch?: string // ce qui serait lancé (montré avant l'approbation)
+  fingerprint?: string // empreinte de la configuration montrée (c'est elle qui est approuvée)
 }
 
 const approvalsFile = () => join(dataDir(), "mcp-approuves.json")
@@ -50,30 +51,78 @@ const readApprovals = (): Record<string, string> => {
     return {}
   }
 }
-/** Empreinte d'un serveur de projet : dossier + nom + configuration complète. */
+/**
+ * Empreinte d'un serveur de projet : dossier, nom, configuration complète (commande, arguments, variables, adresse)
+ * et contenu des fichiers du projet que la commande désigne directement (ex. « node ./serveur.js ») : si l'un d'eux
+ * change, l'approbation tombe. Les fichiers chargés ensuite par ce script ne sont pas suivis.
+ */
 export function fingerprint(cwd: string, name: string, cfg: McpServerConfig): string {
-  return createHash("sha256").update(JSON.stringify([cwd, name, cfg.command ?? null, cfg.args ?? [], cfg.env ?? {}, cfg.url ?? null])).digest("hex")
+  const h = createHash("sha256").update(JSON.stringify([cwd, name, cfg.command ?? null, cfg.args ?? [], cfg.env ?? {}, cfg.url ?? null]))
+  for (const part of [cfg.command, ...(cfg.args ?? [])]) {
+    if (!part || part.startsWith("-")) continue
+    const abs = resolve(cwd, part)
+    const rel = relative(cwd, abs)
+    if (rel.startsWith("..") || isAbsolute(rel)) continue
+    try {
+      if (statSync(abs).isFile()) h.update(`\0${rel}\0`).update(readFileSync(abs))
+    } catch {}
+  }
+  return h.digest("hex")
 }
 export function isApproved(cwd: string, name: string, cfg: McpServerConfig): boolean {
   return readApprovals()[`${cwd}::${name}`] === fingerprint(cwd, name, cfg)
 }
-export function approve(cwd: string, name: string, cfg: McpServerConfig, on = true): void {
+/** Approuve exactement l'empreinte montrée à l'utilisateur (pas une relecture du fichier). */
+export function approveFingerprint(cwd: string, name: string, fp: string): void {
   const a = readApprovals()
-  if (on) a[`${cwd}::${name}`] = fingerprint(cwd, name, cfg)
-  else delete a[`${cwd}::${name}`]
+  a[`${cwd}::${name}`] = fp
   writeFileSync(approvalsFile(), JSON.stringify(a, null, 2), { mode: 0o600 })
 }
-export const describeLaunch = (cfg: McpServerConfig) => (cfg.url ? cfg.url : [cfg.command, ...(cfg.args ?? [])].filter(Boolean).join(" ")).slice(0, 200)
+export function approve(cwd: string, name: string, cfg: McpServerConfig): void {
+  approveFingerprint(cwd, name, fingerprint(cwd, name, cfg))
+}
+/** Retire l'approbation (même si le serveur n'est plus dans le fichier). Renvoie les noms retirés. */
+export function revoke(cwd: string, name: string | "*"): string[] {
+  const a = readApprovals()
+  const gone: string[] = []
+  for (const k of Object.keys(a)) {
+    const [dir, n] = [k.slice(0, k.lastIndexOf("::")), k.slice(k.lastIndexOf("::") + 2)]
+    if (dir === cwd && (name === "*" || n === name)) {
+      delete a[k]
+      gone.push(n)
+    }
+  }
+  writeFileSync(approvalsFile(), JSON.stringify(a, null, 2), { mode: 0o600 })
+  return gone
+}
+/** Ce qui serait lancé, en entier (commande, arguments, variables d'environnement), pour décider en connaissance de cause. */
+export const describeLaunch = (cfg: McpServerConfig) =>
+  (cfg.url ? cfg.url : [cfg.command, ...(cfg.args ?? [])].map((x) => (/\s/.test(String(x)) ? JSON.stringify(x) : String(x))).join(" ")) +
+  (cfg.env && Object.keys(cfg.env).length ? `  (variables : ${Object.entries(cfg.env).map(([k, v]) => `${k}=${v}`).join(" ")})` : "")
 
-export function loadConfigs(cwd: string): { name: string; cfg: McpServerConfig; source: string }[] {
-  const out: { name: string; cfg: McpServerConfig; source: string }[] = []
+/** Configuration valide ? (types attendus ; sinon le serveur est montré en erreur, jamais lancé) */
+function checkCfg(c: any): string | null {
+  if (!c || typeof c !== "object") return "configuration illisible"
+  if (c.url !== undefined && typeof c.url !== "string") return "url doit être un texte"
+  if (c.command !== undefined && typeof c.command !== "string") return "command doit être un texte"
+  if (c.args !== undefined && !(Array.isArray(c.args) && c.args.every((a: unknown) => typeof a === "string"))) return "args doit être une liste de textes"
+  if (c.env !== undefined && !(c.env && typeof c.env === "object" && Object.values(c.env).every((v) => typeof v === "string"))) return "env doit associer des noms à des textes"
+  if (!c.url && !c.command) return "ni command ni url"
+  return null
+}
+
+export function loadConfigs(cwd: string): { name: string; cfg: McpServerConfig; source: string; invalid?: string }[] {
+  const out: { name: string; cfg: McpServerConfig; source: string; invalid?: string }[] = []
   for (const [file, source] of [[join(dataDir(), "mcp.json"), "global"], [join(cwd, ".eclipse", "mcp.json"), "projet"]] as const) {
     if (!existsSync(file)) continue
     try {
       const j = JSON.parse(readFileSync(file, "utf8"))
-      for (const [name, cfg] of Object.entries(j.mcpServers ?? j.servers ?? {})) out.push({ name, cfg: cfg as McpServerConfig, source })
+      for (const [name, cfg] of Object.entries(j.mcpServers ?? j.servers ?? {})) {
+        const bad = checkCfg(cfg)
+        out.push(bad ? { name, cfg: { disabled: true }, source, invalid: bad } : { name, cfg: cfg as McpServerConfig, source })
+      }
     } catch (e) {
-      out.push({ name: file, cfg: { disabled: true }, source: `illisible : ${(e as Error).message}` })
+      out.push({ name: file, cfg: { disabled: true }, source, invalid: `fichier illisible : ${(e as Error).message}` })
     }
   }
   return out
@@ -85,31 +134,53 @@ export class McpManager {
   clients = new Map<string, Client>()
   status: McpStatus[] = []
   tools: McpTool[] = []
+  private gen = 0
+  private connecting = new Set<Client>()
 
-  async start(cwd: string, onChange?: () => void): Promise<void> {
-    await this.close()
+  /** (Re)lance les serveurs. Le statut est disponible dès le retour synchrone de l'appel (avant les connexions). */
+  start(cwd: string, onChange?: () => void): Promise<void> {
+    const gen = ++this.gen
     const cfgs = loadConfigs(cwd)
-    const pending = (c: (typeof cfgs)[number]) => c.source === "projet" && !c.cfg.disabled && !isApproved(cwd, c.name, c.cfg)
-    this.status = cfgs.map((c) => ({ name: c.name, source: c.source, state: c.cfg.disabled ? "désactivé" : pending(c) ? "à approuver" : "connexion…", tools: 0,
-                                     launch: pending(c) ? describeLaunch(c.cfg) : undefined }))
-    onChange?.()
-    await Promise.all(cfgs.map(async (c, i) => {
-      if (c.cfg.disabled || pending(c)) return
-      try {
-        const client = new Client({ name: "eclipse", version: VERSION })
-        const transport = c.cfg.url ? new StreamableHTTPClientTransport(new URL(c.cfg.url))
-          : new StdioClientTransport({ command: c.cfg.command!, args: c.cfg.args ?? [], env: { ...(process.env as Record<string, string>), ...(c.cfg.env ?? {}) }, cwd, stderr: "ignore" })
-        await Promise.race([client.connect(transport), new Promise((_, rej) => setTimeout(() => rej(new Error("pas de réponse en 20 s")), 20_000))])
-        const res = await client.listTools()
-        this.clients.set(c.name, client)
-        for (const t of res.tools) this.tools.push({ server: c.name, name: t.name, fullName: `mcp__${safe(c.name)}__${safe(t.name)}`, description: (t.description ?? "").slice(0, 500),
-                                                     schema: t.inputSchema ?? { type: "object", properties: {} }, readOnly: !!(t as any).annotations?.readOnlyHint })
-        this.status[i] = { ...this.status[i], state: "connecté", tools: res.tools.length }
-      } catch (e) {
-        this.status[i] = { ...this.status[i], state: "erreur", error: (e as Error).message.slice(0, 200) }
+    const globals = new Set(cfgs.filter((c) => c.source === "global").map((c) => c.name))
+    const reason = (c: (typeof cfgs)[number]): McpStatus["state"] | "doublon" | "invalide" | null =>
+      c.invalid ? "invalide" : c.cfg.disabled ? "désactivé" : c.source === "projet" && globals.has(c.name) ? "doublon" : c.source === "projet" && !isApproved(cwd, c.name, c.cfg) ? "à approuver" : null
+    this.status = cfgs.map((c) => {
+      const r = reason(c)
+      return {
+        name: c.name, source: c.source, tools: 0,
+        state: r === "invalide" || r === "doublon" ? "erreur" : r ?? "connexion…",
+        error: r === "invalide" ? c.invalid : r === "doublon" ? "même nom qu'un serveur global : renommez-le dans .eclipse/mcp.json" : undefined,
+        launch: r === "à approuver" ? describeLaunch(c.cfg) : undefined,
+        fingerprint: r === "à approuver" ? fingerprint(cwd, c.name, c.cfg) : undefined,
       }
-      onChange?.()
-    }))
+    })
+    onChange?.()
+    return (async () => {
+      await this.close()
+      if (gen !== this.gen) return
+      await Promise.all(cfgs.map(async (c, i) => {
+        if (reason(c)) return
+        const client = new Client({ name: "eclipse", version: VERSION })
+        this.connecting.add(client) // fermé aussi par close() pendant la connexion
+        try {
+          const transport = c.cfg.url ? new StreamableHTTPClientTransport(new URL(c.cfg.url))
+            : new StdioClientTransport({ command: c.cfg.command!, args: c.cfg.args ?? [], env: { ...(process.env as Record<string, string>), ...(c.cfg.env ?? {}) }, cwd, stderr: "ignore" })
+          await Promise.race([client.connect(transport), new Promise((_, rej) => setTimeout(() => rej(new Error("pas de réponse en 20 s")), 20_000))])
+          const res = await client.listTools()
+          if (gen !== this.gen) return void client.close().catch(() => {}) // relancé ou retiré entre-temps : rien n'est publié
+          this.clients.set(c.name, client)
+          for (const t of res.tools) this.tools.push({ server: c.name, name: t.name, fullName: `mcp__${safe(c.name)}__${safe(t.name)}`, description: (t.description ?? "").slice(0, 500),
+                                                       schema: t.inputSchema ?? { type: "object", properties: {} }, readOnly: !!(t as any).annotations?.readOnlyHint })
+          this.status[i] = { ...this.status[i], state: "connecté", tools: res.tools.length }
+        } catch (e) {
+          client.close().catch(() => {})
+          if (gen === this.gen) this.status[i] = { ...this.status[i], state: "erreur", error: (e as Error).message.slice(0, 200) }
+        } finally {
+          this.connecting.delete(client)
+        }
+        if (gen === this.gen) onChange?.()
+      }))
+    })()
   }
 
   openAiTools() {
@@ -133,8 +204,16 @@ export class McpManager {
   }
 
   async close(): Promise<void> {
-    for (const c of this.clients.values()) await c.close().catch(() => {})
+    const all = [...this.clients.values(), ...this.connecting]
     this.clients.clear()
+    this.connecting.clear()
     this.tools = []
+    await Promise.all(all.map((c) => c.close().catch(() => {})))
+  }
+
+  /** Arrête tout et invalide les connexions en cours (retrait d'une approbation, fermeture d'Eclipse). */
+  async stopAll(): Promise<void> {
+    this.gen++
+    await this.close()
   }
 }

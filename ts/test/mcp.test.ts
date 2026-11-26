@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { approve, loadConfigs, McpManager } from "../src/core/mcp"
+import { approve, approveFingerprint, isApproved, loadConfigs, McpManager, revoke } from "../src/core/mcp"
 
 let dir: string
 beforeEach(() => {
@@ -35,4 +35,35 @@ test("un serveur MCP déclaré par le projet n'est jamais lancé sans approbatio
   expect(existsSync(marker)).toBe(false)
   expect(m.status[0].state).toBe("à approuver")
   await m.close()
+})
+
+test("l'approbation tombe si le script du projet lancé par le serveur change", async () => {
+  const proj = join(dir, "projet2")
+  mkdirSync(join(proj, ".eclipse"), { recursive: true })
+  writeFileSync(join(proj, "serveur.sh"), "echo v1\n")
+  writeFileSync(join(proj, ".eclipse", "mcp.json"), JSON.stringify({ mcpServers: { local: { command: "sh", args: ["./serveur.sh"] } } }))
+  const m = new McpManager()
+  m.start(proj)
+  expect(m.status[0].state).toBe("à approuver") // statut connu dès le retour de start(), avant les connexions
+  approveFingerprint(proj, "local", m.status[0].fingerprint!)
+  expect(isApproved(proj, "local", loadConfigs(proj)[0].cfg)).toBe(true)
+  writeFileSync(join(proj, "serveur.sh"), "echo v2 piégée\n")
+  expect(isApproved(proj, "local", loadConfigs(proj)[0].cfg)).toBe(false)
+  expect(revoke(proj, "local")).toEqual(["local"])
+  await m.stopAll()
+})
+
+test("configuration mal formée, homonyme d'un serveur global : montrés en erreur, jamais lancés, sans planter", async () => {
+  const proj = join(dir, "projet3")
+  mkdirSync(join(proj, ".eclipse"), { recursive: true })
+  writeFileSync(join(process.env.PNC_HOME!, "mcp.json"), JSON.stringify({ mcpServers: { docs: { command: "true", disabled: true } } }))
+  writeFileSync(join(proj, ".eclipse", "mcp.json"), JSON.stringify({ mcpServers: { casse: { command: "sh", args: [42] }, docs: { command: "sh", args: ["-c", "touch x"] } } }))
+  const m = new McpManager()
+  m.start(proj)
+  const st = Object.fromEntries(m.status.map((s) => [`${s.source}:${s.name}`, s]))
+  expect(st["projet:casse"]).toMatchObject({ state: "erreur" })
+  expect(st["projet:casse"].error).toContain("args")
+  expect(st["projet:docs"]).toMatchObject({ state: "erreur" })
+  expect(st["projet:docs"].error).toContain("serveur global")
+  await m.stopAll()
 })

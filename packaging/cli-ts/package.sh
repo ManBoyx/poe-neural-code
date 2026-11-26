@@ -4,6 +4,11 @@
 set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 export PATH="$HOME/.bun/bin:$PATH"
+# test de démarrage de l'interface : Python avec pyte (PYTHON=… pour en choisir un ; sinon .venv du dépôt, puis python3)
+if [ -z "${PYTHON:-}" ]; then
+  if [ -x "$ROOT/.venv/bin/python" ]; then PYTHON="$ROOT/.venv/bin/python"; else PYTHON=python3; fi
+fi
+"$PYTHON" -c "import pyte" 2>/dev/null || { echo "pyte manque pour le test de démarrage : $PYTHON -m pip install pyte" >&2; exit 1; }
 cd "$ROOT/ts"
 bun install --frozen-lockfile >/dev/null
 bun test >/dev/null 2>&1 || { echo "tests en échec : rien n'est empaqueté" >&2; bun test 2>&1 | tail -20; exit 1; }
@@ -16,7 +21,6 @@ if ! bun packaging/cli-ts/build.ts bun-linux-x64-baseline >"$LOG" 2>&1; then
 fi
 "$BIN" --version
 # l'interface démarre-t-elle vraiment ? (--version s'arrête avant de charger OpenTUI)
-PYTHON=${PYTHON:-python3}; [ -x "$ROOT/.venv/bin/python" ] && PYTHON="$ROOT/.venv/bin/python"
 "$PYTHON" "$ROOT/packaging/cli-ts/smoke.py" "$BIN"
 OUT="$ROOT/build/cli-ts/release"; STAGE="$ROOT/build/cli-ts/stage"
 rm -rf "$OUT" "$STAGE"; mkdir -p "$OUT" "$STAGE"
