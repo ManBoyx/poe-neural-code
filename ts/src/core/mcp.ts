@@ -58,36 +58,46 @@ const readApprovals = (): Record<string, string> => {
  */
 export function fingerprint(cwd: string, name: string, cfg: McpServerConfig): string {
   const h = createHash("sha256").update(JSON.stringify([cwd, name, cfg.command ?? null, cfg.args ?? [], cfg.env ?? {}, cfg.url ?? null]))
-  for (const part of [cfg.command, ...(cfg.args ?? [])]) {
-    if (!part || part.startsWith("-")) continue
-    const abs = resolve(cwd, part)
-    const rel = relative(cwd, abs)
-    if (rel.startsWith("..") || isAbsolute(rel)) continue
-    try {
-      if (statSync(abs).isFile()) h.update(`\0${rel}\0`).update(readFileSync(abs))
-    } catch {}
-  }
+  for (const rel of trackedFiles(cwd, cfg)) h.update(`\0${rel}\0`).update(readFileSync(resolve(cwd, rel)))
   return h.digest("hex")
 }
+
+/** Fichiers du projet désignés directement par la commande ou ses arguments (y compris « --option=chemin »). */
+export function trackedFiles(cwd: string, cfg: McpServerConfig): string[] {
+  const out = new Set<string>()
+  const parts = [cfg.command, ...(cfg.args ?? [])].flatMap((x) => (x ? [x, ...(x.includes("=") ? [x.slice(x.indexOf("=") + 1)] : [])] : []))
+  for (const part of parts) {
+    const abs = resolve(cwd, part)
+    const rel = relative(cwd, abs)
+    if (!rel || isAbsolute(rel) || rel.split(/[\\/]/)[0] === "..") continue
+    try {
+      if (statSync(abs).isFile()) out.add(rel)
+    } catch {}
+  }
+  return [...out].sort()
+}
+
+const akey = (cwd: string, name: string) => JSON.stringify([cwd, name])
 export function isApproved(cwd: string, name: string, cfg: McpServerConfig): boolean {
-  return readApprovals()[`${cwd}::${name}`] === fingerprint(cwd, name, cfg)
+  return readApprovals()[akey(cwd, name)] === fingerprint(cwd, name, cfg)
 }
 /** Approuve exactement l'empreinte montrée à l'utilisateur (pas une relecture du fichier). */
 export function approveFingerprint(cwd: string, name: string, fp: string): void {
   const a = readApprovals()
-  a[`${cwd}::${name}`] = fp
+  a[akey(cwd, name)] = fp
   writeFileSync(approvalsFile(), JSON.stringify(a, null, 2), { mode: 0o600 })
 }
 export function approve(cwd: string, name: string, cfg: McpServerConfig): void {
   approveFingerprint(cwd, name, fingerprint(cwd, name, cfg))
 }
-/** Retire l'approbation (même si le serveur n'est plus dans le fichier). Renvoie les noms retirés. */
-export function revoke(cwd: string, name: string | "*"): string[] {
+/** Retire l'approbation (même si le serveur n'est plus dans le fichier) ; `all` : tous les serveurs du projet. */
+export function revoke(cwd: string, name: string, all = false): string[] {
   const a = readApprovals()
   const gone: string[] = []
   for (const k of Object.keys(a)) {
-    const [dir, n] = [k.slice(0, k.lastIndexOf("::")), k.slice(k.lastIndexOf("::") + 2)]
-    if (dir === cwd && (name === "*" || n === name)) {
+    let dir = "", n = ""
+    try { [dir, n] = JSON.parse(k) } catch { continue }
+    if (dir === cwd && (all || n === name)) {
       delete a[k]
       gone.push(n)
     }
@@ -95,10 +105,19 @@ export function revoke(cwd: string, name: string | "*"): string[] {
   writeFileSync(approvalsFile(), JSON.stringify(a, null, 2), { mode: 0o600 })
   return gone
 }
+
+/** Serveurs du projet en attente, lus UNE fois : c'est cette configuration-là qui est montrée puis approuvée. */
+export function pendingProject(cwd: string): { name: string; cfg: McpServerConfig; fp: string; files: string[] }[] {
+  const cfgs = loadConfigs(cwd)
+  const globals = new Set(cfgs.filter((c) => c.source === "global").map((c) => c.name))
+  return cfgs
+    .filter((c) => c.source === "projet" && !c.invalid && !c.cfg.disabled && !globals.has(c.name) && !isApproved(cwd, c.name, c.cfg))
+    .map((c) => ({ name: c.name, cfg: c.cfg, fp: fingerprint(cwd, c.name, c.cfg), files: trackedFiles(cwd, c.cfg) }))
+}
+
 /** Ce qui serait lancé, en entier (commande, arguments, variables d'environnement), pour décider en connaissance de cause. */
 export const describeLaunch = (cfg: McpServerConfig) =>
-  (cfg.url ? cfg.url : [cfg.command, ...(cfg.args ?? [])].map((x) => (/\s/.test(String(x)) ? JSON.stringify(x) : String(x))).join(" ")) +
-  (cfg.env && Object.keys(cfg.env).length ? `  (variables : ${Object.entries(cfg.env).map(([k, v]) => `${k}=${v}`).join(" ")})` : "")
+  JSON.stringify(cfg.url ? { url: cfg.url } : { command: cfg.command, args: cfg.args ?? [], ...(cfg.env && Object.keys(cfg.env).length ? { env: cfg.env } : {}) })
 
 /** Configuration valide ? (types attendus ; sinon le serveur est montré en erreur, jamais lancé) */
 function checkCfg(c: any): string | null {
@@ -106,7 +125,8 @@ function checkCfg(c: any): string | null {
   if (c.url !== undefined && typeof c.url !== "string") return "url doit être un texte"
   if (c.command !== undefined && typeof c.command !== "string") return "command doit être un texte"
   if (c.args !== undefined && !(Array.isArray(c.args) && c.args.every((a: unknown) => typeof a === "string"))) return "args doit être une liste de textes"
-  if (c.env !== undefined && !(c.env && typeof c.env === "object" && Object.values(c.env).every((v) => typeof v === "string"))) return "env doit associer des noms à des textes"
+  if (c.env !== undefined && !(c.env && typeof c.env === "object" && !Array.isArray(c.env) && Object.values(c.env).every((v) => typeof v === "string"))) return "env doit associer des noms à des textes"
+  if (c.disabled !== undefined && typeof c.disabled !== "boolean") return "disabled doit valoir true ou false"
   if (!c.url && !c.command) return "ni command ni url"
   return null
 }
@@ -144,8 +164,9 @@ export class McpManager {
     const globals = new Set(cfgs.filter((c) => c.source === "global").map((c) => c.name))
     const reason = (c: (typeof cfgs)[number]): McpStatus["state"] | "doublon" | "invalide" | null =>
       c.invalid ? "invalide" : c.cfg.disabled ? "désactivé" : c.source === "projet" && globals.has(c.name) ? "doublon" : c.source === "projet" && !isApproved(cwd, c.name, c.cfg) ? "à approuver" : null
-    this.status = cfgs.map((c) => {
-      const r = reason(c)
+    const reasons = cfgs.map(reason)
+    this.status = cfgs.map((c, i) => {
+      const r = reasons[i]
       return {
         name: c.name, source: c.source, tools: 0,
         state: r === "invalide" || r === "doublon" ? "erreur" : r ?? "connexion…",
@@ -159,7 +180,7 @@ export class McpManager {
       await this.close()
       if (gen !== this.gen) return
       await Promise.all(cfgs.map(async (c, i) => {
-        if (reason(c)) return
+        if (reasons[i]) return
         const client = new Client({ name: "eclipse", version: VERSION })
         this.connecting.add(client) // fermé aussi par close() pendant la connexion
         try {
@@ -203,12 +224,15 @@ export class McpManager {
     }
   }
 
+  private closing: Promise<unknown> = Promise.resolve()
   async close(): Promise<void> {
     const all = [...this.clients.values(), ...this.connecting]
     this.clients.clear()
     this.connecting.clear()
     this.tools = []
-    await Promise.all(all.map((c) => c.close().catch(() => {})))
+    // une fermeture déjà lancée est attendue aussi : stopAll() ne rend la main qu'une fois tout fermé
+    this.closing = Promise.all([this.closing, ...all.map((c) => c.close().catch(() => {}))])
+    await this.closing
   }
 
   /** Arrête tout et invalide les connexions en cours (retrait d'une approbation, fermeture d'Eclipse). */

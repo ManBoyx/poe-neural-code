@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { approve, approveFingerprint, isApproved, loadConfigs, McpManager, revoke } from "../src/core/mcp"
+import { approve, approveFingerprint, isApproved, loadConfigs, McpManager, pendingProject, revoke, trackedFiles } from "../src/core/mcp"
 
 let dir: string
 beforeEach(() => {
@@ -50,6 +50,13 @@ test("l'approbation tombe si le script du projet lancé par le serveur change", 
   writeFileSync(join(proj, "serveur.sh"), "echo v2 piégée\n")
   expect(isApproved(proj, "local", loadConfigs(proj)[0].cfg)).toBe(false)
   expect(revoke(proj, "local")).toEqual(["local"])
+  // chemins piégés : « ./..serveur.sh » est bien dans le projet, « --fichier=./x » désigne un fichier
+  writeFileSync(join(proj, "..serveur.sh"), "a")
+  writeFileSync(join(proj, "x.js"), "a")
+  expect(trackedFiles(proj, { command: "sh", args: ["./..serveur.sh", "--fichier=./x.js", "../dehors"] })).toEqual(["..serveur.sh", "x.js"])
+  // un nom contenant « :: » est retiré correctement avec --tous
+  approve(proj, "groupe::local", { command: "true" })
+  expect(revoke(proj, "", true)).toEqual(["groupe::local"])
   await m.stopAll()
 })
 
@@ -65,5 +72,6 @@ test("configuration mal formée, homonyme d'un serveur global : montrés en erre
   expect(st["projet:casse"].error).toContain("args")
   expect(st["projet:docs"]).toMatchObject({ state: "erreur" })
   expect(st["projet:docs"].error).toContain("serveur global")
+  expect(pendingProject(proj)).toEqual([]) // ni l'invalide ni l'homonyme ne sont proposés à l'approbation
   await m.stopAll()
 })

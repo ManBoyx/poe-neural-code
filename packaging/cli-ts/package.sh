@@ -8,6 +8,7 @@ export PATH="$HOME/.bun/bin:$PATH"
 if [ -z "${PYTHON:-}" ]; then
   if [ -x "$ROOT/.venv/bin/python" ]; then PYTHON="$ROOT/.venv/bin/python"; else PYTHON=python3; fi
 fi
+case "$PYTHON" in /*) ;; */*) PYTHON="$(pwd)/$PYTHON" ;; *) PYTHON=$(command -v "$PYTHON" || echo "$PYTHON") ;; esac  # chemin absolu
 "$PYTHON" -c "import pyte" 2>/dev/null || { echo "pyte manque pour le test de démarrage : $PYTHON -m pip install pyte" >&2; exit 1; }
 cd "$ROOT/ts"
 bun install --frozen-lockfile >/dev/null

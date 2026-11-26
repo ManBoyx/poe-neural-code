@@ -27,7 +27,7 @@ import { verifyPassword } from "../core/auth"
 import * as V from "../core/voice"
 import { isProtected, listProjects, needsProject, openProject, projectsRoot, PROTECT_RULE, slug } from "../core/protect"
 import { available as sandboxAvailable } from "../core/sandbox"
-import { approveFingerprint as approveMcpFingerprint, McpManager, revoke as revokeMcp } from "../core/mcp"
+import { approveFingerprint as approveMcpFingerprint, McpManager, pendingProject, revoke as revokeMcp } from "../core/mcp"
 import { discoverPlugins, discoverSkills, loadPlugins, setTrust, skillCatalog, type PluginCommand, type PluginInfo, type Skill } from "../core/extensions"
 import { cgTurn, CG_LABEL, parsePlan, type CgAgent, type CgMode } from "../core/cg"
 import { CgZones, cgTabs, SUB_COLORS, SubAgentView, type Zone, type ZoneEntry } from "./CgView"
@@ -1688,17 +1688,29 @@ export function App(props: { cwd: string }) {
           if (!name) return note(`Usage : /mcp ${sub} NOM (serveur déclaré dans .eclipse/mcp.json du projet) ou /mcp ${sub} --tous`, "error")
           if (sub === "retirer") {
             await mcp.stopAll() // arrête aussi un démarrage en cours
-            const gone = revokeMcp(cwd(), all ? "*" : name)
+            const gone = revokeMcp(cwd(), name, all)
             mcp.start(cwd(), () => setMcpTick((x) => x + 1))
             return note(gone.length ? `Approbation retirée et serveur arrêté : ${gone.join(", ")}` : `Aucune approbation pour « ${name} » dans ce projet.`)
           }
-          // on approuve exactement ce qui a été montré par /mcp (l'empreinte affichée), pas une nouvelle lecture du fichier
-          const shown = mcp.status.filter((x) => x.state === "à approuver" && x.fingerprint && (all || x.name === name))
-          if (!shown.length) return note(`Rien à approuver sous ce nom. /mcp montre les serveurs du projet en attente.`, "error")
-          for (const x of shown) approveMcpFingerprint(cwd(), x.name, x.fingerprint!)
+          // la configuration est lue UNE fois, montrée en entier, et c'est elle qui est approuvée (jamais une relecture).
+          // Confirmation demandée même en bypass : lancer un programme fourni par un dépôt est une décision de l'utilisateur.
+          const pend = pendingProject(cwd()).filter((x) => all || x.name === name)
+          if (!pend.length) return note(`Rien à approuver sous ce nom. /mcp montre les serveurs du projet en attente.`, "error")
+          const ok: string[] = []
+          for (const x of pend) {
+            const d = await new Promise<Decision>((res) => later({ type: "perm", resolve: res, req: {
+              tool: "mcp", kind: "exec", destructive: true, grantKey: "mcp-projet",
+              summary: `Lancer le serveur MCP « ${x.name} » déclaré par ce projet (.eclipse/mcp.json)`,
+              detail: JSON.stringify(x.cfg, null, 2) + (x.files.length ? `\n\nFichiers du projet suivis (l'approbation tombe s'ils changent) : ${x.files.join(", ")}` : ""),
+            } }))
+            if (d === "deny") continue
+            approveMcpFingerprint(cwd(), x.name, x.fp)
+            ok.push(x.name)
+          }
+          if (!ok.length) return note("Rien n'a été approuvé.")
           await mcp.start(cwd(), () => setMcpTick((x) => x + 1))
-          const still = mcp.status.filter((x) => shown.some((y) => y.name === x.name) && x.state === "à approuver")
-          return note(still.length ? `Le fichier a changé depuis l'affichage : ${still.map((x) => x.name).join(", ")} toujours en attente. Relisez /mcp.` : `Approuvé et lancé : ${shown.map((x) => x.name).join(", ")}`, still.length ? "warn" : "info")
+          const still = mcp.status.filter((x) => ok.includes(x.name) && x.state === "à approuver")
+          return note(still.length ? `Le fichier a changé pendant la confirmation : ${still.map((x) => x.name).join(", ")} toujours en attente.` : `Approuvé et lancé : ${ok.join(", ")}`, still.length ? "warn" : "info")
         }
         mcpTick()
         if (!mcp.status.length) return note(`Aucun serveur MCP configuré. Fichier : ${short(join(dataDir(), "mcp.json"))} (ou .eclipse/mcp.json du projet), format {"mcpServers": {"nom": {"command": "…", "args": []}}}.`)
