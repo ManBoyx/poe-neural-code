@@ -1,0 +1,90 @@
+import { afterEach, beforeEach, expect, test } from "bun:test"
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { buildCommand, parseLine, runAgent, type AgentEvent } from "../src/core/agents"
+
+let dir: string
+beforeEach(() => (dir = mkdtempSync(join(tmpdir(), "eclipse-agents-"))))
+afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+const parseAll = (agent: string, file: string) => {
+  const st = { tools: new Map<string, string>() }
+  return readFileSync(join(import.meta.dir, "fixtures", file), "utf8").split("\n").flatMap((l) => parseLine(agent, l.trim(), st))
+}
+
+test("sortie réelle de Claude Code 2.1.332 : session, texte, consommation", () => {
+  const ev = parseAll("claude", "claude-2.1.332.jsonl")
+  expect(ev[0]).toMatchObject({ type: "session", model: "claude-haiku-5-5" })
+  expect(ev.find((e) => e.type === "text")).toEqual({ type: "text", text: "ok" })
+  expect(ev.find((e) => e.type === "usage")).toMatchObject({ type: "usage", output: 4 })
+  expect(ev.some((e) => e.type === "error")).toBe(false)
+})
+
+test("sortie réelle de Codex 0.171.0 : discussion, message, consommation", () => {
+  const ev = parseAll("codex", "codex-0.171.0.jsonl")
+  expect(ev[0]).toEqual({ type: "session", id: "01a21533-a997-77f3-a820-2b7012620e41" })
+  expect(ev.find((e) => e.type === "text")).toEqual({ type: "text", text: "ok" })
+  expect(ev.find((e) => e.type === "usage")).toMatchObject({ input: 19949, output: 5, cached: 11648 })
+})
+
+test("puissance traduite en options réelles de chaque agent", () => {
+  const c = (agent: string, power: any, extra = {}) => buildCommand({ agent, binary: agent, cwd: ".", prompt: "x", power, ...extra }).join(" ")
+  expect(c("claude", "lecture")).toContain("--tools Read,Grep,Glob")
+  expect(c("claude", "modifications")).toContain("--permission-mode acceptEdits")
+  expect(c("claude", "bypass")).toContain("bypassPermissions")
+  expect(c("claude", "lecture", { model: "haiku", effort: "low", resume: "abc" })).toContain("--model haiku --effort low --resume abc")
+  expect(c("codex", "lecture")).toContain('sandbox_mode="read-only"')
+  expect(c("codex", "commandes")).toContain('sandbox_mode="workspace-write"')
+  expect(c("codex", "bypass")).toContain("--dangerously-bypass-approvals-and-sandbox")
+  expect(c("codex", "lecture", { resume: "t1" })).toStartWith("codex exec resume t1 --json")
+  expect(c("gemini", "lecture")).toContain("--approval-mode plan")
+})
+
+function fakeAgent(script: string): string {
+  const p = join(dir, "faux-agent")
+  writeFileSync(p, "#!/bin/sh\n" + script)
+  chmodSync(p, 0o755)
+  return p
+}
+
+async function collect(gen: AsyncGenerator<AgentEvent>) {
+  const out: AgentEvent[] = []
+  for await (const e of gen) out.push(e)
+  return out
+}
+
+test("lecture au fil de l'eau, outils suivis, code de sortie expliqué", async () => {
+  const bin = fakeAgent(`cat > /dev/null
+echo '{"type":"system","subtype":"init","session_id":"s1","model":"m"}'
+echo '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}]}}'
+echo '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"a.txt"}]}}'
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"fini"}]}}'
+echo 'boum' >&2
+exit 2`)
+  const ev = await collect(runAgent({ agent: "claude", binary: bin, cwd: dir, prompt: "x", power: "lecture" }))
+  expect(ev.map((e) => e.type)).toEqual(["session", "tool", "tool", "text", "error", "done"])
+  expect(ev[2]).toMatchObject({ done: true, ok: true, name: "Bash", output: "a.txt" })
+  expect((ev[4] as any).message).toBe("claude a quitté avec le code 2 : boum")
+})
+
+test("agent muet arrêté (et ses enfants), Échap interrompt proprement", async () => {
+  const bin = fakeAgent("cat > /dev/null\n/bin/sleep 60 &\n/bin/sleep 60\n")
+  const t0 = Date.now()
+  const ev = await collect(runAgent({ agent: "claude", binary: bin, cwd: dir, prompt: "x", power: "lecture", idleMs: 1200 }))
+  expect(Date.now() - t0).toBeLessThan(6000)
+  expect((ev[0] as any).message).toContain("aucun signe de vie")
+  expect(Bun.spawnSync(["pgrep", "-f", "^/bin/sleep 60$"]).stdout.toString().trim()).toBe("") // motif ancré : ne reconnaît pas la ligne de commande du test lui-même
+  const ac = new AbortController()
+  setTimeout(() => ac.abort(), 300)
+  const ev2 = await collect(runAgent({ agent: "claude", binary: bin, cwd: dir, prompt: "x", power: "lecture", signal: ac.signal }))
+  expect(ev2).toEqual([{ type: "done", interrupted: true }])
+})
+
+test("les clés d'API ne sont pas transmises à l'agent", async () => {
+  process.env.ANTHROPIC_API_KEY = "ne-doit-pas-passer"
+  const bin = fakeAgent('cat > /dev/null\necho "{\\"type\\":\\"assistant\\",\\"message\\":{\\"content\\":[{\\"type\\":\\"text\\",\\"text\\":\\"cle=${ANTHROPIC_API_KEY:-absente}\\"}]}}"')
+  const ev = await collect(runAgent({ agent: "claude", binary: bin, cwd: dir, prompt: "x", power: "lecture" }))
+  delete process.env.ANTHROPIC_API_KEY
+  expect(ev.find((e) => e.type === "text")).toEqual({ type: "text", text: "cle=absente" })
+})
