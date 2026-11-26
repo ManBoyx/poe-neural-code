@@ -28,6 +28,25 @@ jobs:
       - name: Audit des dépendances Python
         run: pip-audit --skip-editable
 
+  cli:
+    name: CLI TypeScript (Bun, OpenTUI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - run: npm install -g bun@1.4.5
+      - working-directory: ts
+        run: |
+          bun install --frozen-lockfile
+          bun x tsc --noEmit
+          bun test
+      - name: Exécutable autonome (Linux x86-64)
+        run: |
+          bun packaging/cli-ts/build.ts bun-linux-x64-baseline 2>&1 | grep -v '^Downloading' | tail -3
+          build/cli-ts/linux-x64-baseline/Eclipse --version
+
   desktop:
     name: Application desktop (Rust + interface)
     runs-on: ubuntu-22.04

@@ -216,7 +216,7 @@ export class EngineSession {
     const out: { provider: string; id: string; output: string[]; price?: number }[] = []
     for (const [pid, ms] of Object.entries(this.models)) for (const m of ms) {
       const o = (m.output ?? []).filter((x) => x !== "text")
-      if (o.length || /image|video|vid[eé]o|audio|tts|music|sora|veo|flux|dall|imagen|nano-banana|kling|runway|suno|eleven/i.test(m.id)) out.push({ provider: pid, id: m.id, output: o.length ? o : ["?"], price: m.priceOut })
+      if (o.length || /image|video|vid[eé]o|audio|tts|music|sora|veo|flux|dall|imagen|nano-banana|\bkling|runway|suno|eleven/i.test(m.id)) out.push({ provider: pid, id: m.id, output: o.length ? o : ["?"], price: m.priceOut })
     }
     return out
   }

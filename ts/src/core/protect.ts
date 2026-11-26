@@ -5,12 +5,27 @@
  * projet ; reprendre un projet, c'est revenir dans son dossier.
  */
 import { existsSync, mkdirSync, readdirSync, realpathSync, statSync } from "node:fs"
-import { dirname, join, relative, resolve } from "node:path"
+import { basename, dirname, join, relative, resolve } from "node:path"
 import { dataDir, home } from "./paths"
 
-/** Racine du dépôt d'Eclipse (ce fichier est dans <dépôt>/ts/src/core). */
+/** Vrai dans un exécutable compilé (`bun build --compile`) : le code est alors dans un système de fichiers virtuel. */
+export function compiled(): boolean {
+  return import.meta.dir.includes("$bunfs") || /^[A-Za-z]:[\\/]~BUN/.test(import.meta.dir)
+}
+
+/**
+ * Racine d'Eclipse : le dépôt des sources (ce fichier est dans <dépôt>/ts/src/core) ; pour un exécutable compilé,
+ * l'exécutable lui-même, ou son dossier d'installation quand il est rangé dans un dossier « engine » (application desktop).
+ */
 export function eclipseRoot(): string {
+  if (process.env.ECLIPSE_ROOT) return resolve(process.env.ECLIPSE_ROOT)
+  if (compiled()) return basename(dirname(process.execPath)) === "engine" ? dirname(dirname(process.execPath)) : process.execPath
   return resolve(import.meta.dir, "..", "..", "..")
+}
+
+/** Un dossier est-il une copie des sources d'Eclipse ? (reconnu à sa structure, où qu'il soit) */
+function isEclipseTree(dir: string): boolean {
+  return existsSync(join(dir, "ts", "src", "core", "protect.ts")) && existsSync(join(dir, "desktop", "src-tauri"))
 }
 
 export function projectsRoot(): string {
@@ -43,7 +58,12 @@ const inside = (p: string, root: string) => {
 /** Vrai si écrire à cet endroit toucherait les fichiers d'Eclipse. */
 export function isProtected(p: string): boolean {
   const rp = real(p)
-  return protectedRoots().some((r) => inside(rp, r))
+  if (protectedRoots().some((r) => inside(rp, r))) return true
+  // les sources d'Eclipse restent protégées même quand l'exécutable compilé ne sait pas où elles sont
+  for (let d = rp; ; d = dirname(d)) {
+    if (isEclipseTree(d)) return true
+    if (dirname(d) === d) return false
+  }
 }
 
 /** Le dossier de travail convient-il à un travail qui écrit ? Sinon il faut choisir ou créer un projet. */

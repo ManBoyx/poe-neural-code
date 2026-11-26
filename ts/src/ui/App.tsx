@@ -34,14 +34,14 @@ import { CgZones, cgTabs, SUB_COLORS, SubAgentView, type Zone, type ZoneEntry } 
 import { CgMenu } from "./CgMenu"
 import { type AgentModel, agentModels, AGENT_SUPPORT, POWER_LABEL, runAgent, type Power } from "../core/agents"
 import { coerce } from "../core/providers"
-import { VERSION_INFO } from "../core/version"
+import { VERSION, VERSION_INFO } from "../core/version"
 import { Picker, type ProviderStatus } from "./Picker"
 import { KeyPrompt } from "./KeyPrompt"
 import { ListPicker, type ListEntry } from "./ListPicker"
 import { autoDetect, C, I, iconSet, mdStyles, setIcons, setTheme, THEME_LABEL, themeName, type ThemeName } from "./theme"
 import { getLang, setLang, t, type Lang } from "./i18n"
 
-export const VERSION = "5.0.0-dev"
+export { VERSION }
 
 interface Item {
   role: "user" | "assistant" | "notice" | "tool"
