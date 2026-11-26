@@ -28,6 +28,7 @@ export interface Prefs {
   options?: Record<string, Record<string, unknown>> // « fournisseur/modèle » -> réglages du catalogue (/options)
   sidebar?: boolean
   sandbox?: boolean // défaut : active
+  voiceModel?: "base" | "small" // transcription rapide ou précise
   cgLead?: "claude" | "codex"
   cgMode?: "auto" | "seul" | "delegue"
   cgReview?: boolean

@@ -29,12 +29,13 @@ export interface VoiceSetup {
   missing: string[]
 }
 
-export function setup(): VoiceSetup {
+export function setup(prefer: "base" | "small" = "base"): VoiceSetup {
   const v = voiceDir()
   const has = (p: string) => (existsSync(p) ? p : undefined)
   const s: VoiceSetup = {
     whisper: has(join(v, "src/whisper.cpp/build/bin/whisper-cli")),
-    model: has(join(v, "models/ggml-base-q5_1.bin")) ?? has(join(v, "models/ggml-small-q5_1.bin")),
+    model: prefer === "small" ? has(join(v, "models/ggml-small-q5_1.bin")) ?? has(join(v, "models/ggml-base-q5_1.bin"))
+                               : has(join(v, "models/ggml-base-q5_1.bin")) ?? has(join(v, "models/ggml-small-q5_1.bin")),
     piper: has(join(v, "piper/piper")),
     voice: has(join(v, "voices/fr_FR-siwis-medium.onnx")),
     espeak: Bun.which("espeak-ng") ?? undefined,

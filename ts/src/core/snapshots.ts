@@ -11,6 +11,8 @@ import { dataDir } from "./paths"
 import { runCmd } from "./proc"
 
 const MAX_FILES = 20_000
+// résultat du contrôle gardé 10 min par dossier : un dossier de 90 000 fichiers n'est pas reparcouru à chaque message
+const checked = new Map<string, { at: number; reason: string | null }>()
 
 export class Snapshots {
   gitDir: string
@@ -25,6 +27,14 @@ export class Snapshots {
 
   /** Raison pour laquelle le dossier n'est pas suivi, ou null s'il l'est. */
   async unsupported(): Promise<string | null> {
+    const c = checked.get(this.root)
+    if (c && Date.now() - c.at < 600_000) return c.reason
+    const reason = await this.check()
+    checked.set(this.root, { at: Date.now(), reason })
+    return reason
+  }
+
+  private async check(): Promise<string | null> {
     if (this.root === homedir() || this.root === "/") return "le dossier personnel entier n'est pas suivi (ouvrez un projet)"
     mkdirSync(this.gitDir, { recursive: true })
     const init = await this.git(["init", "-q"])
