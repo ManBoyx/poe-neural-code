@@ -192,3 +192,17 @@ describe("effort", () => {
     expect(levelValue(undefined, "profond")).toBeUndefined()
   })
 })
+
+describe("appels d'outils en flux", () => {
+  test("morceaux d'arguments réassemblés, plusieurs appels dans l'ordre", async () => {
+    const lines = [
+      { choices: [{ delta: { tool_calls: [{ index: 0, id: "a", function: { name: "read_", arguments: '{"pa' } }] } }] },
+      { choices: [{ delta: { tool_calls: [{ index: 0, function: { name: "file", arguments: 'th":"x"}' } }, { index: 1, id: "b", function: { name: "list_dir", arguments: "{}" } }] } }] },
+      { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+    ].map((x) => "data: " + JSON.stringify(x)).join("\n\n") + "\n\ndata: [DONE]\n\n"
+    const fake = (async () => new Response(lines)) as unknown as typeof fetch
+    const evs: any[] = []
+    for await (const e of streamChat(PROVIDERS.find((p) => p.id === "lmstudio")!, "m", [], { fetchImpl: fake, tools: [{}] })) evs.push(e)
+    expect(evs[0]).toEqual({ type: "tools", calls: [{ id: "a", name: "read_file", args: '{"path":"x"}' }, { id: "b", name: "list_dir", args: "{}" }] })
+  })
+})

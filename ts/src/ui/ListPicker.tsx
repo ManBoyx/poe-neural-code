@@ -25,6 +25,11 @@ export function ListPicker(props: { title: string; entries: () => ListEntry[]; o
   const selectable = createMemo(() => rows().map((r, i) => (!r.header && !r.dim && r.value !== undefined ? i : -1)).filter((i) => i >= 0))
   const current = () => selectable()[Math.min(sel(), Math.max(0, selectable().length - 1))] ?? -1
   useKeyboard((k) => {
+    // seules les touches gérées ici sont consommées : les lettres vont au champ de recherche
+    if (["escape", "return", "up", "down", "pageup", "pagedown"].includes(k.name)) {
+      k.preventDefault()
+      k.stopPropagation()
+    }
     if (k.name === "escape") props.onClose()
     else if (k.name === "down") setSel((s) => Math.min(s + 1, selectable().length - 1))
     else if (k.name === "up") setSel((s) => Math.max(0, s - 1))

@@ -13,6 +13,8 @@ export function KeyPrompt(props: { label: string; note: string; onSubmit: (key: 
     setLen(key.length)
   }
   useKeyboard((k) => {
+    k.preventDefault()
+    k.stopPropagation()
     if (k.name === "escape") {
       key = ""
       props.onCancel()

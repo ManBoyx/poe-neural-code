@@ -7,6 +7,11 @@ import { t } from "./i18n"
 export function TextPrompt(props: { title: string; note?: string; initial?: string; onSubmit: (v: string) => void; onCancel: () => void; width: () => number }) {
   const [value, setValue] = createSignal(props.initial ?? "")
   useKeyboard((k) => {
+    // seules les touches gérées ici sont consommées : les lettres vont au champ de recherche
+    if (["escape", "return", "up", "down", "pageup", "pagedown"].includes(k.name)) {
+      k.preventDefault()
+      k.stopPropagation()
+    }
     if (k.name === "escape") props.onCancel()
   })
   const w = () => Math.min(80, props.width() - 4)

@@ -1,9 +1,13 @@
 /** Conversation en flux avec un fournisseur compatible OpenAI (POST /chat/completions, stream). Sans outils pour l'instant. */
 import { keyFor, type ProviderSpec } from "./providers"
 
+export type Part = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
+
 export interface Msg {
-  role: "user" | "assistant" | "system"
-  content: string
+  role: "user" | "assistant" | "system" | "tool"
+  content: string | Part[] | null
+  tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[]
+  tool_call_id?: string
 }
 
 export type ChatEvent =
@@ -11,6 +15,7 @@ export type ChatEvent =
   | { type: "thinking"; text: string }
   | { type: "usage"; input?: number; output?: number }
   | { type: "error"; message: string }
+  | { type: "tools"; calls: { id: string; name: string; args: string }[] }
   | { type: "done" }
 
 const HINTS: Record<number, string> = {
@@ -18,7 +23,7 @@ const HINTS: Record<number, string> = {
   408: "délai dépassé côté modèle", 413: "conversation trop longue pour ce modèle", 429: "limite de débit atteinte",
 }
 
-export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[], opts: { signal?: AbortSignal; fetchImpl?: typeof fetch; extra?: Record<string, unknown> } = {}): AsyncGenerator<ChatEvent> {
+export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[], opts: { signal?: AbortSignal; fetchImpl?: typeof fetch; extra?: Record<string, unknown>; tools?: unknown[] } = {}): AsyncGenerator<ChatEvent> {
   const k = await keyFor(p)
   if (!k.ok) {
     yield { type: "error", message: `${p.label} : ${k.missing ? "aucune clé enregistrée — choisissez « Saisir la clé » dans /provider" : k.reason}` }
@@ -31,7 +36,7 @@ export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[
   try {
     r = await f(p.baseUrl + "/chat/completions", {
       method: "POST", headers, signal: opts.signal,
-      body: JSON.stringify({ ...(opts.extra ?? {}), model, messages, stream: true, stream_options: { include_usage: true } }),
+      body: JSON.stringify({ ...(opts.extra ?? {}), model, messages, stream: true, stream_options: { include_usage: true }, ...(opts.tools?.length ? { tools: opts.tools } : {}) }),
     })
   } catch (e) {
     if ((e as Error).name === "AbortError") return
@@ -46,6 +51,10 @@ export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[
     } catch {}
     yield { type: "error", message: `HTTP ${r.status} — ${HINTS[r.status] ?? "erreur du fournisseur"}${detail ? " : " + detail.slice(0, 300) : ""}` }
     return
+  }
+  const calls = new Map<number, { id: string; name: string; args: string }>()
+  const flush = function* (): Generator<ChatEvent> {
+    if (calls.size) yield { type: "tools", calls: [...calls.entries()].sort((x, y) => x[0] - y[0]).map(([i, c]) => ({ ...c, id: c.id || `call_${i}` })) }
   }
   const reader = r.body.getReader()
   const dec = new TextDecoder()
@@ -62,6 +71,7 @@ export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[
         if (!line.startsWith("data:")) continue
         const payload = line.slice(5).trim()
         if (payload === "[DONE]") {
+          yield* flush()
           yield { type: "done" }
           return
         }
@@ -77,6 +87,13 @@ export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[
           const th = delta.reasoning_content ?? delta.reasoning
           if (typeof th === "string" && th) yield { type: "thinking", text: th }
           if (delta.content) yield { type: "text", text: delta.content }
+          for (const tc of delta.tool_calls ?? []) {
+            const slot = calls.get(tc.index ?? 0) ?? { id: "", name: "", args: "" }
+            slot.id = tc.id || slot.id
+            slot.name += tc.function?.name ?? ""
+            slot.args += tc.function?.arguments ?? ""
+            calls.set(tc.index ?? 0, slot)
+          }
         }
       }
     }
@@ -85,5 +102,6 @@ export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[
     yield { type: "error", message: `connexion interrompue (${(e as Error).name})` }
     return
   }
+  yield* flush()
   yield { type: "done" }
 }
