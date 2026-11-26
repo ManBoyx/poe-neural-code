@@ -34,8 +34,12 @@ export function wrapToWidth(line: string, cols: number): string[] {
 /** Rend visibles les caractères invisibles ou trompeurs (contrôle, sens d'écriture, largeur nulle) : \u{…}. */
 export const revealHidden = (s: string) =>
   s.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (c) => (c === "\n" ? c : `\\u{${c.codePointAt(0)!.toString(16).toUpperCase()}}`))
-    // longues suites d'espaces (ordinaires ou non) : affichées en clair, elles ne peuvent pas repousser un argument hors de la vue
-    .replace(/[\p{Zs}]{4,}/gu, (m) => `{${m.length} espaces}`)
+    // longues suites d'espaces (ordinaires ou non) après le retrait de début de ligne : affichées en clair, elles ne
+    // peuvent pas repousser un argument hors de la vue (le retrait de l'indentation JSON reste tel quel)
+    .split("\n").map((l) => {
+      const lead = /^ */.exec(l)![0]
+      return lead + l.slice(lead.length).replace(/[\p{Zs}]{4,}/gu, (m) => `{${m.length} espaces}`)
+    }).join("\n")
 
 const CHOICES: { d: Decision; key: string; label: string }[] = [
   { d: "once", key: "o", label: "Autoriser une fois" },
