@@ -75,3 +75,18 @@ test("configuration mal formée, homonyme d'un serveur global : montrés en erre
   expect(pendingProject(proj)).toEqual([]) // ni l'invalide ni l'homonyme ne sont proposés à l'approbation
   await m.stopAll()
 })
+
+test("empreinte : un « .. » après un lien symbolique suit la cible du lien, comme le processus lancé", async () => {
+  const { symlinkSync } = await import("node:fs")
+  const proj = join(dir, "projet4")
+  mkdirSync(join(proj, "a", "b"), { recursive: true })
+  mkdirSync(join(proj, "c"), { recursive: true })
+  writeFileSync(join(proj, "a", "srv.sh"), "vrai\n") // ce que le système ouvre pour lien/../srv.sh (lien -> a/b)
+  writeFileSync(join(proj, "srv.sh"), "leurre\n") // ce que donnerait une normalisation lexicale
+  symlinkSync(join(proj, "a", "b"), join(proj, "c", "lien"))
+  const cfg = { command: "sh", args: ["c/lien/../srv.sh"] }
+  expect(trackedFiles(proj, cfg)).toEqual(["a/srv.sh"])
+  approve(proj, "x", cfg)
+  writeFileSync(join(proj, "a", "srv.sh"), "modifié\n")
+  expect(isApproved(proj, "x", cfg)).toBe(false)
+})

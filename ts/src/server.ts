@@ -12,6 +12,7 @@ import { verifyPassword } from "./core/auth"
 import { needsProject } from "./core/protect"
 import * as V from "./core/voice"
 import { EngineSession, type EngineEvent, type Space } from "./engine/session"
+import { approveFingerprint, pendingProject, revoke } from "./core/mcp"
 
 const args = process.argv.slice(2)
 if (args[0] !== "serve") {
@@ -206,6 +207,23 @@ const server = Bun.serve({
       if (p === "/api/media/models") return json(S.mediaModels())
       if (p === "/api/mcp") return json(S.mcp.status)
       if (p === "/api/mcp/reload") return (await S.mcp.start(S.cwd, () => broadcast({ type: "state" })), json(S.mcp.status))
+      // serveurs MCP du projet : la configuration est lue une fois, montrée en entier ; seule son empreinte est approuvée
+      if (p === "/api/mcp/pending") return json(pendingProject(S.cwd).map((x) => ({ name: x.name, config: x.cfg, fingerprint: x.fp, files: x.files })))
+      if (p === "/api/mcp/approve") {
+        const b = await body()
+        const x = pendingProject(S.cwd).find((y) => y.name === b.name)
+        if (!x || x.fp !== b.fingerprint) return json({ ok: false, message: "La configuration a changé depuis l'affichage : relisez-la avant d'approuver." }, 409)
+        approveFingerprint(S.cwd, x.name, x.fp)
+        await S.mcp.start(S.cwd, () => broadcast({ type: "state" }))
+        return json({ ok: true, status: S.mcp.status })
+      }
+      if (p === "/api/mcp/revoke") {
+        const b = await body()
+        await S.mcp.stopAll()
+        const gone = revoke(S.cwd, String(b.name ?? ""), !!b.all)
+        S.mcp.start(S.cwd, () => broadcast({ type: "state" }))
+        return json({ ok: true, revoked: gone })
+      }
       if (p === "/api/usage") {
         const per = [["aujourd'hui", dayStart()], ["cette semaine", weekStart()], ["ce mois", monthStart()], ["depuis le début", 0]] as const
         const bal = S.st.current?.provider === "poe" || S.keyState.poe === "ok" ? await poeBalance() : null

@@ -1699,7 +1699,7 @@ export function App(props: { cwd: string }) {
           const ok: string[] = []
           for (const x of pend) {
             const d = await new Promise<Decision>((res) => later({ type: "perm", resolve: res, req: {
-              tool: "mcp", kind: "exec", destructive: true, grantKey: "mcp-projet",
+              tool: "mcp", kind: "exec", destructive: true, grantKey: "mcp-projet", mustRead: true,
               summary: `Lancer le serveur MCP « ${x.name} » déclaré par ce projet (.eclipse/mcp.json)`,
               detail: JSON.stringify(x.cfg, null, 2) + (x.files.length ? `\n\nFichiers du projet suivis (l'approbation tombe s'ils changent) : ${x.files.join(", ")}` : ""),
             } }))

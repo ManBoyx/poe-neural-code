@@ -1,4 +1,8 @@
-/** Demande d'autorisation d'un outil : ce qui va être fait (diff ou commande complète), puis une fois / session / refuser. */
+/**
+ * Demande d'autorisation d'un outil : ce qui va être fait (diff ou commande complète), puis une fois / session / refuser.
+ * Le détail n'est jamais tronqué : les lignes longues sont repliées et ↑ ↓ (pg préc. / pg suiv.) font défiler.
+ * Avec `mustRead`, « Autoriser » n'est possible qu'une fois tout le détail affiché.
+ */
 import { createSignal, For, Show } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import type { Decision, Request } from "../core/permissions"
@@ -19,41 +23,66 @@ export function PermissionPrompt(props: { req: Request; onDecide: (d: Decision) 
   }
   const choices = () => (props.req.destructive || props.req.outside ? CHOICES.filter((c) => c.d !== "session") : CHOICES)
   const [sel, setSel] = createSignal(0)
+  const [off, setOff] = createSignal(0)
+  const w = () => Math.min(110, props.width() - 4)
+  // lignes repliées à la largeur de la fenêtre : rien n'est coupé
+  const wrapped = () => (props.req.detail ?? "").split("\n").flatMap((l) => {
+    const n = Math.max(20, w() - 12) // largeur intérieure réelle (bords, marges, filet) : aucune ligne n'est repliée une 2e fois
+    if (l.length <= n) return [l]
+    const out: string[] = []
+    for (let i = 0; i < l.length; i += n) out.push((i ? "  " : "") + l.slice(i, i + n))
+    return out
+  })
+  const page = () => Math.max(3, props.height() - 16)
+  const maxOff = () => Math.max(0, wrapped().length - page())
+  const lines = () => wrapped().slice(off(), off() + page())
+  const allSeen = createSignal(false)
+  const seen = () => allSeen[0]() || off() >= maxOff()
+  const scroll = (d: number) => {
+    setOff((o) => Math.min(maxOff(), Math.max(0, o + d)))
+    if (off() >= maxOff()) allSeen[1](true)
+  }
+  const blocked = (d: Decision) => d !== "deny" && props.req.mustRead && !seen()
+  const tryDecide = (d: Decision) => (blocked(d) ? scroll(page()) : decide(d))
   useKeyboard((k) => {
     k.preventDefault()
     k.stopPropagation()
     if (k.name === "escape") return decide("deny")
-    if (k.name === "down" || k.name === "right" || k.name === "tab") setSel((s) => (s + 1) % choices().length)
-    else if (k.name === "up" || k.name === "left") setSel((s) => (s + choices().length - 1) % choices().length)
-    else if (k.name === "return") decide(choices()[sel()].d)
+    if (k.name === "right" || k.name === "tab") setSel((s) => (s + 1) % choices().length)
+    else if (k.name === "left") setSel((s) => (s + choices().length - 1) % choices().length)
+    else if (k.name === "down") scroll(1)
+    else if (k.name === "up") scroll(-1)
+    else if (k.name === "pagedown" || k.name === "space") scroll(page())
+    else if (k.name === "pageup") scroll(-page())
+    else if (k.name === "return") tryDecide(choices()[sel()].d)
     else {
       const c = choices().find((x) => x.key === k.name || String(choices().indexOf(x) + 1) === k.name)
-      if (c) decide(c.d)
+      if (c) tryDecide(c.d)
     }
   })
-  const w = () => Math.min(110, props.width() - 4)
-  const lines = () => (props.req.detail ?? "").split("\n").slice(0, Math.max(3, props.height() - 16))
   const lineColor = (l: string) => (l.startsWith("+") && !l.startsWith("+++") ? C.ok : l.startsWith("-") && !l.startsWith("---") ? C.error : l.startsWith("@@") ? C.recent : C.muted)
   return (
     <box position="absolute" top={2} left={Math.max(0, Math.floor((props.width() - w()) / 2))} width={w()} zIndex={30}
          backgroundColor={C.panel} border borderStyle="rounded" borderColor={props.req.destructive ? C.error : C.warn} paddingX={2} paddingY={1} flexDirection="column">
       <text fg={props.req.destructive ? C.error : C.warn}>
-        <b>{`${I.warn}  Autoriser ${props.req.kind === "exec" ? "la commande" : props.req.kind === "write" ? "la modification" : "la lecture"} ?`}</b>
-        {props.req.destructive ? "   ACTION DESTRUCTRICE" : ""}{props.req.outside ? "   HORS DU PROJET" : ""}
+        <b>{`${I.warn}  ${props.req.tool === "mcp" ? "Lancer ce programme fourni par le projet ?" : `Autoriser ${props.req.kind === "exec" ? "la commande" : props.req.kind === "write" ? "la modification" : "la lecture"} ?`}`}</b>
+        {props.req.destructive && props.req.tool !== "mcp" ? "   ACTION DESTRUCTRICE" : ""}{props.req.outside ? "   HORS DU PROJET" : ""}
       </text>
       <text fg={C.text} marginTop={1}>{`${props.req.tool} · ${props.req.summary}`}</text>
       <Show when={props.req.detail && props.req.detail !== props.req.summary}>
         <box flexDirection="column" marginTop={1} border={["left"]} borderColor={C.panelBorder} paddingX={1}>
-          <For each={lines()}>{(l) => <text fg={lineColor(l)}>{l.slice(0, w() - 8) || " "}</text>}</For>
-          <Show when={(props.req.detail ?? "").split("\n").length > lines().length}><text fg={C.dim}>{`… ${(props.req.detail ?? "").split("\n").length - lines().length} lignes de plus`}</text></Show>
+          <For each={lines()}>{(l) => <text fg={lineColor(l)}>{l || " "}</text>}</For>
+          <Show when={maxOff() > 0}>
+            <text fg={props.req.mustRead && !seen() ? C.warn : C.dim}>{`lignes ${off() + 1}–${Math.min(wrapped().length, off() + page())} sur ${wrapped().length} · ↑ ↓ ou espace pour faire défiler${props.req.mustRead && !seen() ? " · lisez jusqu'au bout pour pouvoir autoriser" : ""}`}</text>
+          </Show>
         </box>
       </Show>
       <box flexDirection="row" marginTop={1} gap={2}>
         <For each={choices()}>
-          {(c, i) => <text fg={i() === sel() ? C.accent : C.muted}>{(i() === sel() ? "› " : "  ") + `${c.label} (${c.key})`}</text>}
+          {(c, i) => <text fg={blocked(c.d) ? C.dim : i() === sel() ? C.accent : C.muted}>{(i() === sel() ? "› " : "  ") + `${c.label} (${c.key})`}</text>}
         </For>
       </box>
-      <text fg={C.dim}>{"← → choisir · entrée valider · o / t / r · échap refuse"}</text>
+      <text fg={C.dim}>{"← → choisir · entrée valider · o / t / r · ↑ ↓ faire défiler · échap refuse"}</text>
     </box>
   )
 }

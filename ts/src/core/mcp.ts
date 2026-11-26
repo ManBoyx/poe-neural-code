@@ -12,8 +12,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
 import { createHash } from "node:crypto"
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { isAbsolute, join, relative, resolve } from "node:path"
+import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs"
+import { isAbsolute, join, relative, resolve, sep } from "node:path"
 import { dataDir } from "./paths"
 
 export interface McpServerConfig {
@@ -58,20 +58,34 @@ const readApprovals = (): Record<string, string> => {
  */
 export function fingerprint(cwd: string, name: string, cfg: McpServerConfig): string {
   const h = createHash("sha256").update(JSON.stringify([cwd, name, cfg.command ?? null, cfg.args ?? [], cfg.env ?? {}, cfg.url ?? null]))
-  for (const rel of trackedFiles(cwd, cfg)) h.update(`\0${rel}\0`).update(readFileSync(resolve(cwd, rel)))
+  const root = (() => { try { return realpathSync.native(cwd) } catch { return cwd } })()
+  for (const rel of trackedFiles(cwd, cfg)) h.update(`\0${rel}\0`).update(readFileSync(join(root, rel)))
   return h.digest("hex")
 }
 
 /** Fichiers du projet désignés directement par la commande ou ses arguments (y compris « --option=chemin »). */
 export function trackedFiles(cwd: string, cfg: McpServerConfig): string[] {
   const out = new Set<string>()
+  let root: string
+  try {
+    root = realpathSync.native(cwd)
+  } catch {
+    return []
+  }
   const parts = [cfg.command, ...(cfg.args ?? [])].flatMap((x) => (x ? [x, ...(x.includes("=") ? [x.slice(x.indexOf("=") + 1)] : [])] : []))
   for (const part of parts) {
-    const abs = resolve(cwd, part)
-    const rel = relative(cwd, abs)
-    if (!rel || isAbsolute(rel) || rel.split(/[\\/]/)[0] === "..") continue
+    // résolution physique, comme le fera le processus lancé (un « .. » après un lien suit la cible du lien) :
+    // pas de normalisation lexicale avant realpath
+    let real: string
     try {
-      if (statSync(abs).isFile()) out.add(rel)
+      real = realpathSync.native(isAbsolute(part) ? part : `${cwd}${sep}${part}`)
+    } catch {
+      continue
+    }
+    const rel = relative(root, real)
+    if (!rel || isAbsolute(rel) || rel.split(/[\\/]/)[0] === "..") continue // hors du projet
+    try {
+      if (statSync(real).isFile()) out.add(rel)
     } catch {}
   }
   return [...out].sort()
@@ -181,6 +195,12 @@ export class McpManager {
       if (gen !== this.gen) return
       await Promise.all(cfgs.map(async (c, i) => {
         if (reasons[i]) return
+        // serveur de projet : l'empreinte est recalculée juste avant le lancement (un script modifié pendant la
+        // fermeture des anciens serveurs n'est pas lancé sous l'ancienne approbation)
+        if (c.source === "projet" && !isApproved(cwd, c.name, c.cfg)) {
+          this.status[i] = { ...this.status[i], state: "à approuver", launch: describeLaunch(c.cfg), fingerprint: fingerprint(cwd, c.name, c.cfg) }
+          return void onChange?.()
+        }
         const client = new Client({ name: "eclipse", version: VERSION })
         this.connecting.add(client) // fermé aussi par close() pendant la connexion
         try {

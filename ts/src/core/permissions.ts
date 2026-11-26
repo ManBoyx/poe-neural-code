@@ -26,6 +26,7 @@ export interface Request {
   outside?: boolean
   destructive?: boolean
   grantKey: string // « toujours pour cette session »
+  mustRead?: boolean // « autoriser » seulement après avoir affiché tout le détail (approbation d'un serveur MCP de projet)
 }
 
 export type Decision = "once" | "session" | "deny"
