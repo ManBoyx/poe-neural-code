@@ -83,7 +83,7 @@ export function UsageScreen(props: UsageProps) {
     <box flexDirection="row" height={1}>
       <text fg={C.muted} width={18}>{p.label}</text>
       <text fg={p.color ?? C.text} flexGrow={1}>{p.value}</text>
-      <Show when={p.note}><text fg={C.dim}>{p.note}</text></Show>
+      <Show when={p.note}><text fg={C.dim}>{"  " + p.note}</text></Show>
     </box>
   )
   const tokLine = (x: Totals) => {

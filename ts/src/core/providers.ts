@@ -75,6 +75,7 @@ export interface ModelInfo {
   output?: string[]
   effort?: string[] // valeurs d'effort proposées par le modèle
   effortParam?: string // nom du paramètre à envoyer (ex. reasoning_effort)
+  params?: ModelParam[] // tous les réglages annoncés par le catalogue (/options)
   priceIn?: number // $ par million de tokens
   priceOut?: number
 }
@@ -91,8 +92,13 @@ export function parsePoe(data: any[]): ModelInfo[] {
     const eff = effP?.schema?.enum
     const pIn = price.prompt != null ? Number(price.prompt) * 1e6 : undefined
     const pOut = price.completion != null ? Number(price.completion) * 1e6 : undefined
+    const params: ModelParam[] = (d.parameters ?? []).filter((x: any) => x?.name).map((x: any) => {
+      const sc = x.schema ?? {}
+      const kind = Array.isArray(sc.enum) ? "enum" : sc.type === "boolean" ? "boolean" : sc.type === "integer" ? "integer" : sc.type === "number" ? "number" : "string"
+      return { name: x.name, kind, choices: Array.isArray(sc.enum) ? sc.enum.map(String) : undefined, default: x.default_value, description: (x.description ?? "").slice(0, 120) }
+    })
     out.push({
-      id: d.id, provider: "poe", context: d.context_window?.context_length ?? d.context_length ?? undefined,
+      params, id: d.id, provider: "poe", context: d.context_window?.context_length ?? d.context_length ?? undefined,
       tools: (d.supported_features ?? []).includes("tools"), input: arch.input_modalities, output: outMods,
       effort: Array.isArray(eff) ? eff.map(String) : undefined, effortParam: Array.isArray(eff) ? effP.name : undefined, priceIn: pIn, priceOut: pOut,
       free: d.pricing === null ? undefined : pIn === 0 && pOut === 0,
@@ -109,6 +115,30 @@ export function parseGeneric(providerId: string, data: any[]): ModelInfo[] {
              free: pIn === 0 && pOut === 0 ? true : undefined,
              tools: Array.isArray(d.supported_parameters) ? d.supported_parameters.includes("tools") : undefined }
   })
+}
+
+export interface ModelParam {
+  name: string
+  kind: "enum" | "boolean" | "integer" | "number" | "string"
+  choices?: string[]
+  default?: unknown
+  description?: string
+}
+
+export function coerce(p: ModelParam, raw: string): unknown {
+  const v = raw.trim()
+  if (p.kind === "boolean") {
+    if (/^(on|oui|true|1|vrai)$/i.test(v)) return true
+    if (/^(off|non|false|0|faux)$/i.test(v)) return false
+    throw new Error("on ou off")
+  }
+  if (p.kind === "integer" || p.kind === "number") {
+    const n = Number(v.replace(",", "."))
+    if (!Number.isFinite(n) || (p.kind === "integer" && !Number.isInteger(n))) throw new Error(p.kind === "integer" ? "nombre entier attendu" : "nombre attendu")
+    return n
+  }
+  if (p.kind === "enum" && p.choices && !p.choices.includes(v)) throw new Error("choix : " + p.choices.join(", "))
+  return v
 }
 
 export type CatalogResult = { ok: true; models: ModelInfo[] } | { ok: false; reason: string }

@@ -18,6 +18,9 @@ import { LEVELS, levelValue } from "../core/effort"
 import { runCmd } from "../core/proc"
 import { Budget, estimateUsd } from "../core/budget"
 import { UsageScreen } from "./UsageScreen"
+import { TextPrompt } from "./TextPrompt"
+import { coerce } from "../core/providers"
+import { VERSION_INFO } from "../core/version"
 import { Picker, type ProviderStatus } from "./Picker"
 import { KeyPrompt } from "./KeyPrompt"
 import { ListPicker, type ListEntry } from "./ListPicker"
@@ -44,6 +47,7 @@ type Overlay =
   | { type: "key"; id: string }
   | { type: "list"; title: string; entries: () => ListEntry[]; onPick: (v: string) => void; hint?: string }
   | { type: "usage" }
+  | { type: "text"; title: string; note?: string; initial?: string; onSubmit: (v: string) => void }
 
 const LOGO = [
   "█▀▀▀ █▀▀█ █    ▀█▀ █▀▀█ █▀▀▀ █▀▀▀",
@@ -58,6 +62,13 @@ const HIGHLIGHTS = `# Eclipse 5 (en cours)
 - Mémoire refaite : recherche sans accents, mémoire montrée à chaque message, « retiens que … ».
 - Thèmes contraste élevé, clair et sans couleur (NO_COLOR) ; icônes en texte si la police manque ; français et anglais.
 - Commandes d'Eclipse et d'OpenCode réunies, sans doublon (/help).`
+
+/** « 30m », « 5h », « 1d », « 1w » -> secondes ; null si illisible. */
+export function parseDuration(s: string): number | null {
+  const m = s.trim().match(/^(\d+)\s*(m|min|h|d|j|w|s)$/i)
+  if (!m) return null
+  return Number(m[1]) * ({ s: 1, m: 60, min: 60, h: 3600, d: 86400, j: 86400, w: 604800 } as Record<string, number>)[m[2].toLowerCase()]
+}
 
 function systemPrompt(mode: "build" | "plan", lang: Lang, cwd: string): string {
   const fr = lang === "fr"
@@ -100,6 +111,7 @@ export function App(props: { cwd: string }) {
   const [toast, setToast] = createSignal("")
   const [usage, setUsage] = createStore<Record<string, { in: number; out: number; turns: number }>>({})
   let prompt: TextareaRenderable | undefined
+  let threadScroll: any
   let abort: AbortController | null = null
   let history: Msg[] = []
 
@@ -249,7 +261,7 @@ export function App(props: { cwd: string }) {
     const blocked = budget.blocked(c.model!)
     if (blocked) return note(`Envoi bloqué : ${blocked}. /usage pour le détail, /define-token ou /limit pour changer.`, "error")
     const memCtx = mem.context(district(), text)
-    const extra: Record<string, unknown> = {}
+    const extra: Record<string, unknown> = { ...(prefs().options?.[effortKey(c)] ?? {}) }
     const lv = prefs().effort?.[effortKey(c)]
     const ev = lv ? levelValue(mi?.effort, lv) : undefined
     if (ev && mi?.effortParam) extra[mi.effortParam] = ev
@@ -606,6 +618,134 @@ export function App(props: { cwd: string }) {
           `  historique            ≈ ${hist} tok (${history.length} messages)`,
         ].join("\n"))
       }
+      case "rate": {
+        const n = Number(arg.replace(",", "."))
+        if (!arg || !Number.isFinite(n) || n <= 0) return note(`Usage : /rate N — nombre de points Poe par dollar (sert à estimer les points). Actuel : ${rate() ?? "non saisi"}`, rate() ? "info" : "warn")
+        updatePrefs({ rate: n })
+        return flash(`Taux : ${n} points par dollar (saisi)`)
+      }
+      case "spent": {
+        const n = Number(arg.replace(",", "."))
+        if (!arg || !Number.isFinite(n) || n <= 0) return note("Usage : /spent N — dépense en points saisie à la main (comptée « saisi » dans /usage)", "error")
+        budget.addManual(sessionKey(), n)
+        return flash(`${n} points enregistrés (saisie manuelle)`)
+      }
+      case "limit": {
+        if (arg === "off") {
+          budget.clearEnvelope("limit")
+          return flash("Limite retirée")
+        }
+        const [nRaw, per] = arg.split(/\s+/)
+        const n = Number((nRaw ?? "").replace(/[\s_]/g, ""))
+        const ps = per ? parseDuration(per) : 0
+        if (!nRaw || !Number.isInteger(n) || n <= 0 || (per && ps == null)) return note("Usage : /limit N [5h|30m|1d|1w] — limite de tokens (bloque à 100 %) · /limit off", "error")
+        const scope = current()?.model ?? (current()?.kind === "agent" ? `cli:${current()!.provider}` : "*")
+        budget.setEnvelope({ kind: "limit", name: `limite ${scope}`, amountPoints: null, tokenLimit: n, periodS: ps ?? 0, scope: [scope] })
+        return flash(`Limite : ${n} tokens${ps ? " par " + per : ""} pour ${scope}`)
+      }
+      case "define-token": {
+        if (arg === "off") {
+          budget.clearEnvelope("temporary")
+          return flash("Budget retiré")
+        }
+        // /define-token 500 [pts|tok] [1d] [avertir]
+        const m = arg.match(/^(\d+(?:[.,]\d+)?)\s*(pts?|points?|tok|tokens?)?\s*(\d+\s*[mhdw])?\s*(avertir|warn)?$/i)
+        if (!m) return note("Usage : /define-token N [pts|tok] [période : 30m, 5h, 1d, 1w] [avertir] · /define-token off\nEx. /define-token 500 pts 1d · /define-token 200000 tok 5h avertir\nPar défaut : points, sans période, et l'envoi est bloqué à 100 % (« avertir » : seulement prévenir).", arg ? "error" : "info")
+        const n = Number(m[1].replace(",", "."))
+        const isTok = /^tok/i.test(m[2] ?? "")
+        const ps = m[3] ? parseDuration(m[3].replace(/\s+/g, "")) ?? 0 : 0
+        if (!isTok && !rate()) note("Sans taux points/$ (/rate), les points de chaque réponse sont « indisponibles » : le budget en points ne pourra pas avancer.", "warn")
+        budget.setEnvelope({ kind: "temporary", name: "budget", amountPoints: isTok ? null : n, tokenLimit: isTok ? n : null, periodS: ps, onExhaust: m[4] ? "warn" : "pause" })
+        return flash(`Budget : ${n} ${isTok ? "tokens" : "points"}${ps ? " par " + m[3] : ""}${m[4] ? " (avertit)" : " (bloque à 100 %)"}`)
+      }
+      case "options": {
+        const cur = current()
+        const mi = modelInfo(cur)
+        const params = (mi?.params ?? []).filter((x) => x.name !== mi?.effortParam)
+        if (!mi || !params.length) return note(`${cur?.model ?? "Ce modèle"} n'annonce aucun autre réglage dans le catalogue${mi?.effort ? " (l'effort : /effort)" : ""}.`, "warn")
+        const k = effortKey(cur)
+        const setOpt = (name: string, value: unknown) => {
+          const all = { ...(prefs().options ?? {}) }
+          const o = { ...(all[k] ?? {}) }
+          if (value === undefined) delete o[name]
+          else o[name] = value
+          all[k] = o
+          updatePrefs({ options: all })
+          closeOverlay()
+          flash(`${name} → ${value === undefined ? "défaut" : String(value)}`)
+        }
+        return openList(`Réglages de ${mi.id}`, () => params.map((x) => {
+          const v = prefs().options?.[k]?.[x.name]
+          return { title: x.name, detail: `${v === undefined ? "défaut" : String(v)} · ${x.kind}${x.choices ? " " + x.choices.join("/") : ""}${x.description ? " — " + x.description : ""}`, value: x.name }
+        }), (name) => {
+          const x = params.find((y) => y.name === name)!
+          if (x.kind === "enum" || x.kind === "boolean") {
+            const vals = x.kind === "enum" ? x.choices! : ["on", "off"]
+            return openList(name, () => [{ title: "défaut du modèle", value: "\u0000" }, ...vals.map((v) => ({ title: v, value: v }))],
+                            (v) => setOpt(name, v === "\u0000" ? undefined : x.kind === "boolean" ? v === "on" : v))
+          }
+          later({ type: "text", title: `${name} (${x.kind})`, note: x.description, initial: String(prefs().options?.[k]?.[name] ?? ""), onSubmit: (raw) => {
+            if (!raw) return setOpt(name, undefined)
+            try {
+              setOpt(name, coerce(x, raw))
+            } catch (e) {
+              flash(`Valeur invalide : ${(e as Error).message}`)
+            }
+          } })
+        })
+      }
+      case "settings": {
+        const entries = (): ListEntry[] => [
+          { title: "Thème", detail: `${themeName} · icônes ${iconSet}`, value: "/themes" },
+          { title: "Langue", detail: getLang(), value: "/language" },
+          { title: "Mode", detail: mode(), value: "/mode" },
+          { title: "Réflexion du modèle", detail: prefs().showThinking ? "affichée" : "résumée", value: "/thinking" },
+          { title: "Barre latérale", detail: prefs().sidebar ? "affichée" : "masquée", value: "/sidebar" },
+          { title: "Modèle", detail: currentLabel(), value: "/models" },
+          { title: "Effort", detail: prefs().effort?.[effortKey(current())] ?? "défaut", value: "/effort" },
+          { title: "Réglages du modèle", detail: `${Object.keys(prefs().options?.[effortKey(current())] ?? {}).length} modifié(s)`, value: "/options" },
+          { title: "Taux points/$", detail: rate() ? String(rate()) : "non saisi", value: "/rate" },
+          { title: "Clés d'API", detail: "connexions", value: "/connect" },
+          { title: "Chemins des agents", detail: Object.keys(st().agentPaths).join(", ") || "détection automatique", value: "/detect" },
+        ]
+        return openList("Réglages", entries, (cmd) => { closeOverlay(); setTimeout(() => runCommand(cmd), 0) })
+      }
+      case "update": {
+        flash("Lecture des versions…")
+        const latest = async (pkg: string) => {
+          const r = await runCmd(["npm", "view", pkg, "version"], { timeoutMs: 15_000 })
+          return r.code === 0 ? r.out.trim() : "?"
+        }
+        const d = detected()
+        const ver = (id: string) => d.find((x) => x.id === id)?.version ?? "non installé"
+        // OpenCode s'installe ici par son propre installateur : le paquet npm « opencode-ai » ne suit pas la même version
+        const [cc, cx, gm] = await Promise.all(["@anthropic-ai/claude-code", "@openai/codex", "@google/gemini-cli"].map(latest))
+        return note([
+          `Eclipse     ${VERSION} · ${VERSION_INFO()}`,
+          `Bun         ${Bun.version}`,
+          `Claude Code ${ver("claude")}   (dernière publiée : ${cc})`,
+          `Codex CLI   ${ver("codex")}   (dernière : ${cx})`,
+          `OpenCode    ${ver("opencode")}   (dernière : vérifiable avec « opencode upgrade », son propre installateur)`,
+          `Gemini CLI  ${ver("gemini")}   (dernière : ${gm})`,
+          "Mise à jour d'un agent : sa propre commande (ex. claude update, npm install -g @openai/codex). Eclipse ne met rien à jour sans vous.",
+        ].join("\n"))
+      }
+      case "restart": {
+        mem.close()
+        budget.close()
+        await renderer.destroy()
+        const child = Bun.spawn(process.argv, { stdio: ["inherit", "inherit", "inherit"], cwd: process.cwd(), env: process.env })
+        process.exit(await child.exited)
+      }
+      case "timeline": {
+        const users = items.map((x, i) => ({ x, i })).filter(({ x }) => x.role === "user")
+        if (!users.length) return note("Aucun message dans cette discussion.", "warn")
+        return openList("Aller à un message", () => users.map(({ x, i }, n) => ({ title: `${n + 1}. ${x.text.split("\n")[0].slice(0, 26)}`, detail: x.text.replace(/\s+/g, " ").slice(26, 90), value: String(i) })),
+                        (v) => { closeOverlay(); setTimeout(() => threadScroll?.scrollChildIntoView(`msg-${v}`, { align: "start" }), 0) })
+      }
+      case "sidebar":
+        updatePrefs({ sidebar: !prefs().sidebar })
+        return flash(prefs().sidebar ? (dims().width >= 110 ? "Barre latérale affichée" : "Barre latérale activée (visible à partir de 110 colonnes)") : "Barre latérale masquée")
       case "highlights":
         return setItems(items.length, { role: "assistant", text: HIGHLIGHTS })
       case "help":
@@ -709,13 +849,35 @@ export function App(props: { cwd: string }) {
     </box>
   )
 
+  const Sidebar = () => {
+    const its = () => mem.items(district()).slice(0, 5)
+    const s = () => (conv ? budget.totals(0, { session: sessionKey() }) : null)
+    const Head = (p: { t: string; c?: string }) => <text fg={p.c ?? C.accent} marginTop={1}><b>{p.t}</b></text>
+    return (
+      <box flexDirection="column" width={36} paddingX={1} border={["left"]} borderColor={C.panelBorder}>
+        <Head t="Session" c={C.recent} />
+        <text fg={C.text}>{(title() || "nouvelle discussion").slice(0, 32)}</text>
+        <text fg={C.muted}>{`${items.filter((x) => x.role === "user").length} message(s) · ${mode()}`}</text>
+        <Head t="Modèle" c={C.api} />
+        <text fg={C.text}>{currentLabel().slice(0, 64)}</text>
+        <Head t="Consommation" />
+        <text fg={C.muted}>{s()?.requests ? `${s()!.requests} rép. · ↓${s()!.tokensIn.measured + s()!.tokensIn.estimated} ↑${s()!.tokensOut.measured + s()!.tokensOut.estimated}${s()!.usd ? ` · ≈ $${s()!.usd.toFixed(4)}` : ""}` : "rien encore · /usage"}</text>
+        <Head t={`Mémoire (${mem.items(district()).length})`} c={C.detected} />
+        <For each={its()}>{(x) => <text fg={C.muted}>{`· ${x.content.slice(0, 31)}`}</text>}</For>
+        <Show when={!its().length}><text fg={C.dim}>vide · « retiens que … »</text></Show>
+        <Head t="Agents" c={C.detected} />
+        <For each={detected().filter((d) => d.installed)}>{(d) => <text fg={C.muted}>{`${I.ok} ${d.label}`}</text>}</For>
+      </box>
+    )
+  }
+
   const Thread = () => (
     <box flexDirection="column" flexGrow={1} paddingX={2} paddingTop={1}>
       <text fg={C.text} height={1}><b>{(title() || items.find((i) => i.role === "user")?.text || "").split("\n")[0].slice(0, dims().width - 10)}</b></text>
-      <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" marginTop={1}>
+      <scrollbox ref={(r: any) => (threadScroll = r)} flexGrow={1} stickyScroll stickyStart="bottom" marginTop={1}>
         <For each={items}>
-          {(it) => (
-            <box flexDirection="column" marginBottom={1}>
+          {(it, i) => (
+            <box id={`msg-${i()}`} flexDirection="column" marginBottom={1}>
               <Show when={it.role === "user"}>
                 <box border={["left"]} borderStyle="heavy" borderColor={it.aside ? C.dim : C.userBar} paddingX={2} paddingY={1} backgroundColor={C.panel}>
                   <text fg={C.text}>{(it.aside ? "/btw  " : "") + it.text}</text>
@@ -759,7 +921,10 @@ export function App(props: { cwd: string }) {
               <box width={Math.min(80, dims().width - 4)} marginTop={2}><PromptBox /></box>
             </box>
           }>
-            <Thread />
+            <box flexDirection="row" flexGrow={1}>
+              <box flexDirection="column" flexGrow={1}><Thread /></box>
+              <Show when={prefs().sidebar && dims().width >= 110}><Sidebar /></Show>
+            </box>
           </Show>
           <Footer />
           <Show when={(() => { const o = overlay(); return o?.type === "models" ? o : null })()}>
@@ -770,6 +935,9 @@ export function App(props: { cwd: string }) {
           </Show>
           <Show when={(() => { const o = overlay(); return o?.type === "list" ? o : null })()}>
             {(o) => <ListPicker title={o().title} entries={o().entries} onPick={o().onPick} onClose={closeOverlay} hint={o().hint} width={() => dims().width} height={() => dims().height} />}
+          </Show>
+          <Show when={(() => { const o = overlay(); return o?.type === "text" ? o : null })()}>
+            {(o) => <TextPrompt title={o().title} note={o().note} initial={o().initial} width={() => dims().width} onCancel={closeOverlay} onSubmit={(v) => { closeOverlay(); o().onSubmit(v) }} />}
           </Show>
           <Show when={overlay()?.type === "usage"}>
             <UsageScreen budget={budget} session={conv ? sessionKey() : null} rate={rate()} onClose={closeOverlay} width={() => dims().width} height={() => dims().height}
