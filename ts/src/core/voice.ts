@@ -4,7 +4,7 @@
  * Claude Code n'a pas d'appel vocal utilisable depuis un autre programme (son /voice est une dictée dans sa propre
  * fenêtre, via un service interne d'Anthropic). Eclipse fait donc lui-même, en local et gratuitement :
  *  - l'écoute : micro lu en flux (`arecord`, 16 kHz mono), détection de la parole et du silence de fin (énergie) ;
- *  - la transcription : whisper.cpp (modèle small, français) ;
+ *  - la transcription : whisper.cpp (modèle base : 2,7 s pour une phrase de 3 s sur ce PC ; small si seul présent) ;
  *  - la voix : piper (voix française fr_FR-siwis), lue avec `aplay` ; repli : espeak-ng (plus robotique).
  * Rien ne part sur Internet pour la voix ; seul le texte transcrit est envoyé au modèle ou à l'agent, comme une saisie.
  */
@@ -15,7 +15,7 @@ import { dataDir } from "./paths"
 import { killGroup, runCmd } from "./proc"
 
 export function voiceDir(): string {
-  return join(dataDir(), "voice")
+  return process.env.ECLIPSE_VOICE_DIR ?? join(dataDir(), "voice")
 }
 
 export interface VoiceSetup {
@@ -34,12 +34,13 @@ export function setup(): VoiceSetup {
   const has = (p: string) => (existsSync(p) ? p : undefined)
   const s: VoiceSetup = {
     whisper: has(join(v, "src/whisper.cpp/build/bin/whisper-cli")),
-    model: has(join(v, "models/ggml-small-q5_1.bin")),
+    model: has(join(v, "models/ggml-base-q5_1.bin")) ?? has(join(v, "models/ggml-small-q5_1.bin")),
     piper: has(join(v, "piper/piper")),
     voice: has(join(v, "voices/fr_FR-siwis-medium.onnx")),
     espeak: Bun.which("espeak-ng") ?? undefined,
-    record: Bun.which("arecord") ?? undefined,
-    play: Bun.which("aplay") ?? undefined,
+    // ECLIPSE_VOICE_RECORD / ECLIPSE_VOICE_PLAY : remplacent l'enregistreur et le lecteur (tests sans micro ni haut-parleurs)
+    record: process.env.ECLIPSE_VOICE_RECORD ?? Bun.which("arecord") ?? undefined,
+    play: process.env.ECLIPSE_VOICE_PLAY ?? Bun.which("aplay") ?? undefined,
     missing: [],
   }
   if (!s.record) s.missing.push("arecord (enregistrement du micro, paquet alsa-utils)")
@@ -302,8 +303,8 @@ export async function install(progress: (step: string) => void): Promise<{ ok: b
       await step("configuration de whisper.cpp", [cm, "-S", join(v, "src/whisper.cpp"), "-B", join(v, "src/whisper.cpp/build"), "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF", "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_SDL2=OFF"])
       await step("compilation de whisper.cpp (quelques minutes)", [cm, "--build", join(v, "src/whisper.cpp/build"), "-j8", "--target", "whisper-cli"])
     }
-    if (!existsSync(join(v, "models/ggml-small-q5_1.bin")))
-      await step("modèle de transcription (190 Mo)", ["curl", "-fsSL", "-o", join(v, "models/ggml-small-q5_1.bin"), "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin"])
+    if (!existsSync(join(v, "models/ggml-base-q5_1.bin")))
+      await step("modèle de transcription (60 Mo)", ["curl", "-fsSL", "-o", join(v, "models/ggml-base-q5_1.bin"), "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin"])
     if (!existsSync(join(v, "piper/piper"))) {
       await step("piper (voix)", ["curl", "-fsSL", "-o", join(v, "dl/piper.tar.gz"), "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz"])
       await step("piper (extraction)", ["tar", "-xzf", join(v, "dl/piper.tar.gz"), "-C", v])

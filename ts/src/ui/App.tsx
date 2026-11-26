@@ -24,6 +24,7 @@ import { Permissions, PERM_LABEL, type Decision, type PermMode, type Request } f
 import { openAiTools, READ_ONLY_TOOLS, runTool, summarize, type Todo, type ToolEnv } from "../core/tools"
 import { Snapshots } from "../core/snapshots"
 import { verifyPassword } from "../core/auth"
+import * as V from "../core/voice"
 import { isProtected, listProjects, needsProject, openProject, projectsRoot, PROTECT_RULE, slug } from "../core/protect"
 import { available as sandboxAvailable } from "../core/sandbox"
 import { McpManager } from "../core/mcp"
@@ -180,7 +181,66 @@ export function App(props: { cwd: string }) {
   const [cgOn, setCgOn] = createSignal(false)
   const [cgPhase, setCgPhase] = createSignal("")
   const [cgTab, setCgTab] = createSignal("ensemble")
-  let beforeCg: number | null = null // discussion en cours avant d'entrer dans /cg, retrouvée à la sortie
+  let beforeCg: number | null = null
+  // appel vocal (/voice) : écoute, transcription locale, réponse lue à voix haute, puis réécoute
+  const [voiceOn, setVoiceOn] = createSignal(false)
+  const [voiceState, setVoiceState] = createSignal<"écoute" | "transcription" | "réponse" | "lecture">("écoute")
+  const [voiceLevel, setVoiceLevel] = createSignal(0)
+  let voiceListener: { stop: () => void; pause: (on: boolean) => void } | null = null
+  let stopSpeech: (() => void) | null = null
+
+  function hangUp(msg = "Appel vocal terminé.") {
+    voiceListener?.stop()
+    voiceListener = null
+    stopSpeech?.()
+    stopSpeech = null
+    setVoiceOn(false)
+    note(msg)
+  }
+
+  async function onUtterance(pcm: Int16Array, s: V.VoiceSetup) {
+    if (!voiceOn() || voiceState() !== "écoute") return
+    voiceListener?.pause(true)
+    setVoiceState("transcription")
+    const r = await V.transcribe(s, pcm, getLang())
+    if (!voiceOn()) return
+    if (!r.ok || !r.text || r.text.length < 2) {
+      if (!r.ok) note(`Voix : ${r.reason}`, "warn")
+      setVoiceState("écoute")
+      return voiceListener?.pause(false)
+    }
+    if (/^(raccroche|fin de l'appel|termine l'appel|au revoir)\.?$/i.test(r.text.trim())) return hangUp()
+    setVoiceState("réponse")
+    const before = items.length
+    await send(r.text)
+    if (!voiceOn()) return
+    // réponse lue à voix haute : dernière réponse de ce tour
+    const answer = items.slice(before).filter((x) => x.role === "assistant" && x.text && x.level !== "error").map((x) => x.text).join("\n\n")
+    const speech = V.speakable(answer || "Je n'ai pas de réponse à lire. Regardez l'écran.")
+    setVoiceState("lecture")
+    stopSpeech = V.speak(s, speech, () => {
+      stopSpeech = null
+      if (!voiceOn()) return
+      setVoiceState("écoute")
+      voiceListener?.pause(false)
+    })
+  }
+
+  async function startVoice() {
+    const s = V.setup()
+    if (s.missing.length) return note("Voix indisponible :\n" + s.missing.map((m) => "  - " + m).join("\n"), "warn")
+    if (busy()) return flash(t("Une réponse est en cours (échap pour interrompre)."))
+    setVoiceOn(true)
+    setVoiceState("écoute")
+    voiceListener = V.listen(s, {
+      onUtterance: (pcm) => { onUtterance(pcm, s) },
+      onLevel: (l) => setVoiceLevel(l),
+      onError: (m) => { if (voiceOn()) hangUp(`Appel vocal arrêté : ${m}`) },
+    })
+    const who = current()?.kind === "agent" ? agentName(current()!.provider) : cgOn() ? "Claude Code et Codex" : current()?.model ?? "le modèle"
+    note(`Appel vocal avec ${who} : parlez, Eclipse transcrit (whisper, sur ce PC), envoie, puis lit la réponse (piper). ` +
+         "Échap coupe la voix ou interrompt la réponse · dites « raccroche » ou tapez /voice pour terminer.")
+  } // discussion en cours avant d'entrer dans /cg, retrouvée à la sortie
   const emptyZone = (label: string): Zone => ({ status: "en attente", entries: [], input: 0, output: 0, label, subs: [] })
   const [cgModels, setCgModels] = createSignal<Partial<Record<CgAgent, AgentModel[]>>>({})
   /** Ajoute une ligne dans la zone d'un agent, ou dans celle de son sous-agent (parent). */
@@ -1059,6 +1119,20 @@ export function App(props: { cwd: string }) {
           value: String(x.id),
         })), (v) => { closeOverlay(); loadConversation(Number(v)) })
       }
+      case "voice": {
+        if (arg === "installer" || arg === "install") {
+          setBusy(true)
+          const r = await V.install((step) => setActivity(`installation de la voix : ${step}`))
+          setBusy(false)
+          return note(r.ok ? r.message + " Tapez /voice pour appeler." : `Installation de la voix impossible : ${r.message}`, r.ok ? "info" : "error")
+        }
+        if (arg === "état" || arg === "etat" || arg === "status") {
+          const s = V.setup()
+          return note(`Voix : transcription ${s.whisper && s.model ? "whisper.cpp (" + s.model.split("/").pop() + ")" : "absente"} · voix ${s.piper && s.voice ? "piper (fr_FR-siwis)" : s.espeak ? "espeak-ng (robotique)" : "absente"} · micro ${s.record ? "arecord" : "absent"}` +
+                      (s.missing.length ? "\nManque : " + s.missing.join(" ; ") : ""))
+        }
+        return voiceOn() ? hangUp() : startVoice()
+      }
       case "projet": {
         if (arg) return enterProject(arg)
         return chooseProjectThen("", () => {})
@@ -1635,6 +1709,7 @@ export function App(props: { cwd: string }) {
           ...COMMANDS.filter((x) => !x.ready).map((x) => ({ title: "/" + x.name, detail: `${x.desc} — étape « ${x.step} »`, right: x.origin, dim: true })),
         ], (v) => { closeOverlay(); prompt?.setText("/" + v + " "); setDraft("/" + v + " ") }, "↑↓ · entrée : écrire la commande · tapez pour filtrer · échap")
       case "exit":
+        if (voiceOn()) hangUp()
         await mcp.close()
         mem.close()
         budget.close()
@@ -1747,6 +1822,8 @@ export function App(props: { cwd: string }) {
         setExitArmed(Date.now())
         flash(t("Ctrl+C encore une fois pour quitter."))
       }
+    } else if (k.name === "escape" && stopSpeech) {
+      stopSpeech() // coupe la lecture ; l'écoute reprend
     } else if (k.name === "escape" && abort) {
       abort.abort()
       const g = goal()
@@ -1792,6 +1869,9 @@ export function App(props: { cwd: string }) {
           <Show when={attachments().length}><text fg={C.recent}>{`  · ${attachments().length} pièce(s) jointe(s)`}</text></Show>
           <Show when={goal()?.active}><text fg={C.detected}>{"  · objectif en cours"}</text></Show>
         </box>
+        <Show when={voiceOn()}>
+          <text fg={C.recent} height={1}>{`${I.agent} Appel vocal · ${voiceState() === "écoute" ? "écoute " + "▁▂▃▄▅▆▇█".slice(0, Math.max(1, Math.round(voiceLevel() * 8))) + " parlez" : voiceState() === "transcription" ? spinner() + " transcription" : voiceState() === "réponse" ? spinner() + " réponse en cours" : spinner() + " lecture (échap pour couper)"} · « raccroche » ou /voice pour terminer`}</text>
+        </Show>
         <Show when={busy()}>
           <text fg={C.warn} height={1}>{`${spinner()} ${(activity() || t("en cours…")).slice(0, Math.max(10, dims().width - 50))} · ${elapsed()} · échap pour interrompre`}</text>
         </Show>
