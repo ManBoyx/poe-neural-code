@@ -182,6 +182,7 @@ export function App(props: { cwd: string }) {
   const [cgPhase, setCgPhase] = createSignal("")
   const [cgTab, setCgTab] = createSignal("ensemble")
   let beforeCg: number | null = null
+  const warnedSnap = new Set<string>()
   // appel vocal (/voice) : écoute, transcription locale, réponse lue à voix haute, puis réécoute
   const [voiceOn, setVoiceOn] = createSignal(false)
   const [voiceState, setVoiceState] = createSignal<"écoute" | "transcription" | "réponse" | "lecture">("écoute")
@@ -227,7 +228,7 @@ export function App(props: { cwd: string }) {
   }
 
   async function startVoice() {
-    const s = V.setup()
+    const s = V.setup(prefs().voiceModel)
     if (s.missing.length) return note("Voix indisponible :\n" + s.missing.map((m) => "  - " + m).join("\n"), "warn")
     if (busy()) return flash(t("Une réponse est en cours (échap pour interrompre)."))
     setVoiceOn(true)
@@ -673,9 +674,14 @@ export function App(props: { cwd: string }) {
     batch(() => {
       for (const a of ["claude", "codex"] as CgAgent[]) setZones(a, { status: cfgs[a] ? "en attente" : "absent", entries: [], input: 0, output: 0, label: zoneLabel(a), subs: [] })
     })
+    // instantanés seulement si un agent peut écrire ; avertissement donné une seule fois par dossier
+    const canWrite = Object.values(cfgs).some((x: any) => x.power !== "lecture")
     const snaps = new Snapshots(cwd())
-    const sup = await snaps.unsupported()
-    if (sup) note(`Instantanés indisponibles (${sup}) : /undo ne pourra pas annuler ce que feront les agents.`, "warn")
+    const sup = canWrite ? await snaps.unsupported() : "lecture seule"
+    if (canWrite && sup && !warnedSnap.has(cwd())) {
+      warnedSnap.add(cwd())
+      note(`Instantanés indisponibles (${sup}) : /undo ne pourra pas annuler ce que feront les agents. Ouvrez plutôt un projet : /projet NOM.`, "warn")
+    }
     const t0 = Date.now()
     const memCtx = mem.context(district(), text)
     const r = await cgTurn({
@@ -762,7 +768,7 @@ export function App(props: { cwd: string }) {
                            skills, mcp, helpers, helper: consultHelper }
     const saved = perms.mode
     if (opts.readOnly || mode() === "plan") perms.mode = "lecture"
-    const snaps = useTools && !opts.aside ? new Snapshots(cwd()) : null
+    const snaps = useTools && !opts.aside && !(opts.readOnly || mode() === "plan" || perms.mode === "lecture") ? new Snapshots(cwd()) : null
     const before = snaps ? await snaps.snapshot(`avant : ${text.slice(0, 60)}`) : null
     let touched = false
     let finalText = ""
@@ -1126,8 +1132,12 @@ export function App(props: { cwd: string }) {
           setBusy(false)
           return note(r.ok ? r.message + " Tapez /voice pour appeler." : `Installation de la voix impossible : ${r.message}`, r.ok ? "info" : "error")
         }
+        if (arg === "précis" || arg === "precis" || arg === "rapide") {
+          updatePrefs({ voiceModel: arg === "rapide" ? "base" : "small" })
+          return note(arg === "rapide" ? "Transcription rapide (modèle base, environ 3 s par phrase)." : "Transcription précise (modèle small, environ 10 s par phrase sur ce PC).")
+        }
         if (arg === "état" || arg === "etat" || arg === "status") {
-          const s = V.setup()
+          const s = V.setup(prefs().voiceModel)
           return note(`Voix : transcription ${s.whisper && s.model ? "whisper.cpp (" + s.model.split("/").pop() + ")" : "absente"} · voix ${s.piper && s.voice ? "piper (fr_FR-siwis)" : s.espeak ? "espeak-ng (robotique)" : "absente"} · micro ${s.record ? "arecord" : "absent"}` +
                       (s.missing.length ? "\nManque : " + s.missing.join(" ; ") : ""))
         }
@@ -1717,6 +1727,16 @@ export function App(props: { cwd: string }) {
     }
   }
 
+  /** « !commande » : commande shell lancée dans le dossier, avec la même autorisation que pour un modèle. */
+  async function runShell(cmd: string) {
+    if (!cmd) return
+    const ti = items.length
+    setItems(ti, { role: "tool", tool: "commande", text: cmd, running: true })
+    const r = await runTool({ roots: [cwd(), ...extraDirs()], perms, memory: mem, districtId: district(), todos: todoList, sandbox: sandboxOn() },
+                            { id: "shell", name: "run_command", args: JSON.stringify({ command: cmd }) })
+    setItems(ti, produce((it) => { it.running = false; it.ok = r.ok; it.output = r.output }))
+  }
+
   function submit() {
     const text = (prompt?.plainText ?? "").trim()
     if (!text) return
@@ -1730,6 +1750,7 @@ export function App(props: { cwd: string }) {
     const chosen = sug[Math.min(slashSel(), sug.length - 1)] // relevé AVANT de vider la saisie (qui remet la sélection à zéro)
     prompt?.clear()
     setDraft("")
+    if (text.startsWith("!") && text.length > 1) return runShell(text.slice(1).trim())
     if (text.startsWith("/")) {
       const exact = resolve(text.slice(1).split(/\s/)[0])
       // « /pe » + Entrée : la commande sélectionnée dans la liste (↑↓), comme dans OpenCode
@@ -1948,7 +1969,7 @@ export function App(props: { cwd: string }) {
               <Show when={it.role === "tool"}>
                 <box flexDirection="column" paddingX={3} border={["left"]} borderColor={it.running ? C.warn : it.ok ? C.ok : C.error} marginLeft={2}>
                   <text fg={C.muted}>{`${it.running ? spinner() : it.ok ? I.ok : I.error} ${it.tool}  ${(it.text ?? "").slice(0, dims().width - 30)}`}</text>
-                  <Show when={showDetails() && !it.running && (it.diff || (!it.ok && it.output) || (it.tool === "run_command" && it.output))}>
+                  <Show when={showDetails() && !it.running && (it.diff || (!it.ok && it.output) || ((it.tool === "run_command" || it.tool === "commande") && it.output))}>
                     <text fg={it.ok ? C.dim : C.error}>{(it.diff ?? it.output ?? "").split("\n").slice(0, 12).join("\n") + ((it.diff ?? it.output ?? "").split("\n").length > 12 ? `\n… ${(it.diff ?? it.output ?? "").split("\n").length - 12} lignes de plus` : "")}</text>
                   </Show>
                 </box>
