@@ -69,6 +69,10 @@ type Overlay =
   | { type: "cgmenu" }
   | { type: "sub"; agent: CgAgent; id: string }
 
+/** Commandes refusées pendant une réponse : elles enverraient un message ou changeraient de discussion. */
+const BUSY_BLOCKED = new Set(["retry", "edit", "btw", "init", "review", "goal", "compact", "verify", "new", "sessions", "open", "cd", "fork", "undo", "redo", "cg", "restart"])
+const SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
 const LOGO = [
   "█▀▀▀ █▀▀█ █    ▀█▀ █▀▀█ █▀▀▀ █▀▀▀",
   "█▀▀▀ █    █     █  █▀▀▀ ▀▀▀█ █▀▀▀",
@@ -95,7 +99,7 @@ function systemPrompt(mode: "build" | "plan", lang: Lang, cwd: string, tools = f
   return [
     fr ? "Tu es Eclipse, un assistant de programmation dans un terminal." : "You are Eclipse, a programming assistant in a terminal.",
     fr ? `Dossier de travail : ${cwd}.` : `Working folder: ${cwd}.`,
-    fr ? "Réponds en français, clairement, en Markdown." : "Answer in English, clearly, in Markdown.",
+    fr ? "Réponds en français, clairement, en Markdown, sans aucune emoji." : "Answer in English, clearly, in Markdown, without any emoji.",
     tools
       ? (fr ? `Tu as des outils pour lire, chercher, modifier les fichiers du projet et lancer des commandes. Lis avant de modifier ; préfère edit_file pour une petite modification. Permissions actuelles : ${perm}. Si une action est refusée, ne la contourne pas : explique et propose.`
             : `You have tools to read, search and change project files and run commands. Read before editing; prefer edit_file for small changes. Current permissions: ${perm}. If an action is refused, do not work around it: explain and propose.`)
@@ -150,6 +154,26 @@ export function App(props: { cwd: string }) {
   const agentSessions: Record<string, string> = {} // agent -> identifiant de sa session (reprise d'un message à l'autre)
   const noTools = new Set<string>()
   const [usageTick, setUsageTick] = createSignal(0)
+  const [spin, setSpin] = createSignal(0)
+  const [activity, setActivity] = createSignal("")
+  const [busySince, setBusySince] = createSignal(0)
+  let spinTimer: ReturnType<typeof setInterval> | null = null
+  createEffect(on(busy, (b) => {
+    if (b && !spinTimer) {
+      setBusySince(Date.now())
+      spinTimer = setInterval(() => setSpin((x) => x + 1), 100)
+    } else if (!b && spinTimer) {
+      clearInterval(spinTimer)
+      spinTimer = null
+      setActivity("")
+    }
+  }))
+  const spinner = () => SPIN[spin() % SPIN.length]
+  const elapsed = () => {
+    spin()
+    const s = Math.floor((Date.now() - busySince()) / 1000)
+    return s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${String(s % 60).padStart(2, "0")}`
+  }
   // /cg : discussion commune Claude Code et Codex
   const [cgOn, setCgOn] = createSignal(false)
   const [cgPhase, setCgPhase] = createSignal("")
@@ -430,7 +454,7 @@ export function App(props: { cwd: string }) {
     if (blocked) return note(`Envoi bloqué : ${blocked}.`, "error")
     if (AGENT_SUPPORT[id] === "non vérifié") note(`${d.label} : pilotage par sa sortie texte, pas encore vérifié par un vrai essai.`, "warn")
     const memCtx = mem.context(district(), text)
-    const system = [getLang() === "fr" ? "Tu travailles dans Eclipse, qui affiche ta réponse à l'utilisateur. Réponds en français." : "You are running inside Eclipse, which shows your answer to the user.",
+    const system = [getLang() === "fr" ? "Tu travailles dans Eclipse, qui affiche ta réponse à l'utilisateur. Réponds en français, sans aucune emoji." : "You are running inside Eclipse, which shows your answer to the user. No emoji.",
                     memCtx.text].filter(Boolean).join("\n\n")
     const uc = buildUserContent(text)
     for (const n of uc.notes) note(n, "info")
@@ -448,7 +472,9 @@ export function App(props: { cwd: string }) {
     const t0 = Date.now()
     for await (const e of runAgent({ agent: id, binary: d.path!, cwd: cwd(), prompt: typeof uc.content === "string" ? uc.content : text, model: a.model, effort: a.effort,
                                      power, resume: opts.aside ? undefined : agentSessions[id], system, signal, sandbox: sandboxOn(), idleMs: 180_000 })) {
-      if (e.type === "session") { if (!opts.aside) agentSessions[id] = e.id }
+      if (e.type === "session") { if (!opts.aside) agentSessions[id] = e.id; setActivity(`${d.label} réfléchit`) }
+      else if (e.type === "tool" && !e.done) setActivity(`${d.label} · ${e.name} ${e.summary.slice(0, 40)}`)
+      else if (e.type === "subagent" && !e.done) setActivity(`${d.label} · sous-agent : ${e.label.slice(0, 40)}`)
       else if (e.type === "text") {
         if (items[cur]?.role !== "assistant") {
           cur = items.length
@@ -542,7 +568,7 @@ export function App(props: { cwd: string }) {
     note(`Discussion /cg ouverte : ${cgSummary()}\n/cg pour le menu des réglages · /cg sous-agents · /cg off`)
   }
   const cgSummary = () => {
-    const l = prefs().cgLead ?? "claude"
+    const l = prefs().cgLead ?? "codex"
     const o = l === "claude" ? "codex" : "claude"
     const m = prefs().cgMode ?? "auto"
     return `${CG_LABEL[l]} coordonne, ${m === "seul" ? "fait le travail lui-même" : m === "delegue" ? `délègue à ${CG_LABEL[o]}` : "choisit qui écrit"}` +
@@ -571,11 +597,11 @@ export function App(props: { cwd: string }) {
     const t0 = Date.now()
     const memCtx = mem.context(district(), text)
     const r = await cgTurn({
-      text, cwd: cwd(), agents: cfgs, lead: prefs().cgLead ?? "claude", sessions: cgSessions, memory: memCtx.text, sandbox: sandboxOn(), signal: abort.signal,
+      text, cwd: cwd(), agents: cfgs, lead: prefs().cgLead ?? "codex", sessions: cgSessions, memory: memCtx.text, sandbox: sandboxOn(), signal: abort.signal,
       mode: prefs().cgMode ?? "auto", review: prefs().cgReview !== false, subagents: prefs().cgSubagents !== false,
       snapshot: sup ? undefined : (l) => snaps.snapshot(l), diff: sup ? undefined : (a, b) => snaps.diff(a, b),
     }, {
-      phase: setCgPhase,
+      phase: (ph) => { setCgPhase(ph); setActivity(ph) },
       status: (a, s) => setZones(a, "status", s),
       event: (a, e) => {
         if (e.type === "text") {
@@ -669,7 +695,9 @@ export function App(props: { cwd: string }) {
         setItems(idx, { role: "assistant", text: "", streaming: true, aside: opts.aside, memory: step === 0 ? memLine : undefined })
         let calls: { id: string; name: string; args: string }[] = []
         let failed = false
+        setActivity(`${c.model} réfléchit`)
         for await (const e of streamChat(p, c.model!, msgs, { signal, extra, tools: useTools ? openAiTools(env) : undefined })) {
+          if (e.type === "text") setActivity(`${c.model} écrit`)
           if (e.type === "text") setItems(idx, "text", (x) => x + e.text)
           else if (e.type === "thinking") setItems(idx, "thinking", (x) => (x ?? "") + e.text)
           else if (e.type === "usage") {
@@ -708,6 +736,7 @@ export function App(props: { cwd: string }) {
             args = JSON.parse(call.args || "{}")
           } catch {}
           const ti = items.length
+          setActivity(`outil ${call.name} · ${summarize(call.name, args).slice(0, 50)}`)
           setItems(ti, { role: "tool", text: summarize(call.name, args), tool: call.name, running: true })
           const r = await runTool(env, call)
           if (!READ_ONLY_TOOLS.has(call.name) && r.ok) touched = true
@@ -1555,7 +1584,11 @@ export function App(props: { cwd: string }) {
   function submit() {
     const text = (prompt?.plainText ?? "").trim()
     if (!text) return
-    if (busy()) return flash(t("Une réponse est en cours (échap pour interrompre)."))
+    // pendant une réponse : les commandes qui n'envoient rien restent utilisables (/usage, /status, /help, /memory…)
+    if (busy()) {
+      const c0 = text.startsWith("/") ? resolve(text.slice(1).split(/\s/)[0]) ?? slashMatches()[Math.min(slashSel(), Math.max(0, slashMatches().length - 1))] : undefined
+      if (!c0 || BUSY_BLOCKED.has(c0.name)) return flash(t("Une réponse est en cours (échap pour interrompre)."))
+    }
     remember(text)
     const sug = slashMatches()
     const chosen = sug[Math.min(slashSel(), sug.length - 1)] // relevé AVANT de vider la saisie (qui remet la sélection à zéro)
@@ -1688,8 +1721,10 @@ export function App(props: { cwd: string }) {
           <Show when={permMode() !== "demander"}><text fg={permMode().startsWith("bypass") ? C.error : C.other}>{"  · " + permMode().toUpperCase()}</text></Show>
           <Show when={attachments().length}><text fg={C.recent}>{`  · ${attachments().length} pièce(s) jointe(s)`}</text></Show>
           <Show when={goal()?.active}><text fg={C.detected}>{"  · objectif en cours"}</text></Show>
-          <Show when={busy()}><text fg={C.warn}>{"   " + t("en cours… échap pour interrompre")}</text></Show>
         </box>
+        <Show when={busy()}>
+          <text fg={C.warn} height={1}>{`${spinner()} ${(activity() || t("en cours…")).slice(0, Math.max(10, dims().width - 50))} · ${elapsed()} · échap pour interrompre`}</text>
+        </Show>
       </box>
     </box>
   )
@@ -1736,7 +1771,7 @@ export function App(props: { cwd: string }) {
   const Thread = () => (
     <box flexDirection="column" flexGrow={1} paddingX={2} paddingTop={1}>
       <text fg={C.text} height={1} flexShrink={0}><b>{(title() || items.find((i) => i.role === "user")?.text || "").split("\n")[0].slice(0, dims().width - 10)}</b></text>
-      <Show when={cgOn()}><CgZones zones={zones} phase={cgPhase()} width={dims().width - (sidebarOn() && dims().width >= 110 ? 36 : 0)} height={dims().height}
+      <Show when={cgOn()}><CgZones zones={zones} phase={cgPhase()} tick={spinner()} width={dims().width - (sidebarOn() && dims().width >= 110 ? 36 : 0)} height={dims().height}
                                    onOpenSub={(a, id) => setOverlay({ type: "sub", agent: a, id })} /></Show>
       <scrollbox ref={(r: any) => (threadScroll = r)} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom" marginTop={1}>
         <For each={items}>
@@ -1753,7 +1788,8 @@ export function App(props: { cwd: string }) {
                   <Show when={it.thinking}>
                     <text fg={C.dim}>{prefs().showThinking ? `${I.think} ${t("Réflexion")} :\n${it.thinking}` : `${I.think} ${t("Réflexion")} · ${it.thinking!.length} caractères (/thinking pour l'afficher)`}</text>
                   </Show>
-                  <Show when={it.level === "error"} fallback={<markdown content={it.text || (it.streaming ? "…" : "")} syntaxStyle={md()} streaming={!!it.streaming} />}>
+                  <Show when={it.level === "error"} fallback={<Show when={it.text || !it.streaming} fallback={<text fg={C.dim}>{`${spinner()} ${activity() || "réflexion"}…`}</text>}>
+                    <markdown content={it.text} syntaxStyle={md()} streaming={!!it.streaming} /></Show>}>
                     <text fg={C.error}>{I.error + " " + it.text}</text>
                   </Show>
                   <Show when={it.meta}><text fg={C.dim} marginTop={1}>{it.meta}</text></Show>
@@ -1761,7 +1797,7 @@ export function App(props: { cwd: string }) {
               </Show>
               <Show when={it.role === "tool"}>
                 <box flexDirection="column" paddingX={3} border={["left"]} borderColor={it.running ? C.warn : it.ok ? C.ok : C.error} marginLeft={2}>
-                  <text fg={C.muted}>{`${it.running ? I.recent : it.ok ? I.ok : I.error} ${it.tool}  ${(it.text ?? "").slice(0, dims().width - 30)}${it.running ? "  …" : ""}`}</text>
+                  <text fg={C.muted}>{`${it.running ? spinner() : it.ok ? I.ok : I.error} ${it.tool}  ${(it.text ?? "").slice(0, dims().width - 30)}`}</text>
                   <Show when={showDetails() && !it.running && (it.diff || (!it.ok && it.output) || (it.tool === "run_command" && it.output))}>
                     <text fg={it.ok ? C.dim : C.error}>{(it.diff ?? it.output ?? "").split("\n").slice(0, 12).join("\n") + ((it.diff ?? it.output ?? "").split("\n").length > 12 ? `\n… ${(it.diff ?? it.output ?? "").split("\n").length - 12} lignes de plus` : "")}</text>
                   </Show>
@@ -1817,7 +1853,7 @@ export function App(props: { cwd: string }) {
           <Show when={overlay()?.type === "cgmenu"}>
             <CgMenu active={cgOn()} width={() => dims().width} height={() => dims().height} models={cgModels}
                     installed={(a) => !!detected().find((x) => x.id === a)?.installed}
-                    settings={() => ({ lead: prefs().cgLead ?? "claude", mode: prefs().cgMode ?? "auto", review: prefs().cgReview !== false, subagents: prefs().cgSubagents !== false,
+                    settings={() => ({ lead: prefs().cgLead ?? "codex", mode: prefs().cgMode ?? "auto", review: prefs().cgReview !== false, subagents: prefs().cgSubagents !== false,
                                        agents: { claude: prefs().agents?.claude ?? {}, codex: prefs().agents?.codex ?? {} } })}
                     update={(s) => updatePrefs({ ...(s.lead ? { cgLead: s.lead } : {}), ...(s.mode ? { cgMode: s.mode } : {}), ...(s.review !== undefined ? { cgReview: s.review } : {}), ...(s.subagents !== undefined ? { cgSubagents: s.subagents } : {}) })}
                     setAgent={(a, s) => updatePrefs({ agents: { ...(prefs().agents ?? {}), [a]: { ...(prefs().agents?.[a] ?? {}), ...s } } })}

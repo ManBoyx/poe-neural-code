@@ -74,7 +74,7 @@ export interface CgResult {
 
 const ROLE = (me: CgAgent, other: CgAgent | null) =>
   `Tu travailles dans Eclipse /cg${other ? ` avec ${CG_LABEL[other]}` : ""}. Eclipse coordonne les échanges : n'appelle jamais l'autre agent toi-même, ` +
-  "n'étends pas la demande de l'utilisateur, réponds en français."
+  "n'étends pas la demande de l'utilisateur, réponds en français, sans aucune emoji."
 
 /** Lit le JSON du plan même entouré de texte ou d'un bloc ```json. */
 export function parsePlan(text: string, agents: CgAgent[], lead: CgAgent): Plan | null {
@@ -92,6 +92,13 @@ export function parsePlan(text: string, agents: CgAgent[], lead: CgAgent): Plan 
   }
 }
 
+/** Agent nommé dans la demande (« dis à gpt… », « claude : … ») : c'est lui qui s'en occupe. */
+export function addressed(text: string): CgAgent | null {
+  const c = /\bclaude\b/i.test(text)
+  const g = /\b(gpt|codex|chatgpt|openai)\b/i.test(text)
+  return g && !c ? "codex" : c && !g ? "claude" : null
+}
+
 export function verdictOf(text: string): "approuvé" | "à revoir" | null {
   const m = text.match(/VERDICT\s*:\s*(APPROUV[ÉE]|[ÀA]\s*REVOIR)/i)
   if (!m) return null
@@ -103,7 +110,8 @@ export async function cgTurn(o: CgTurnOptions, cb: CgCallbacks): Promise<CgResul
   const present = (Object.keys(o.agents) as CgAgent[]).filter((a) => o.agents[a])
   const usage: CgResult["usage"] = {}
   let interrupted = false
-  const lead: CgAgent = present.includes(o.lead) ? o.lead : present[0]
+  const named0 = addressed(o.text)
+  const lead: CgAgent = named0 && present.includes(named0) ? named0 : present.includes(o.lead) ? o.lead : present[0]
   for (const a of ["claude", "codex"] as CgAgent[]) cb.status(a, present.includes(a) ? "en attente" : "absent")
 
   /** Un appel d'agent ; renvoie son texte final (les événements partent en direct vers l'écran). */
@@ -133,7 +141,9 @@ export async function cgTurn(o: CgTurnOptions, cb: CgCallbacks): Promise<CgResul
   if (!present.length) return { ...base, markdown: "Ni Claude Code ni Codex ne sont installés : /cg ne peut pas démarrer." }
   const other = (a: CgAgent): CgAgent | null => present.find((x) => x !== a) ?? null
 
-  const mode: CgMode = o.mode ?? "auto"
+  const named = addressed(o.text)
+  const forced = named && present.includes(named) ? named : null
+  const mode: CgMode = forced ? "seul" : o.mode ?? "auto"
   const wantReview = o.review !== false
   let plan: Plan | null
   if (mode === "seul") {
@@ -148,7 +158,8 @@ export async function cgTurn(o: CgTurnOptions, cb: CgCallbacks): Promise<CgResul
     '{"simple": true, "answer": "ta réponse complète en Markdown"}  si c\'est une question, une explication ou une demande sans modification de fichiers ;\n' +
     `{"simple": false, "writer": "${present.join('" ou "')}", "task": "consigne précise et complète pour l'agent qui modifie", "review": "ce que l'autre doit vérifier en priorité"}  sinon.\n` +
     (mode === "delegue" && other(lead) ? `Le travail sera fait par ${CG_LABEL[other(lead)!]} : écris-lui une consigne précise (writer = "${other(lead)}").`
-      : "Choisis l'agent qui écrit selon ses forces : Claude Code pour la conception, la refonte et le raisonnement sur tout le projet ; Codex pour l'implémentation ciblée, les scripts et les tests. Un seul agent écrit.")
+      : "Choisis l'agent qui écrit selon ses forces : Codex (GPT) pour les recherches (documentation, exploration du projet, comparaison de solutions) et le découpage du travail en sous-agents ; " +
+        "Claude Code pour l'écriture et la refonte du code, la conception et la relecture fine. Un seul agent écrit.")
   const p = await call(lead, planPrompt, "lecture", "coordonne", other(lead))
   if (interrupted) return { ...base, interrupted: true, markdown: "Échange interrompu." }
   if (p.failed && !p.text) return { ...base, markdown: `${CG_LABEL[lead]} n'a pas pu coordonner (voir sa zone).` }
@@ -184,6 +195,11 @@ export async function cgTurn(o: CgTurnOptions, cb: CgCallbacks): Promise<CgResul
     rounds++
     const after = (await o.snapshot?.(`cg après tour ${rounds}`)) ?? null
     const diff = before && after && o.diff ? await o.diff(before, after) : ""
+    if (o.snapshot && before && after && !diff.trim() && rounds === 1) {
+      // aucun fichier modifié : rien à relire, la réponse est rendue telle quelle (un appel économisé)
+      cb.phase(`${CG_LABEL[writer]} a répondu sans modifier de fichier`)
+      return { ...base, plan, rounds: 0, verdict: "sans relecture", markdown: report.text }
+    }
     cb.phase(`${CG_LABEL[reviewer]} relit (tour ${rounds}/${MAX_ROUNDS})`)
     const r = await call(reviewer, `Demande de l'utilisateur :\n${o.text}\n\n${CG_LABEL[writer]} a fait ce travail. Son rapport :\n${report.text}\n\n` +
       (diff ? `Changements réels dans le projet :\n\`\`\`diff\n${diff}\n\`\`\`\n\n` : "Aucun fichier modifié n'a été détecté.\n\n") +
