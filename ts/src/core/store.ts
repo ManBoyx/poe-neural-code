@@ -29,6 +29,9 @@ export interface Prefs {
   sidebar?: boolean
   sandbox?: boolean // défaut : active
   cgLead?: "claude" | "codex"
+  cgMode?: "auto" | "seul" | "delegue"
+  cgReview?: boolean
+  cgSubagents?: boolean
   system?: string // consignes personnelles (/system set)
   fusion?: string[] // assistants consultables : « fournisseur/modèle » ou « agent:id »
   fusionOn?: boolean

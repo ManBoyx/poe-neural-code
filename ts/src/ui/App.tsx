@@ -27,9 +27,10 @@ import { verifyPassword } from "../core/auth"
 import { available as sandboxAvailable } from "../core/sandbox"
 import { McpManager } from "../core/mcp"
 import { discoverPlugins, discoverSkills, loadPlugins, setTrust, skillCatalog, type PluginCommand, type PluginInfo, type Skill } from "../core/extensions"
-import { cgTurn, CG_LABEL, parsePlan, type CgAgent } from "../core/cg"
-import { CgZones, type Zone } from "./CgView"
-import { agentModels, AGENT_SUPPORT, POWER_LABEL, runAgent, type Power } from "../core/agents"
+import { cgTurn, CG_LABEL, parsePlan, type CgAgent, type CgMode } from "../core/cg"
+import { CgZones, SUB_COLORS, SubAgentView, type Zone, type ZoneEntry } from "./CgView"
+import { CgMenu } from "./CgMenu"
+import { type AgentModel, agentModels, AGENT_SUPPORT, POWER_LABEL, runAgent, type Power } from "../core/agents"
 import { coerce } from "../core/providers"
 import { VERSION_INFO } from "../core/version"
 import { Picker, type ProviderStatus } from "./Picker"
@@ -65,6 +66,8 @@ type Overlay =
   | { type: "usage" }
   | { type: "text"; title: string; note?: string; initial?: string; onSubmit: (v: string) => void }
   | { type: "perm"; req: Request; resolve: (d: Decision) => void }
+  | { type: "cgmenu" }
+  | { type: "sub"; agent: CgAgent; id: string }
 
 const LOGO = [
   "█▀▀▀ █▀▀█ █    ▀█▀ █▀▀█ █▀▀▀ █▀▀▀",
@@ -150,7 +153,23 @@ export function App(props: { cwd: string }) {
   // /cg : discussion commune Claude Code et Codex
   const [cgOn, setCgOn] = createSignal(false)
   const [cgPhase, setCgPhase] = createSignal("")
-  const emptyZone = (label: string): Zone => ({ status: "en attente", entries: [], input: 0, output: 0, label })
+  const emptyZone = (label: string): Zone => ({ status: "en attente", entries: [], input: 0, output: 0, label, subs: [] })
+  const [cgModels, setCgModels] = createSignal<Partial<Record<CgAgent, AgentModel[]>>>({})
+  /** Ajoute une ligne dans la zone d'un agent, ou dans celle de son sous-agent (parent). */
+  function zonePush(a: CgAgent, parent: string | undefined, entry: ZoneEntry) {
+    setZones(a, produce((z) => {
+      const sub = parent ? z.subs.find((s) => s.id === parent) : undefined
+      ;(sub ? sub.entries : z.entries).push(entry)
+    }))
+  }
+  function zoneToolDone(a: CgAgent, parent: string | undefined, text: string, ok?: boolean) {
+    setZones(a, produce((z) => {
+      const sub = parent ? z.subs.find((s) => s.id === parent) : undefined
+      const xs = sub ? sub.entries : z.entries
+      for (let i = xs.length - 1; i >= 0; i--) if (xs[i].kind === "tool" && xs[i].running) { xs[i].running = false; xs[i].ok = ok; return }
+      xs.push({ kind: "tool", text, ok })
+    }))
+  }
   const [zones, setZones] = createStore<Record<CgAgent, Zone>>({ claude: emptyZone("Claude Code"), codex: emptyZone("Codex") })
   const cgSessions: Partial<Record<CgAgent, string>> = {}
   const mcp = new McpManager()
@@ -437,7 +456,16 @@ export function App(props: { cwd: string }) {
         }
         setItems(cur, "text", (x) => (x ? x + (id === "claude" || id === "codex" ? "\n\n" : "") : "") + e.text)
       } else if (e.type === "thinking") setItems(cur, "thinking", (x) => (x ?? "") + e.text)
-      else if (e.type === "tool") {
+      else if (e.type === "subagent") {
+        cur = -1
+        if (!e.done) {
+          toolIdx.set(e.id, items.length)
+          setItems(items.length, { role: "tool", tool: `${d.label} · sous-agent`, text: e.label, running: true })
+        } else {
+          const ti = toolIdx.get(e.id)
+          if (ti !== undefined) setItems(ti, produce((it) => { it.running = false; it.ok = e.ok; it.output = e.output }))
+        }
+      } else if (e.type === "tool") {
         cur = -1 // le texte qui suit l'outil s'affiche en dessous de lui
         if (!e.done) {
           const ti = items.length
@@ -491,6 +519,36 @@ export function App(props: { cwd: string }) {
     return `${CG_LABEL[a]}${s.model ? " · " + s.model : ""}${s.effort ? " · " + s.effort : ""} · ${s.power ?? (a === "codex" ? "commandes" : "modifications")}`
   }
 
+  /** Ouvre (ou rouvre) la discussion /cg avec les réglages du menu. */
+  function startCg() {
+    if (busy()) return flash(t("Une réponse est en cours (échap pour interrompre)."))
+    if (cgOn()) {
+      refreshZones()
+      return note(`Réglages /cg appliqués : ${cgSummary()}`)
+    }
+    newChat()
+    for (const k of Object.keys(cgSessions)) delete cgSessions[k as CgAgent]
+    const miss = (["claude", "codex"] as CgAgent[]).filter((a) => !detected().find((x) => x.id === a)?.installed)
+    batch(() => {
+      for (const a of ["claude", "codex"] as CgAgent[]) setZones(a, emptyZone(zoneLabel(a)))
+      for (const a of miss) setZones(a, "status", "absent")
+      setCgPhase("")
+      setCgOn(true)
+    })
+    conv = mem.newConversation(district(), "Claude Code et Codex")
+    setTitle("Claude Code et Codex")
+    if (miss.length === 2) return note(`/cg : ni Claude Code ni Codex n'est installé.\n  Claude Code : ${detected().find((x) => x.id === "claude")?.install}\n  Codex : ${detected().find((x) => x.id === "codex")?.install}`, "error")
+    for (const a of miss) note(`${CG_LABEL[a]} n'est pas installé : /cg fonctionnera avec l'autre agent seul, sans relecture croisée.\n  Pour l'installer : ${detected().find((x) => x.id === a)?.install}`, "warn")
+    note(`Discussion /cg ouverte : ${cgSummary()}\n/cg pour le menu des réglages · /cg sous-agents · /cg off`)
+  }
+  const cgSummary = () => {
+    const l = prefs().cgLead ?? "claude"
+    const o = l === "claude" ? "codex" : "claude"
+    const m = prefs().cgMode ?? "auto"
+    return `${CG_LABEL[l]} coordonne, ${m === "seul" ? "fait le travail lui-même" : m === "delegue" ? `délègue à ${CG_LABEL[o]}` : "choisit qui écrit"}` +
+           `${prefs().cgReview !== false ? ", l'autre relit" : ", sans relecture"}${prefs().cgSubagents !== false ? ", sous-agents autorisés" : ", sans sous-agents"}.`
+  }
+
   async function askCg(text: string) {
     const cfgs: Partial<Record<CgAgent, any>> = {}
     for (const a of ["claude", "codex"] as CgAgent[]) {
@@ -505,7 +563,7 @@ export function App(props: { cwd: string }) {
     setBusy(true)
     abort = new AbortController()
     batch(() => {
-      for (const a of ["claude", "codex"] as CgAgent[]) setZones(a, { status: cfgs[a] ? "en attente" : "absent", entries: [], input: 0, output: 0, label: zoneLabel(a) })
+      for (const a of ["claude", "codex"] as CgAgent[]) setZones(a, { status: cfgs[a] ? "en attente" : "absent", entries: [], input: 0, output: 0, label: zoneLabel(a), subs: [] })
     })
     const snaps = new Snapshots(cwd())
     const sup = await snaps.unsupported()
@@ -514,6 +572,7 @@ export function App(props: { cwd: string }) {
     const memCtx = mem.context(district(), text)
     const r = await cgTurn({
       text, cwd: cwd(), agents: cfgs, lead: prefs().cgLead ?? "claude", sessions: cgSessions, memory: memCtx.text, sandbox: sandboxOn(), signal: abort.signal,
+      mode: prefs().cgMode ?? "auto", review: prefs().cgReview !== false, subagents: prefs().cgSubagents !== false,
       snapshot: sup ? undefined : (l) => snaps.snapshot(l), diff: sup ? undefined : (a, b) => snaps.diff(a, b),
     }, {
       phase: setCgPhase,
@@ -521,24 +580,27 @@ export function App(props: { cwd: string }) {
       event: (a, e) => {
         if (e.type === "text") {
           // le plan du coordinateur s'affiche en clair, pas en JSON
-          const pl = zones[a].status === "coordonne" ? parsePlan(e.text, ["claude", "codex"], a) : null
+          const pl = !e.parent && zones[a].status === "coordonne" ? parsePlan(e.text, ["claude", "codex"], a) : null
           const shown = pl ? (pl.simple ? "Réponse directe (demande simple)." : `Plan : ${CG_LABEL[pl.writer]} écrit — ${pl.task}${pl.review ? `\nÀ vérifier : ${pl.review}` : ""}`) : e.text
-          setZones(a, "entries", (xs) => [...xs, { kind: "text" as const, text: shown }])
-        }
-        else if (e.type === "thinking") setZones(a, "entries", (xs) => [...xs, { kind: "thinking" as const, text: e.text }])
+          zonePush(a, e.parent, { kind: "text", text: shown })
+        } else if (e.type === "thinking") zonePush(a, e.parent, { kind: "thinking", text: e.text })
         else if (e.type === "tool") {
-          if (!e.done) setZones(a, "entries", (xs) => [...xs, { kind: "tool" as const, text: `${e.name} ${e.summary}`, running: true }])
-          else setZones(a, "entries", (xs) => {
-            const i = xs.map((x) => x.kind === "tool" && x.running).lastIndexOf(true)
-            if (i < 0) return [...xs, { kind: "tool" as const, text: `${e.name} ${e.summary}`, ok: e.ok }]
-            const c = [...xs]
-            c[i] = { ...c[i], running: false, ok: e.ok }
-            return c
-          })
+          if (!e.done) zonePush(a, e.parent, { kind: "tool", text: `${e.name} ${e.summary}`, running: true })
+          else zoneToolDone(a, e.parent, `${e.name} ${e.summary}`, e.ok)
+        } else if (e.type === "subagent") {
+          // un sous-agent : un point de couleur dans la zone de son agent
+          setZones(a, produce((z) => {
+            const s = z.subs.find((x) => x.id === e.id)
+            if (!s && !e.done) z.subs.push({ id: e.id, label: e.label, color: SUB_COLORS[z.subs.length % SUB_COLORS.length], status: "travaille", entries: [] })
+            else if (s && e.done) {
+              s.status = e.ok === false ? "échec" : "terminé"
+              if (e.output) s.report = e.output
+            }
+          }))
         } else if (e.type === "usage") {
           setZones(a, "input", (x) => x + e.input)
           setZones(a, "output", (x) => x + e.output)
-        } else if (e.type === "error") setZones(a, "entries", (xs) => [...xs, { kind: "error" as const, text: e.message }])
+        } else if (e.type === "error") zonePush(a, undefined, { kind: "error", text: e.message })
       },
     })
     abort = null
@@ -786,24 +848,19 @@ export function App(props: { cwd: string }) {
           updatePrefs({ cgLead: who })
           return flash(`Coordinateur /cg : ${CG_LABEL[who as CgAgent]}`)
         }
-        if (busy()) return flash(t("Une réponse est en cours (échap pour interrompre)."))
-        newChat()
-        for (const k of Object.keys(cgSessions)) delete cgSessions[k as CgAgent]
-        const miss = (["claude", "codex"] as CgAgent[]).filter((a) => !detected().find((x) => x.id === a)?.installed)
-        batch(() => {
-          for (const a of ["claude", "codex"] as CgAgent[]) setZones(a, emptyZone(zoneLabel(a)))
-          for (const a of miss) setZones(a, "status", "absent")
-          setCgPhase("")
-          setCgOn(true)
-        })
-        conv = mem.newConversation(district(), "Claude Code et Codex")
-        setTitle("Claude Code et Codex")
-        if (miss.length === 2) return note(`/cg : ni Claude Code ni Codex n'est installé.\n  Claude Code : ${detected().find((x) => x.id === "claude")?.install}\n  Codex : ${detected().find((x) => x.id === "codex")?.install}`, "error")
-        for (const a of miss) note(`${CG_LABEL[a]} n'est pas installé : /cg fonctionnera avec l'autre agent seul, sans relecture croisée.
-  Pour l'installer : ${detected().find((x) => x.id === a)?.install}`, "warn")
-        return note(`Discussion /cg ouverte : coordinateur ${CG_LABEL[prefs().cgLead ?? "claude"]}. Une question simple reçoit une réponse directe ; un travail est fait par un agent et relu par l'autre.
-` +
-                    "Réglages : /model claude|codex NOM · /effort claude|codex NIVEAU · /power claude|codex lecture|modifications|commandes · /cg lead codex · /cg off")
+        if (sub === "sous-agents" || sub === "agents") {
+          const all = (["claude", "codex"] as CgAgent[]).flatMap((a) => zones[a].subs.map((s) => ({ a, s })))
+          if (!all.length) return note("Aucun sous-agent pour l'instant.", "warn")
+          return openList("Sous-agents", () => all.map(({ a, s }) => ({ title: `${s.status === "travaille" ? "●" : s.status === "échec" ? "×" : "○"} ${s.label}`, detail: s.status, right: CG_LABEL[a], value: `${a}\n${s.id}` })),
+                          (v) => { const [ag, id] = v.split("\n"); later({ type: "sub", agent: ag as CgAgent, id }) })
+        }
+        if (sub === "go" || sub === "start") return startCg()
+        // sans argument : le menu (coordinateur, façon de travailler, modèles, efforts, puissances, sous-agents)
+        Promise.all((["claude", "codex"] as CgAgent[]).map(async (a) => {
+          const d = detected().find((x) => x.id === a)
+          return [a, d?.installed ? await agentModels(a, d.path!) : []] as const
+        })).then((r) => setCgModels(Object.fromEntries(r)))
+        return later({ type: "cgmenu" })
       }
       case "power": {
         const cur = cgTarget ?? current()
@@ -1679,7 +1736,8 @@ export function App(props: { cwd: string }) {
   const Thread = () => (
     <box flexDirection="column" flexGrow={1} paddingX={2} paddingTop={1}>
       <text fg={C.text} height={1} flexShrink={0}><b>{(title() || items.find((i) => i.role === "user")?.text || "").split("\n")[0].slice(0, dims().width - 10)}</b></text>
-      <Show when={cgOn()}><CgZones zones={zones} phase={cgPhase()} width={dims().width - (sidebarOn() && dims().width >= 110 ? 36 : 0)} height={dims().height} /></Show>
+      <Show when={cgOn()}><CgZones zones={zones} phase={cgPhase()} width={dims().width - (sidebarOn() && dims().width >= 110 ? 36 : 0)} height={dims().height}
+                                   onOpenSub={(a, id) => setOverlay({ type: "sub", agent: a, id })} /></Show>
       <scrollbox ref={(r: any) => (threadScroll = r)} flexGrow={1} flexShrink={1} minHeight={0} stickyScroll stickyStart="bottom" marginTop={1}>
         <For each={items}>
           {(it, i) => (
@@ -1755,6 +1813,19 @@ export function App(props: { cwd: string }) {
           </Show>
           <Show when={(() => { const o = overlay(); return o?.type === "perm" ? o : null })()}>
             {(o) => <PermissionPrompt req={o().req} width={() => dims().width} height={() => dims().height} onDecide={(d) => { const r = o().resolve; closeOverlay(); r(d) }} />}
+          </Show>
+          <Show when={overlay()?.type === "cgmenu"}>
+            <CgMenu active={cgOn()} width={() => dims().width} height={() => dims().height} models={cgModels}
+                    installed={(a) => !!detected().find((x) => x.id === a)?.installed}
+                    settings={() => ({ lead: prefs().cgLead ?? "claude", mode: prefs().cgMode ?? "auto", review: prefs().cgReview !== false, subagents: prefs().cgSubagents !== false,
+                                       agents: { claude: prefs().agents?.claude ?? {}, codex: prefs().agents?.codex ?? {} } })}
+                    update={(s) => updatePrefs({ ...(s.lead ? { cgLead: s.lead } : {}), ...(s.mode ? { cgMode: s.mode } : {}), ...(s.review !== undefined ? { cgReview: s.review } : {}), ...(s.subagents !== undefined ? { cgSubagents: s.subagents } : {}) })}
+                    setAgent={(a, s) => updatePrefs({ agents: { ...(prefs().agents ?? {}), [a]: { ...(prefs().agents?.[a] ?? {}), ...s } } })}
+                    onStart={() => { closeOverlay(); setTimeout(startCg, 0) }} onClose={closeOverlay} />
+          </Show>
+          <Show when={(() => { const o = overlay(); return o?.type === "sub" ? o : null })()}>
+            {(o) => <SubAgentView agent={o().agent} zone={zones[o().agent]} id={o().id} width={() => dims().width} height={() => dims().height}
+                                  onMove={(id) => setOverlay({ type: "sub", agent: o().agent, id })} onClose={closeOverlay} />}
           </Show>
           <Show when={overlay()?.type === "usage"}>
             <UsageScreen budget={budget} session={conv ? sessionKey() : null} rate={rate()} onClose={closeOverlay} width={() => dims().width} height={() => dims().height}
