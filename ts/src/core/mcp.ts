@@ -3,12 +3,16 @@
  * et `<projet>/.eclipse/mcp.json`. Leurs outils sont ajoutés à ceux des modèles d'API, sous le nom `mcp__serveur__outil`.
  * Chaque appel passe par les permissions (lecture libre seulement si le serveur annonce l'outil « readOnlyHint »).
  * Un serveur qui ne démarre pas n'empêche pas les autres ; son erreur est montrée par /mcp.
+ * Un serveur déclaré par un PROJET (.eclipse/mcp.json, contenu de dépôt non fiable) n'est jamais lancé sans
+ * « /mcp approuver NOM » ; l'approbation porte sur l'empreinte de sa configuration et du dossier : si elle change,
+ * il faut la redonner.
  */
 import { VERSION } from "./version"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js"
-import { existsSync, readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { dataDir } from "./paths"
 
@@ -32,10 +36,34 @@ export interface McpTool {
 export interface McpStatus {
   name: string
   source: string
-  state: "connecté" | "erreur" | "désactivé" | "connexion…"
+  state: "connecté" | "erreur" | "désactivé" | "connexion…" | "à approuver"
   tools: number
   error?: string
+  launch?: string // ce qui serait lancé (montré avant l'approbation)
 }
+
+const approvalsFile = () => join(dataDir(), "mcp-approuves.json")
+const readApprovals = (): Record<string, string> => {
+  try {
+    return JSON.parse(readFileSync(approvalsFile(), "utf8"))
+  } catch {
+    return {}
+  }
+}
+/** Empreinte d'un serveur de projet : dossier + nom + configuration complète. */
+export function fingerprint(cwd: string, name: string, cfg: McpServerConfig): string {
+  return createHash("sha256").update(JSON.stringify([cwd, name, cfg.command ?? null, cfg.args ?? [], cfg.env ?? {}, cfg.url ?? null])).digest("hex")
+}
+export function isApproved(cwd: string, name: string, cfg: McpServerConfig): boolean {
+  return readApprovals()[`${cwd}::${name}`] === fingerprint(cwd, name, cfg)
+}
+export function approve(cwd: string, name: string, cfg: McpServerConfig, on = true): void {
+  const a = readApprovals()
+  if (on) a[`${cwd}::${name}`] = fingerprint(cwd, name, cfg)
+  else delete a[`${cwd}::${name}`]
+  writeFileSync(approvalsFile(), JSON.stringify(a, null, 2), { mode: 0o600 })
+}
+export const describeLaunch = (cfg: McpServerConfig) => (cfg.url ? cfg.url : [cfg.command, ...(cfg.args ?? [])].filter(Boolean).join(" ")).slice(0, 200)
 
 export function loadConfigs(cwd: string): { name: string; cfg: McpServerConfig; source: string }[] {
   const out: { name: string; cfg: McpServerConfig; source: string }[] = []
@@ -61,10 +89,12 @@ export class McpManager {
   async start(cwd: string, onChange?: () => void): Promise<void> {
     await this.close()
     const cfgs = loadConfigs(cwd)
-    this.status = cfgs.map((c) => ({ name: c.name, source: c.source, state: c.cfg.disabled ? "désactivé" : "connexion…", tools: 0 }))
+    const pending = (c: (typeof cfgs)[number]) => c.source === "projet" && !c.cfg.disabled && !isApproved(cwd, c.name, c.cfg)
+    this.status = cfgs.map((c) => ({ name: c.name, source: c.source, state: c.cfg.disabled ? "désactivé" : pending(c) ? "à approuver" : "connexion…", tools: 0,
+                                     launch: pending(c) ? describeLaunch(c.cfg) : undefined }))
     onChange?.()
     await Promise.all(cfgs.map(async (c, i) => {
-      if (c.cfg.disabled) return
+      if (c.cfg.disabled || pending(c)) return
       try {
         const client = new Client({ name: "eclipse", version: VERSION })
         const transport = c.cfg.url ? new StreamableHTTPClientTransport(new URL(c.cfg.url))

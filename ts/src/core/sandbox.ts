@@ -27,7 +27,7 @@ const CACHES = [".cache", ".npm", ".bun/install/cache", ".cargo/registry", ".car
 /** Enveloppe une commande dans bubblewrap ; `writable` : dossiers accessibles en écriture en plus des caches. */
 export function wrap(cmd: string[], writable: string[], cwd: string): string[] {
   const b = Bun.which("bwrap") ?? "bwrap"
-  const args = [b, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--die-with-parent"]
+  const args = [b, "--ro-bind", "/", "/", "--dev", "/dev", "--unshare-pid", "--proc", "/proc", "--tmpfs", "/tmp", "--die-with-parent"]
   const seen = new Set<string>()
   for (const d of [...writable, ...CACHES.map((c) => join(home(), c))]) {
     if (!d || seen.has(d) || !existsSync(d)) continue
@@ -44,11 +44,15 @@ export function wrap(cmd: string[], writable: string[], cwd: string): string[] {
  * Garde, appliquée quand la sandbox est coupée (et en bypass) : le processus garde tous ses droits habituels, sauf
  * sur les fichiers d'Eclipse, montés en lecture seule. Les sandbox propres aux agents fonctionnent à l'intérieur.
  * Sans bubblewrap, la commande est lancée telle quelle (seuls les outils d'Eclipse refusent alors d'y écrire).
+ * C'est un garde-fou contre les erreurs (un agent qui se trompe de dossier), pas une prison : un processus garde
+ * l'accès au réseau et aux services de la session (D-Bus, systemd --user) ; la sandbox reste la protection forte.
  */
 export function guard(cmd: string[], cwd: string): string[] {
   const b = process.platform === "linux" ? Bun.which("bwrap") : null
   if (!b) return cmd
-  const args = [b, "--dev-bind", "/", "/"]
+  // espace de PID privé : /proc ne montre que les processus de la commande (pas de passage par /proc/PID/root d'un
+  // processus hors garde), et tout l'arbre meurt avec elle, même un descendant qui a créé sa propre session
+  const args = [b, "--dev-bind", "/", "/", "--unshare-pid", "--proc", "/proc"]
   for (const p of guardPaths()) args.push("--ro-bind", p, p)
   args.push("--die-with-parent", "--chdir", cwd, "--", ...cmd)
   return args

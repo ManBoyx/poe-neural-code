@@ -50,11 +50,17 @@ case "$FORMAT" in
     [ -f "$TMP/x/Eclipse" ] || die "archive incomplète : installation annulée."
     chmod 755 "$TMP/x/Eclipse"
     VER=$("$TMP/x/Eclipse" --version 2>/dev/null) || die "le nouvel exécutable ne démarre pas sur cet ordinateur : rien n'a été remplacé."
+    case "$VER" in "Eclipse "*) ;; *) die "exécutable inattendu dans l'archive : rien n'a été remplacé." ;; esac
     DEST="$HOME/.local/bin/Eclipse"
     if [ -d "$DEST" ] && [ ! -L "$DEST" ]; then die "$DEST est un dossier : rien n'a été remplacé."; fi
     NEW=$(mktemp "$HOME/.local/bin/.Eclipse.XXXXXX")
     install -m 755 "$TMP/x/Eclipse" "$NEW"
-    if [ -e "$DEST" ] || [ -L "$DEST" ]; then cp -P "$DEST" "$HOME/.local/bin/Eclipse.ancien" 2>/dev/null && say "Version précédente gardée : ~/.local/bin/Eclipse.ancien"; fi
+    if [ -e "$DEST" ] || [ -L "$DEST" ]; then
+      OLD="$HOME/.local/bin/Eclipse.ancien"
+      rm -f "$OLD"   # retire aussi un éventuel lien symbolique (la copie ne doit jamais écrire ailleurs)
+      cp -P "$DEST" "$OLD" || { rm -f "$NEW"; die "sauvegarde de la version actuelle impossible : rien n'a été remplacé."; }
+      say "Version précédente gardée : ~/.local/bin/Eclipse.ancien"
+    fi
     mv -fT "$NEW" "$DEST" || { rm -f "$NEW"; die "remplacement impossible."; }   # d'un bloc, même si Eclipse tourne
     [ -e "$HOME/.local/bin/eclipse" ] || [ -L "$HOME/.local/bin/eclipse" ] || ln -s Eclipse "$HOME/.local/bin/eclipse"
     say "Installé : $DEST ($VER)"
