@@ -52,6 +52,8 @@ function label(id: string): string {
 
 export function modelDetail(m: ModelInfo): string {
   const parts: string[] = []
+  const media = (m.output ?? []).filter((o) => o !== "text")
+  if (media.length && !(m.output ?? []).includes("text")) parts.push(media.map((o) => (o === "image" ? "image" : o === "video" ? "vidéo" : o === "audio" ? "son" : o)).join(" + "))
   if (m.context) parts.push(`${Math.round(m.context / 1000)}k`)
   if (m.free) parts.push("gratuit")
   else if (m.priceIn != null && m.priceOut != null) parts.push(`$${m.priceIn.toFixed(2)}/$${m.priceOut.toFixed(2)} par Mtok`)
@@ -106,11 +108,16 @@ export function Picker(props: PickerProps) {
                    run: () => d.installed && props.onChoose({ kind: "agent", provider: d.id }) })
       let n = 0
       for (const p of PROVIDERS) for (const m of st[p.id]?.models ?? []) {
-        if (n >= 200 || !m.id.toLowerCase().includes(q)) continue
+        if (n >= 400 || !m.id.toLowerCase().includes(q)) continue
         n++
         out.push({ kind: "item", title: m.id, detail: modelDetail(m), right: p.label, color: C.text, run: () => props.onChoose({ kind: "api", provider: p.id, model: m.id }) })
       }
       const missing = PROVIDERS.filter((p) => !p.local && st[p.id]?.key === "missing").map((p) => p.label)
+      // tout bot public de poe.com s'appelle par son nom, même s'il n'est pas dans le catalogue de l'API
+      const raw = query().trim()
+      const exact = (st.poe?.models ?? []).some((m) => m.id.toLowerCase() === q)
+      if (st.poe?.key === "ok" && /^[\w.-]{2,60}$/.test(raw) && !exact)
+        out.push({ kind: "item", title: `Utiliser le bot Poe « ${raw} »`, detail: "n'importe quel bot public de poe.com, par son nom", right: "Poe", color: C.api, run: () => props.onChoose({ kind: "api", provider: "poe", model: raw }) })
       if (missing.length) out.push({ kind: "item", title: `Sans clé, non cherchés : ${missing.slice(0, 6).join(", ")}${missing.length > 6 ? "…" : ""}`, detail: "", color: C.dim, dim: true, run: () => {} })
       if (out.length === 1) out.push({ kind: "item", title: "Aucun résultat", detail: "", color: C.muted, dim: true, run: () => {} })
       return out

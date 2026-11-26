@@ -293,7 +293,14 @@ export function Composer(p: {
   };
   const listening = p.voice.state === "écoute";
   const transcribing = p.voice.state === "transcription";
-  const groups = ["image", "video", "audio", "?"].map((k) => [k, p.media.filter((m) => (k === "?" ? !m.output.some((o) => ["image", "video", "audio"].includes(o)) : m.output.includes(k)))] as const).filter((g) => g[1].length);
+  // générateurs purs d'abord (image, vidéo, son), puis les modèles de texte qui savent aussi créer des médias
+  const pure = (m: MediaModel) => !m.output.includes("text");
+  const groups: [string, MediaModel[]][] = [
+    ["Images", p.media.filter((m) => pure(m) && m.output.includes("image"))],
+    ["Vidéo", p.media.filter((m) => pure(m) && m.output.includes("video"))],
+    ["Son", p.media.filter((m) => pure(m) && m.output.includes("audio"))],
+    ["Texte et médias", p.media.filter((m) => !pure(m))],
+  ].filter((g) => (g[1] as MediaModel[]).length) as [string, MediaModel[]][];
   return (
     <div class="composer">
       {listening || transcribing ? (
@@ -312,7 +319,7 @@ export function Composer(p: {
             onChange={(e) => { const v = (e.target as HTMLSelectElement).value; p.setMediaModel(p.media.find((m) => `${m.provider}/${m.id}` === v) ?? null); }}>
             <option value="">{p.media.length ? "Choisir un modèle" : "Aucun modèle de médias"}</option>
             {groups.map(([k, ms]) => (
-              <optgroup label={k === "image" ? "Images" : k === "video" ? "Vidéo" : k === "audio" ? "Son" : "Autres"}>
+              <optgroup label={k}>
                 {ms.map((m) => <option value={`${m.provider}/${m.id}`}>{m.id}</option>)}
               </optgroup>
             ))}

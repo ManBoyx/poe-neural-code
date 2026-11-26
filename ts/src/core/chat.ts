@@ -23,7 +23,21 @@ const HINTS: Record<number, string> = {
   408: "délai dépassé côté modèle", 413: "conversation trop longue pour ce modèle", 429: "limite de débit atteinte",
 }
 
-export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[], opts: { signal?: AbortSignal; fetchImpl?: typeof fetch; extra?: Record<string, unknown>; tools?: unknown[] } = {}): AsyncGenerator<ChatEvent> {
+/** Contenu d'une réponse complète (texte, ou liste de parties : texte, image, audio, vidéo) en Markdown affichable. */
+export function contentToMarkdown(c: unknown): string {
+  if (typeof c === "string") return c
+  if (!Array.isArray(c)) return c == null ? "" : JSON.stringify(c)
+  return c.map((part: any) => {
+    if (!part || typeof part !== "object") return String(part ?? "")
+    if (part.type === "text") return String(part.text ?? "")
+    const url = part.image_url?.url ?? part.video_url?.url ?? part.audio_url?.url ?? part.file?.url ?? part.url
+    if (typeof url === "string") return part.type === "image_url" ? `![image](${url})` : `[${part.type?.replace("_url", "") ?? "média"}](${url})`
+    if (part.type === "input_audio" || part.audio) return "(son reçu, format non affichable)"
+    return ""
+  }).filter(Boolean).join("\n\n")
+}
+
+export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[], opts: { signal?: AbortSignal; fetchImpl?: typeof fetch; extra?: Record<string, unknown>; tools?: unknown[]; noStream?: boolean } = {}): AsyncGenerator<ChatEvent> {
   const k = await keyFor(p)
   if (!k.ok) {
     yield { type: "error", message: `${p.label} : ${k.missing ? "aucune clé enregistrée — choisissez « Saisir la clé » dans /provider" : k.reason}` }
@@ -32,6 +46,28 @@ export async function* streamChat(p: ProviderSpec, model: string, messages: Msg[
   const headers: Record<string, string> = { "Content-Type": "application/json" }
   if (k.key) headers.Authorization = `Bearer ${k.key}`
   const f = opts.fetchImpl ?? fetch
+  // modèles d'images, de vidéos ou de sons : réponse complète en une fois (recommandé par Poe), pas de flux
+  if (opts.noStream) {
+    let r: Response
+    try {
+      r = await f(p.baseUrl + "/chat/completions", { method: "POST", headers, signal: opts.signal, body: JSON.stringify({ ...(opts.extra ?? {}), model, messages, stream: false }) })
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return
+      yield { type: "error", message: `${p.label} injoignable (${(e as Error).name})` }
+      return
+    }
+    let j: any = null
+    try { j = await r.json() } catch {}
+    if (!r.ok) {
+      yield { type: "error", message: `HTTP ${r.status} — ${HINTS[r.status] ?? "erreur du fournisseur"}${j?.error?.message ? " : " + String(j.error.message).slice(0, 300) : ""}` }
+      return
+    }
+    const text = contentToMarkdown(j?.choices?.[0]?.message?.content)
+    if (text) yield { type: "text", text }
+    if (j?.usage) yield { type: "usage", input: j.usage.prompt_tokens, output: j.usage.completion_tokens }
+    yield { type: "done" }
+    return
+  }
   let r: Response
   try {
     r = await f(p.baseUrl + "/chat/completions", {

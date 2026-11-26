@@ -85,8 +85,9 @@ export function parsePoe(data: any[]): ModelInfo[] {
   const out: ModelInfo[] = []
   for (const d of data) {
     const arch = d.architecture ?? {}
+    // tous les modèles sont gardés, y compris ceux qui produisent seulement des images, des vidéos ou des sons :
+    // ils s'appellent comme les autres (la réponse contient le lien du média) et alimentent l'espace Médias
     const outMods: string[] = arch.output_modalities ?? ["text"]
-    if (!outMods.includes("text")) continue // modèles qui ne produisent que des images, vidéos ou sons
     const price = d.pricing ?? {}
     const effP = (d.parameters ?? []).find((p: any) => /effort/i.test(p.name ?? ""))
     const eff = effP?.schema?.enum

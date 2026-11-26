@@ -221,13 +221,14 @@ export class EngineSession {
     return c?.kind === "api" ? this.models[c.provider]?.find((m) => m.id === c.model) : undefined
   }
 
-  /** Modèles qui produisent des images, des vidéos ou des sons (pour l'espace Médias). */
+  /** Modèles qui produisent des images, des vidéos ou des sons (espace Médias), d'après le catalogue du fournisseur. */
   mediaModels() {
     const out: { provider: string; id: string; output: string[]; price?: number }[] = []
-    for (const [pid, ms] of Object.entries(this.models)) for (const m of ms) {
-      const o = (m.output ?? []).filter((x) => x !== "text")
-      if (o.length || /image|video|vid[eé]o|audio|tts|music|sora|veo|flux|dall|imagen|nano-banana|\bkling|runway|suno|eleven/i.test(m.id)) out.push({ provider: pid, id: m.id, output: o.length ? o : ["?"], price: m.priceOut })
-    }
+    for (const [pid, ms] of Object.entries(this.models))
+      for (const m of ms) {
+        const o = (m.output ?? []).filter((x) => x === "image" || x === "video" || x === "audio")
+        if (o.length) out.push({ provider: pid, id: m.id, output: (m.output ?? []).includes("text") ? [...o, "text"] : o, price: m.priceOut })
+      }
     return out
   }
 
@@ -307,7 +308,7 @@ export class EngineSession {
     const lv = this.st.prefs.effort?.[`${c.provider}/${c.model}`]
     const ev = lv ? levelValue(mi?.effort, lv) : undefined
     if (ev && mi?.effortParam) extra[mi.effortParam] = ev
-    const useTools = space === "work" && mi?.tools !== false
+    const useTools = space === "work" && (mi ? mi.tools !== false : c.provider !== "poe") // bot Poe hors catalogue : sans outils
     const env: ToolEnv = { roots: [this.cwd], perms: this.perms, memory: this.mem, districtId: this.district, todos: this.todos, signal: this.abort!.signal,
                            sandbox: this.st.prefs.sandbox !== false, skills: this.skills, mcp: this.mcp }
     const msgs: Msg[] = [{ role: "system", content: this.system(space, useTools, memCtx.text) }, ...this.history, { role: "user", content: text }]
@@ -319,7 +320,8 @@ export class EngineSession {
     for (let step = 0; step < 40 && !this.abort!.signal.aborted; step++) {
       let stepText = ""
       let calls: { id: string; name: string; args: string }[] = []
-      for await (const e of streamChat(p, c.model!, msgs, { signal: this.abort!.signal, extra, tools: useTools ? openAiTools(env) : undefined })) {
+      const mediaOnly = !!mi?.output && !mi.output.includes("text")
+      for await (const e of streamChat(p, c.model!, msgs, { signal: this.abort!.signal, extra, tools: useTools && !mediaOnly ? openAiTools(env) : undefined, noStream: mediaOnly })) {
         if (e.type === "text") {
           stepText += e.text
           this.emit({ type: "text", text: e.text })
@@ -429,7 +431,9 @@ export class EngineSession {
     const p = provider(m.provider)!
     let out = ""
     let tin = 0, tout = 0
-    for await (const e of streamChat(p, m.id, [{ role: "user", content: text }], { signal: this.abort!.signal })) {
+    const info = this.models[m.provider]?.find((x) => x.id === m.id)
+    const mediaOnly = !info?.output || !info.output.includes("text")
+    for await (const e of streamChat(p, m.id, [{ role: "user", content: text }], { signal: this.abort!.signal, noStream: mediaOnly })) {
       if (e.type === "text") {
         out += e.text
         this.emit({ type: "text", text: e.text, who: m.id })

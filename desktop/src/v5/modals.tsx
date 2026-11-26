@@ -37,9 +37,16 @@ export function ModelPicker({ onClose, onKeys, toast }: { onClose: () => void; o
   const hits = useMemo(() => {
     if (!data || !f) return [];
     const out: { c: Choice; text: string; meta: string }[] = [];
-    for (const pv of data.providers) for (const m of pv.models) if (`${m.id} ${pv.label}`.toLowerCase().includes(f)) out.push({ c: { kind: "api", provider: pv.id, model: m.id }, text: m.id, meta: pv.label + (m.free ? " · gratuit" : "") });
+    const kind = (o?: string[]) => (o && !o.includes("text") ? o.map((x) => (x === "image" ? "image" : x === "video" ? "vidéo" : x === "audio" ? "son" : x)).join(" + ") : "");
+    for (const pv of data.providers) for (const m of pv.models) if (`${m.id} ${pv.label} ${kind(m.output)}`.toLowerCase().includes(f))
+      out.push({ c: { kind: "api", provider: pv.id, model: m.id }, text: m.id, meta: [pv.label, kind(m.output), m.free ? "gratuit" : ""].filter(Boolean).join(" · ") });
     for (const a of data.agents) if (a.installed && a.label.toLowerCase().includes(f)) out.push({ c: { kind: "agent", provider: a.id }, text: a.label, meta: "agent installé" });
-    return out.slice(0, 80);
+    // n'importe quel bot public de poe.com, par son nom (même absent du catalogue de l'API)
+    const raw = q.trim();
+    const poe = data.providers.find((p) => p.id === "poe");
+    if (poe?.key === "ok" && /^[\w.-]{2,60}$/.test(raw) && !poe.models.some((m) => m.id.toLowerCase() === f))
+      out.push({ c: { kind: "api", provider: "poe", model: raw }, text: `Utiliser le bot Poe « ${raw} »`, meta: "tout bot public de poe.com" });
+    return out.slice(0, 200);
   }, [data, f]);
   const ok = data?.providers.filter((p) => p.recommended && p.key === "ok") ?? [];
   const missing = data?.providers.filter((p) => p.recommended && p.key !== "ok") ?? [];
@@ -62,8 +69,8 @@ export function ModelPicker({ onClose, onKeys, toast }: { onClose: () => void; o
             {!data.agents.some((a) => a.installed) && <p class="list-row dim">Aucun agent détecté.</p>}
           </div>
           {ok.map((pv) => (<>
-            <div class="sec-title">{pv.label} · {pv.models.length} modèles</div>
-            <div class="chips">{pv.models.slice(0, 14).map((m) => <button class="chip press" onClick={() => choose({ kind: "api", provider: pv.id, model: m.id })}>{m.id}</button>)}</div>
+            <div class="sec-title">{pv.label} · {pv.models.length} modèles (tape pour chercher parmi tous)</div>
+            <div class="chips">{pv.models.filter((m) => !m.output || m.output.includes("text")).slice(0, 14).map((m) => <button class="chip press" onClick={() => choose({ kind: "api", provider: pv.id, model: m.id })}>{m.id}</button>)}</div>
           </>))}
           {missing.length > 0 && (<>
             <div class="sec-title">À connecter</div>

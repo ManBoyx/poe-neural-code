@@ -760,7 +760,7 @@ export function App(props: { cwd: string }) {
     const lv = prefs().effort?.[effortKey(c)]
     const ev = lv ? levelValue(mi?.effort, lv) : undefined
     if (ev && mi?.effortParam) extra[mi.effortParam] = ev
-    const useTools = mi?.tools !== false && !noTools.has(effortKey(c))
+    const useTools = (mi ? mi.tools !== false : c.provider !== "poe") && !noTools.has(effortKey(c)) // bot Poe hors catalogue : sans outils
     const instr = instructions()
     const sys = systemPrompt(mode(), getLang(), cwd(), useTools, perms.mode) + (instr ? "\n\n" + instr : "") + (memCtx.text ? "\n\n" + memCtx.text : "")
     const uc = buildUserContent(text, mi)
@@ -792,7 +792,8 @@ export function App(props: { cwd: string }) {
         let calls: { id: string; name: string; args: string }[] = []
         let failed = false
         setActivity(`${c.model} réfléchit`)
-        for await (const e of streamChat(p, c.model!, msgs, { signal, extra, tools: useTools ? openAiTools(env) : undefined })) {
+        const mediaOnly = !!mi?.output && !mi.output.includes("text") // image, vidéo, son : réponse complète, sans flux ni outils
+        for await (const e of streamChat(p, c.model!, msgs, { signal, extra, tools: useTools && !mediaOnly ? openAiTools(env) : undefined, noStream: mediaOnly })) {
           if (e.type === "text") setActivity(`${c.model} écrit`)
           if (e.type === "text") setItems(idx, "text", (x) => x + e.text)
           else if (e.type === "thinking") setItems(idx, "thinking", (x) => (x ?? "") + e.text)

@@ -30,7 +30,7 @@ function fakeExe(d: string, name: string, script = "#!/bin/sh\necho " + name + "
 }
 
 describe("catalogue Poe", () => {
-  test("garde les modèles sans supported_endpoints et ceux qui sortent texte + image", () => {
+  test("garde tous les modèles, y compris ceux qui ne produisent qu'une image, une vidéo ou un son", () => {
     const ms = parsePoe([
       { id: "claude-haiku-5.5", architecture: { output_modalities: ["text"] }, supported_endpoints: [], supported_features: ["tools"] },
       { id: "gpt-5.4", architecture: { output_modalities: ["text", "image"] }, supported_endpoints: ["/v1/chat/completions"], supported_features: ["tools"] },
@@ -38,7 +38,8 @@ describe("catalogue Poe", () => {
       { id: "nano-banana", architecture: { output_modalities: ["image"] } },
       { id: "m-effort", parameters: [{ name: "reasoning_effort", schema: { enum: ["low", "high"] } }], pricing: { prompt: "0.000001", completion: "0.000003" } },
     ])
-    expect(ms.map((m) => m.id)).toEqual(["claude-haiku-5.5", "gpt-5.4", "gemini-3.5-flash-lite", "m-effort"])
+    expect(ms.map((m) => m.id)).toEqual(["claude-haiku-5.5", "gpt-5.4", "gemini-3.5-flash-lite", "nano-banana", "m-effort"])
+    expect(ms.find((m) => m.id === "nano-banana")!.output).toEqual(["image"])
     expect(ms.find((m) => m.id === "gemini-3.5-flash-lite")!.tools).toBe(false)
     expect(ms.find((m) => m.id === "m-effort")!.effort).toEqual(["low", "high"])
     expect(ms.find((m) => m.id === "m-effort")!.priceIn).toBeCloseTo(1)
@@ -214,5 +215,23 @@ describe("liste des commandes", () => {
     expect(suggest("pe", 2).map((c) => c.name)).toEqual(["permissions", "agents"].slice(0, 1).concat(suggest("pe", 2)[1].name))
     const names = COMMANDS.flatMap((c) => [c.name, ...(c.aliases ?? [])])
     expect(new Set(names).size).toBe(names.length)
+  })
+})
+
+describe("modèles d'images, de vidéos et de sons", () => {
+  test("réponse complète sans flux, liens des médias rendus en Markdown", async () => {
+    const { streamChat, contentToMarkdown } = await import("../src/core/chat")
+    const { provider } = await import("../src/core/providers")
+    let body: any = null
+    const fetchImpl = (async (_u: string, init: any) => {
+      body = JSON.parse(init.body)
+      return new Response(JSON.stringify({ choices: [{ message: { content: [{ type: "text", text: "Voici :" }, { type: "image_url", image_url: { url: "https://exemple.org/a.png" } }] } }], usage: { prompt_tokens: 5, completion_tokens: 0 } }), { status: 200 })
+    }) as any
+    const lm = { ...provider("lmstudio")! } // serveur local : aucune clé à lire
+    const ev: any[] = []
+    for await (const e of streamChat(lm, "nano-banana", [{ role: "user", content: "un chat" }], { fetchImpl, noStream: true })) ev.push(e)
+    expect(body.stream).toBe(false)
+    expect(ev[0]).toEqual({ type: "text", text: "Voici :\n\n![image](https://exemple.org/a.png)" })
+    expect(contentToMarkdown([{ type: "video_url", video_url: { url: "https://x/v.mp4" } }])).toBe("[video](https://x/v.mp4)")
   })
 })
