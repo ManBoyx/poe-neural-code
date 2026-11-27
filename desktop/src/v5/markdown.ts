@@ -5,8 +5,10 @@ import hljs from "highlight.js/lib/common";
 import { Marked } from "marked";
 import { chartHtml, parseChart } from "./chart";
 
-const VIDEO = /\.(mp4|webm|mov|m4v)(\?|#|$)/i;
-const AUDIO = /\.(mp3|wav|ogg|oga|m4a|flac|aac)(\?|#|$)/i;
+// par l'extension, ou par le chemin des liens de Poe, qui n'ont pas d'extension (…poecdn.net/base/audio/<empreinte>)
+const VIDEO = /\.(mp4|webm|mov|m4v)(\?|#|$)|poecdn\.net\/(?:[\w-]+\/)*video\//i;
+const AUDIO = /\.(mp3|wav|ogg|oga|m4a|flac|aac)(\?|#|$)|poecdn\.net\/(?:[\w-]+\/)*audio\//i;
+const IMAGE = /\.(png|jpe?g|webp|gif|avif)(\?|#|$)|poecdn\.net\/(?:[\w-]+\/)*image\//i;
 export const safeUrl = (u: string) => /^(https?:|blob:|data:image\/(png|jpe?g|gif|webp|avif);)/i.test(u);
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -30,6 +32,8 @@ md.use({
     link({ href, text }) {
       if (safeUrl(href) && VIDEO.test(href)) return `<video class="media" controls preload="metadata" src="${esc(href)}"></video>`;
       if (safeUrl(href) && AUDIO.test(href)) return `<audio class="media" controls preload="metadata" src="${esc(href)}"></audio>`;
+      if (safeUrl(href) && /^https?:/i.test(href) && IMAGE.test(href) && /poecdn\.net/i.test(href) && text === href)
+        return `<a class="media-img" href="${esc(href)}" data-media="${esc(href)}"><img src="${esc(href)}" alt="image générée" loading="lazy"></a>`;
       return false;
     },
     image({ href, text }) {
@@ -68,7 +72,7 @@ export function mediaIn(text: string): { kind: "image" | "video" | "audio"; url:
   for (const m of text.matchAll(/!?\[[^\]]*\]\((\S+?)(?:\s+"[^"]*")?\)|(https?:\/\/[^\s)"'<>]+)/g)) {
     const url = m[1] || m[2];
     if (!url || !safeUrl(url)) continue;
-    const kind = VIDEO.test(url) ? "video" : AUDIO.test(url) ? "audio" : m[0].startsWith("!") || /\.(png|jpe?g|webp|gif|avif)(\?|#|$)/i.test(url) ? "image" : null;
+    const kind = VIDEO.test(url) ? "video" : AUDIO.test(url) ? "audio" : m[0].startsWith("!") || IMAGE.test(url) ? "image" : null;
     if (kind && !out.some((o) => o.url === url)) out.push({ kind, url });
   }
   return out;

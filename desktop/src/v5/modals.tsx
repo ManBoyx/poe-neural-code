@@ -90,7 +90,7 @@ const PERMS: [string, string][] = [
 
 export function Settings({ st, onClose, toast, theme, setTheme, start = "general" }: { st: EngineState; onClose: () => void; toast: (t: string, l?: string) => void; theme: string; setTheme: (t: string) => void; start?: string }) {
   const [tab, setTab] = useState(start);
-  const tabs: [string, string, string][] = [["general", "Général", I.tune], ["keys", "Clés d'API", I.key], ["perms", "Sécurité", I.shield], ["cg", "Claude Code et Codex", I.agents], ["mcp", "Serveurs MCP", I.server], ["voice", "Dictée", I.mic]];
+  const tabs: [string, string, string][] = [["general", "Général", I.tune], ["keys", "Clés d'API", I.key], ["perms", "Sécurité", I.shield], ["cg", "Claude Code + Codex", I.agents], ["mcp", "Serveurs MCP", I.server], ["voice", "Dictée", I.mic]];
   return (
     <Modal title="Réglages" onClose={onClose} wide>
       <div class="settings">
@@ -198,6 +198,7 @@ function CgSettings({ st, toast }: { st: EngineState; toast: (t: string, l?: str
           <div class="row3">
             <select value={st.cg.agents[a]?.model ?? ""} onChange={(e) => agentPref(a, "model", (e.target as HTMLSelectElement).value)} aria-label="Modèle">
               <option value="">Modèle par défaut</option>{(models[a] ?? []).map((m) => <option value={m.id}>{m.label ?? m.id}</option>)}
+              {st.cg.agents[a]?.model && !(models[a] ?? []).some((m) => m.id === st.cg.agents[a]?.model) && <option value={st.cg.agents[a]!.model}>{st.cg.agents[a]!.model}</option>}
             </select>
             <select value={st.cg.agents[a]?.effort ?? ""} onChange={(e) => agentPref(a, "effort", (e.target as HTMLSelectElement).value)} aria-label="Effort">
               <option value="">Effort par défaut</option>{["low", "medium", "high", "xhigh"].map((x) => <option value={x}>Effort {x}</option>)}

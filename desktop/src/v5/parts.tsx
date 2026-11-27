@@ -211,6 +211,26 @@ export function MessageView({ m, busy, onCanvas }: { m: Msg; busy: boolean; onCa
   );
 }
 
+/** Type de média qu'une demande attend, d'après ses mots (pour éviter de demander de la musique à un modèle d'images). */
+export function wantedMedia(text: string): "image" | "video" | "audio" | null {
+  const t = text.toLowerCase();
+  if (/\b(musique|chanson|audio|beat|boucle musicale|mélodie|melodie|bruitage|voix off|podcast|phonk|rap|lo-?fi)\b|\b(un|des|du|le) sons?\b/.test(t)) return "audio";
+  if (/\b(vidéo|video|clip|film|animation|plan de drone|séquence|sequence)\b/.test(t)) return "video";
+  if (/\b(image|photo|affiche|dessin|illustration|logo|portrait|tableau|poster|wallpaper|fond d'écran)\b/.test(t)) return "image";
+  return null;
+}
+export const KIND_LABEL: Record<string, string> = { image: "image", video: "vidéo", audio: "son" };
+
+/** Le modèle de médias le plus adapté à une demande : un vrai générateur de musique pour de la musique, une voix pour une voix. */
+export function bestMediaModel(media: MediaModel[], text: string, kind: "image" | "video" | "audio"): MediaModel | undefined {
+  const pure = media.filter((m) => !m.output.includes("text") && m.output.includes(kind));
+  const t = text.toLowerCase();
+  const prefer = kind === "audio"
+    ? /\b(voix|parle|lis|lecture|narration|narrateur|tts)\b/.test(t) ? /tts|orpheus|elevenlabs-v|voice/i : /lyria|stable-audio|music|suno|\budio\b/i
+    : kind === "video" ? /veo|kling|seedance|runway|sora/i : /nano-banana|gpt-image|flux|imagen|seedream/i;
+  return pure.find((m) => prefer.test(m.id)) ?? pure[0];
+}
+
 export function Welcome({ space, st, onPick }: { space: Space; st: EngineState; onPick: (t: string) => void }) {
   const ideas: Record<Space, string[]> = {
     conversation: ["Explique-moi la différence entre TCP et UDP", "Compare le prix de l'électricité en France depuis 2015, avec un graphique", "Aide-moi à préparer un entretien d'embauche"],
@@ -249,6 +269,7 @@ export function AgentsStrip({ st, t, open, onOpen }: { st: EngineState; t: Threa
       {(["claude", "codex"] as CgAgentId[]).map((id) => {
         const info = st.agents.find((a) => a.id === id);
         const installed = !!info?.installed;
+        const searching = !info && !!st.detecting;
         const z = t.zones[id];
         const stc = installed ? STATUS(z.status) : "idle";
         const model = st.cg.agents[id]?.model;
@@ -257,8 +278,8 @@ export function AgentsStrip({ st, t, open, onOpen }: { st: EngineState; t: Threa
           <div class={`agent ${stc} ${open === id ? "on" : ""}`}>
             <button class="av press" onClick={() => onOpen(id)} title={`Voir ce que fait ${CG_LABEL[id]}`}><Ic i={I.robot} /></button>
             <button class="nm" onClick={() => onOpen(id)} style={{ textAlign: "left" }}>{CG_LABEL[id]}{model && <span class="model">{model}</span>}{st.cg.lead === id && <span class="tag">coordinateur</span>}</button>
-            <span class="st"><i class={`dot ${stc}`} />{STATUS_LABEL(z.status, installed)}</span>
-            <span class="act">{installed ? activityOf(t, id) : "Installe-le pour qu'il participe"}</span>
+            <span class="st"><i class={`dot ${searching ? "busy" : stc}`} />{searching ? "Recherche…" : STATUS_LABEL(z.status, installed)}</span>
+            <span class="act">{searching ? "Eclipse cherche les agents installés" : installed ? activityOf(t, id) : "Installe-le pour qu'il participe"}</span>
             {subs.length > 0 && (
               <div class="subs">
                 {subs.map((s) => <button class="sub press" onClick={() => onOpen(`sub:${s.id}`)} title={s.label}><i class={s.done ? "" : "run"} style={{ "--c": s.color } as any} /><span>{s.label}</span></button>)}
@@ -415,7 +436,7 @@ export function Composer(p: {
             <option value="">{p.media.length ? "Choisir un modèle" : "Aucun modèle de médias"}</option>
             {groups.map(([k, ms]) => (
               <optgroup label={k}>
-                {ms.map((m) => <option value={`${m.provider}/${m.id}`}>{m.id}</option>)}
+                {ms.map((m) => <option value={`${m.provider}/${m.id}`}>{m.id} · {m.output.filter((o) => o !== "text").map((o) => KIND_LABEL[o] ?? o).join(" + ")}</option>)}
               </optgroup>
             ))}
           </select>

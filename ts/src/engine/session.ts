@@ -72,6 +72,7 @@ export class EngineSession {
   models: Record<string, ModelInfo[]> = {}
   keyState: Record<string, string> = {}
   busy = false
+  detecting = true // recherche des agents installés en cours (quelques secondes au démarrage)
   cgSessions: Partial<Record<CgAgent, string>> = {}
   agentSessions: Record<string, string> = {}
   private abort: AbortController | null = null
@@ -90,7 +91,12 @@ export class EngineSession {
   }
 
   async init(): Promise<void> {
-    this.detected = await detect({ withVersion: true, manual: this.st.agentPaths })
+    try {
+      this.detected = await detect({ withVersion: true, manual: this.st.agentPaths })
+    } finally {
+      this.detecting = false
+      this.emit({ type: "state" })
+    }
     this.skills = discoverSkills(this.cwd)
     this.mcp.start(this.cwd, () => this.emit({ type: "state" }))
     for (const p of PROVIDERS) this.loadProvider(p.id)
@@ -182,7 +188,7 @@ export class EngineSession {
     const msgs = this.mem.messages(id).filter((m) => m.role === "user" || m.role === "assistant")
     if (this.busy) throw new Error("une réponse est en cours : attendez la fin ou arrêtez-la avant d'ouvrir une autre discussion")
     this.conv = id
-    this.title = row?.title ?? ""
+    this.title = (row?.title ?? "").replace(/^\[(cg|work|media)\]\s*/, "") // étiquette interne d'espace : jamais affichée
     if (row) this.district = row.district_id
     // une discussion de travail se reprend dans SON projet (fichiers, skills, serveurs MCP), jamais dans le projet actif
     const dpath = row ? (this.mem.db.query("SELECT path FROM districts WHERE id=?").get(row.district_id) as { path: string | null } | null)?.path : null
@@ -224,7 +230,7 @@ export class EngineSession {
       deepResearch: Object.values(this.models).flat().filter((m) => /deep-research|researcher/i.test(m.id)).map((m) => ({ provider: m.provider, id: m.id })),
       recents: this.st.recents.slice(0, 8), busy: this.busy, title: this.title, conv: this.conv, space: this.space,
       perm: this.perms.mode, bypassVerified: this.perms.bypassVerified, sandbox: this.st.prefs.sandbox !== false && sandboxAvailable().ok,
-      agents: this.detected.map((d) => ({ id: d.id, label: d.label, installed: d.installed, version: d.version, install: d.install })),
+      agents: this.detected.map((d) => ({ id: d.id, label: d.label, installed: d.installed, version: d.version, install: d.install })), detecting: this.detecting,
       providers: PROVIDERS.map((p) => ({ id: p.id, label: p.label, recommended: !!p.recommended, local: !!p.local, key: this.keyState[p.id] ?? "…", models: this.models[p.id]?.length ?? 0 })),
       mcp: this.mcp.status, skills: this.skills.length, todos: this.todos,
       cg: { lead: this.st.prefs.cgLead ?? "codex", mode: this.st.prefs.cgMode ?? "auto", review: this.st.prefs.cgReview !== false, subagents: this.st.prefs.cgSubagents !== false, agents: this.st.prefs.agents ?? {} },
@@ -287,7 +293,9 @@ export class EngineSession {
       else final = await this.api(text, space, opts.canvas)
       if (final && !this.abort.signal.aborted) {
         this.history.push({ role: "user", content: text }, { role: "assistant", content: final })
-        this.mem.append(this.conv!, "assistant", final, { space, model: this.st.current?.model })
+        // le modèle réellement utilisé (en Médias, c'est le modèle de médias choisi, pas le modèle de discussion)
+        const used = space === "medias" ? opts.mediaModel?.id : opts.cg ? "claude+codex" : this.st.current?.model ?? this.st.current?.provider
+        this.mem.append(this.conv!, "assistant", final, { space, model: used })
       }
     } catch (e) {
       this.emit({ type: "notice", text: (e as Error).message, level: "error" })

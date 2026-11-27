@@ -40,7 +40,7 @@ export const COMMANDS: Command[] = [
   { name: "sessions", aliases: ["resume", "continue"], desc: "Lister et reprendre une session", keys: "ctrl+x l", origin: "les deux", ready: true },
   { name: "open", aliases: ["project", "projects"], desc: "Ouvrir une session ou un projet", origin: "opencode", ready: true },
   { name: "cd", desc: "Changer de dossier de travail", usage: "/cd CHEMIN", origin: "opencode", ready: true },
-  { name: "voice", aliases: ["voix", "appel"], desc: "Appel vocal : parlez, la réponse est lue à voix haute (transcription et voix sur ce PC)", usage: "/voice [installer | état | rapide | précis]", origin: "eclipse", ready: true },
+  { name: "voice", aliases: ["voix", "dictee", "dictée"], desc: "Dictée : parlez, le texte s'écrit dans la saisie (transcription d'OpenAI, rien n'est lu à voix haute)", usage: "/voice [état]", origin: "eclipse", ready: true },
   { name: "projet", desc: "Créer ou reprendre un projet (un dossier par projet dans ~/Projets)", usage: "/projet [NOM]", origin: "eclipse", ready: true },
   { name: "rename", desc: "Renommer la session", usage: "/rename TITRE", keys: "ctrl+r", origin: "eclipse", ready: true },
   { name: "fork", desc: "Dupliquer la session (branche indépendante)", origin: "eclipse", ready: true },

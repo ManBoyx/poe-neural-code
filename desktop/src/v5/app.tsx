@@ -9,7 +9,7 @@ import { ApiError, connect, events, get, isDesktop, post, restartEngine, type En
 import { I } from "./icons";
 import { safeUrl } from "./markdown";
 import { Lightbox, ModelPicker, PermModal, ProjectChooser, Settings, UsageView } from "./modals";
-import { AgentSheet, AgentsStrip, CanvasPanel, Composer, MessageView, Rail, railHasContent, Sidebar, StatusBar, Welcome } from "./parts";
+import { AgentSheet, AgentsStrip, bestMediaModel, CanvasPanel, Composer, KIND_LABEL, MessageView, Rail, railHasContent, Sidebar, StatusBar, wantedMedia, Welcome } from "./parts";
 import { emptyThread, fromHistory, lastCanvas, reduce, settle, type ThreadState } from "./thread";
 
 type Action = { t: "ev"; e: any; cg: boolean; canvas?: boolean } | { t: "set"; s: ThreadState } | { t: "settle" };
@@ -235,7 +235,12 @@ export function App() {
   const send = async (text: string, force?: Space) => {
     const sp = force ?? space;
     if (!st || st.busy || !text.trim()) return;
-    if (sp === "medias" && !mediaModel) return toast("Choisissez d'abord un modèle d'image, de vidéo ou de son.", "warn");
+    if (sp === "medias" && !mediaModel) return toast("Choisis d'abord un modèle d'image, de vidéo ou de son.", "warn");
+    if (sp === "medias" && mediaModel) {
+      const want = wantedMedia(text);
+      if (want && !mediaModel.output.includes(want))
+        return toast(`${mediaModel.id} crée ${mediaModel.output.filter((o) => o !== "text").map((o) => "des " + (o === "audio" ? "sons" : o === "video" ? "vidéos" : "images")).join(" et ")}. Pour ${want === "audio" ? "un son" : want === "video" ? "une vidéo" : "une image"}, choisis un modèle du groupe ${KIND_LABEL[want] === "son" ? "Son" : KIND_LABEL[want] === "vidéo" ? "Vidéo" : "Images"}.`, "warn");
+    }
     cgPending.current = sp === "work" && cgOn;
     canvasPending.current = canvasOn && sp !== "medias" && !cgPending.current && st.current?.kind === "api";
     stick.current = true;
@@ -309,7 +314,17 @@ export function App() {
         {cgView && <AgentsStrip st={st} t={thread} open={sheet} onOpen={(k) => setSheet((cur) => (cur === k ? null : k))} />}
         <div class="scroller" ref={scroller} onScroll={onScroll}>
           <div class="thread">
-            {empty ? <Welcome space={space} st={st} onPick={(t) => (space === "work" && st.needsProject ? setOverlay({ kind: "project", text: t }) : setDraft(t))} />
+            {empty ? <Welcome space={space} st={st} onPick={(t) => {
+              if (space === "work" && st.needsProject) return setOverlay({ kind: "project", text: t });
+              if (space === "medias") {
+                const want = wantedMedia(t);
+                if (want && !mediaModel?.output.includes(want)) {
+                  const m = bestMediaModel(media, t, want);
+                  if (m) { setMediaModel(m); toast(`Modèle de ${KIND_LABEL[want]} choisi : ${m.id}`); }
+                }
+              }
+              setDraft(t);
+            }} />
               : thread.msgs.map((m) => <MessageView m={m} busy={busy} onCanvas={() => setCanvasOpen(true)} />)}
           </div>
         </div>

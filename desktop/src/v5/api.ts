@@ -89,6 +89,7 @@ export interface EngineState {
   recents: (Choice & { at: number })[]; busy: boolean; title: string; conv: number | null; space: Space;
   perm: string; bypassVerified: boolean; sandbox: boolean;
   agents: { id: string; label: string; installed: boolean; version?: string; install?: string }[];
+  detecting?: boolean;
   providers: { id: string; label: string; recommended: boolean; local: boolean; key: string; models: number }[];
   mcp: McpStatus[]; skills: number; todos: { text: string; status: string }[];
   cg: { lead: "claude" | "codex"; mode: "auto" | "seul" | "delegue"; review: boolean; subagents: boolean; agents: Record<string, { model?: string; effort?: string; power?: string }> };

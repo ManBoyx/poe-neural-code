@@ -207,6 +207,10 @@ pub fn open_logs(app: AppHandle) -> Result<String, String> {
 mod tests {
     use super::*;
 
+    /// Ces tests modifient des variables d'environnement du processus (ECLIPSE_ENGINE, PNC_HOME) : un verrou commun
+    /// les empêche de se marcher dessus quand cargo les lance en parallèle.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn ready_line_is_parsed() {
         let i: EngineInfo = serde_json::from_str(r#"{"event": "ready", "port": 41234, "token": "abc"}"#).unwrap();
@@ -249,6 +253,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn real_process_start_crash_detection_and_restart() {
+        let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("eclipse-engine-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -293,6 +298,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn portable_mode_keeps_data_next_to_executable() {
+        let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use std::os::unix::fs::PermissionsExt;
         let exe_dir = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
         let marker = exe_dir.join(paths::PORTABLE_MARKER);

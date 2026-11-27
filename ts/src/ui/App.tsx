@@ -183,65 +183,47 @@ export function App(props: { cwd: string }) {
   const [cgTab, setCgTab] = createSignal("ensemble")
   let beforeCg: number | null = null
   const warnedSnap = new Set<string>()
-  // appel vocal (/voice) : écoute, transcription locale, réponse lue à voix haute, puis réécoute
+  // dictée (/voice) : tu parles, le texte s'écrit dans la saisie (transcription d'OpenAI) ; rien n'est lu à voix haute
   const [voiceOn, setVoiceOn] = createSignal(false)
-  const [voiceState, setVoiceState] = createSignal<"écoute" | "transcription" | "réponse" | "lecture">("écoute")
+  const [voiceState, setVoiceState] = createSignal<"écoute" | "transcription">("écoute")
   const [voiceLevel, setVoiceLevel] = createSignal(0)
   let voiceListener: { stop: () => void; pause: (on: boolean) => void } | null = null
-  let stopSpeech: (() => void) | null = null
 
-  function hangUp(msg = "Appel vocal terminé.") {
+  function hangUp(msg = "Dictée annulée.") {
     voiceListener?.stop()
     voiceListener = null
-    stopSpeech?.()
-    stopSpeech = null
     setVoiceOn(false)
-    note(msg)
-  }
-
-  async function onUtterance(pcm: Int16Array, s: V.VoiceSetup) {
-    if (!voiceOn() || voiceState() !== "écoute") return
-    voiceListener?.pause(true)
-    setVoiceState("transcription")
-    const r = await V.transcribe(s, pcm, getLang())
-    if (!voiceOn()) return
-    if (!r.ok || !r.text || r.text.length < 2) {
-      if (!r.ok) note(`Voix : ${r.reason}`, "warn")
-      setVoiceState("écoute")
-      return voiceListener?.pause(false)
-    }
-    if (/^(raccroche|fin de l'appel|termine l'appel|au revoir)\.?$/i.test(r.text.trim())) return hangUp()
-    setVoiceState("réponse")
-    const before = items.length
-    await send(r.text)
-    if (!voiceOn()) return
-    // réponse lue à voix haute : dernière réponse de ce tour
-    const answer = items.slice(before).filter((x) => x.role === "assistant" && x.text && x.level !== "error").map((x) => x.text).join("\n\n")
-    const speech = V.speakable(answer || "Je n'ai pas de réponse à lire. Regardez l'écran.")
-    setVoiceState("lecture")
-    stopSpeech = V.speak(s, speech, () => {
-      stopSpeech = null
-      if (!voiceOn()) return
-      setVoiceState("écoute")
-      voiceListener?.pause(false)
-    })
+    if (msg) flash(msg)
   }
 
   async function startVoice() {
-    const s = V.setup(prefs().voiceModel)
-    if (s.missing.length) return note("Voix indisponible :\n" + s.missing.map((m) => "  - " + m).join("\n"), "warn")
-    if (busy()) return flash(t("Une réponse est en cours (échap pour interrompre)."))
+    const s = V.setup()
+    if (!s.record) return note("Dictée indisponible : enregistreur absent (paquet alsa-utils, commande arecord).", "warn")
+    const k = await keyFor(provider("openai")!)
+    if (!k.ok) return note("La dictée utilise la transcription d'OpenAI (celle de ChatGPT) : ajoutez une clé OpenAI avec /connect.", "warn")
     setVoiceOn(true)
     setVoiceState("écoute")
     voiceListener = V.listen(s, {
-      onUtterance: (pcm) => { onUtterance(pcm, s) },
+      onUtterance: async (pcm) => {
+        if (!voiceOn() || voiceState() !== "écoute") return
+        voiceListener?.stop()
+        voiceListener = null
+        setVoiceState("transcription")
+        const r = await V.transcribeCloud(pcm, k.key, getLang())
+        if (!voiceOn()) return
+        setVoiceOn(false)
+        if (!r.ok) return note(`Dictée : ${r.reason}`, "warn")
+        if (!r.text) return flash("Rien entendu.")
+        const before = (prompt?.plainText ?? draft()).trimEnd()
+        const text = before ? `${before} ${r.text}` : r.text
+        prompt?.setText(text)
+        setDraft(text)
+      },
       onLevel: (l) => setVoiceLevel(l),
-      onError: (m) => { if (voiceOn()) hangUp(`Appel vocal arrêté : ${m}`) },
+      onError: (m) => { if (voiceOn()) hangUp(`Dictée arrêtée : ${m}`) },
     })
-    const who = current()?.kind === "agent" ? agentName(current()!.provider) : cgOn() ? "Claude Code et Codex" : current()?.model ?? "le modèle"
-    note(`Appel vocal avec ${who} : parlez, Eclipse transcrit (whisper, sur ce PC), envoie, puis lit la réponse (piper). ` +
-         "Échap coupe la voix ou interrompt la réponse · dites « raccroche » ou tapez /voice pour terminer.")
-  } // discussion en cours avant d'entrer dans /cg, retrouvée à la sortie
+  }
+  // discussion en cours avant d'entrer dans /cg, retrouvée à la sortie
   const emptyZone = (label: string): Zone => ({ status: "en attente", entries: [], input: 0, output: 0, label, subs: [] })
   const [cgModels, setCgModels] = createSignal<Partial<Record<CgAgent, AgentModel[]>>>({})
   /** Ajoute une ligne dans la zone d'un agent, ou dans celle de son sous-agent (parent). */
@@ -1135,21 +1117,12 @@ export function App(props: { cwd: string }) {
         })), (v) => { closeOverlay(); loadConversation(Number(v)) })
       }
       case "voice": {
-        if (arg === "installer" || arg === "install") {
-          setBusy(true)
-          const r = await V.install((step) => setActivity(`installation de la voix : ${step}`))
-          setBusy(false)
-          return note(r.ok ? r.message + " Tapez /voice pour appeler." : `Installation de la voix impossible : ${r.message}`, r.ok ? "info" : "error")
-        }
-        if (arg === "précis" || arg === "precis" || arg === "rapide") {
-          updatePrefs({ voiceModel: arg === "rapide" ? "base" : "small" })
-          return note(arg === "rapide" ? "Transcription rapide (modèle base, environ 3 s par phrase)." : "Transcription précise (modèle small, environ 10 s par phrase sur ce PC).")
-        }
         if (arg === "état" || arg === "etat" || arg === "status") {
-          const s = V.setup(prefs().voiceModel)
-          return note(`Voix : transcription ${s.whisper && s.model ? "whisper.cpp (" + s.model.split("/").pop() + ")" : "absente"} · voix ${s.piper && s.voice ? "piper (fr_FR-siwis)" : s.espeak ? "espeak-ng (robotique)" : "absente"} · micro ${s.record ? "arecord" : "absent"}` +
-                      (s.missing.length ? "\nManque : " + s.missing.join(" ; ") : ""))
+          const s = V.setup()
+          const k = await keyFor(provider("openai")!)
+          return note(`Dictée : micro ${s.record ? "prêt (arecord)" : "absent (paquet alsa-utils)"} · transcription ${k.ok ? "OpenAI, prête" : "OpenAI, clé à ajouter avec /connect"}. Rien n'est lu à voix haute.`)
         }
+        if (arg) return note("Usage : /voice pour dicter (le texte s'écrit dans la saisie), /voice état. Whisper et la voix lue ne sont plus utilisés.")
         return voiceOn() ? hangUp() : startVoice()
       }
       case "projet": {
@@ -1885,8 +1858,8 @@ export function App(props: { cwd: string }) {
         setExitArmed(Date.now())
         flash(t("Ctrl+C encore une fois pour quitter."))
       }
-    } else if (k.name === "escape" && stopSpeech) {
-      stopSpeech() // coupe la lecture ; l'écoute reprend
+    } else if (k.name === "escape" && voiceOn()) {
+      hangUp() // annule la dictée en cours
     } else if (k.name === "escape" && abort) {
       abort.abort()
       const g = goal()
@@ -1933,7 +1906,7 @@ export function App(props: { cwd: string }) {
           <Show when={goal()?.active}><text fg={C.detected}>{"  · objectif en cours"}</text></Show>
         </box>
         <Show when={voiceOn()}>
-          <text fg={C.recent} height={1}>{`${I.agent} Appel vocal · ${voiceState() === "écoute" ? "écoute " + "▁▂▃▄▅▆▇█".slice(0, Math.max(1, Math.round(voiceLevel() * 8))) + " parlez" : voiceState() === "transcription" ? spinner() + " transcription" : voiceState() === "réponse" ? spinner() + " réponse en cours" : spinner() + " lecture (échap pour couper)"} · « raccroche » ou /voice pour terminer`}</text>
+          <text fg={C.recent} height={1}>{`Dictée · ${voiceState() === "écoute" ? "écoute " + "▁▂▃▄▅▆▇█".slice(0, Math.max(1, Math.round(voiceLevel() * 8))) + " parle, le texte s'écrit quand tu t'arrêtes" : spinner() + " transcription"} · échap ou /voice pour annuler`}</text>
         </Show>
         <Show when={busy()}>
           <text fg={C.warn} height={1}>{`${spinner()} ${(activity() || t("en cours…")).slice(0, Math.max(10, dims().width - 50))} · ${elapsed()} · échap pour interrompre`}</text>
