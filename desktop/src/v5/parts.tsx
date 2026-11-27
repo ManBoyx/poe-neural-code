@@ -437,13 +437,28 @@ export function Composer(p: {
     el.style.height = Math.min(240, el.scrollHeight) + "px";
   }, [p.draft]);
   useEffect(() => { ta.current?.focus(); }, [p.space]);
+  // événements de composition abonnés directement (Preact ne les relie pas sous leur nom en casse mixte)
+  useEffect(() => {
+    const el = ta.current;
+    if (!el) return;
+    const on = () => (composing.current = true);
+    const off = () => (composing.current = false);
+    el.addEventListener("compositionstart", on);
+    el.addEventListener("compositionend", off);
+    return () => { el.removeEventListener("compositionstart", on); el.removeEventListener("compositionend", off); };
+  }, [ta.current]);
   const send = () => {
     if ((!p.draft.trim() && !p.images.length) || p.busy) return;
     p.onSend(p.draft);
     setHi(-1);
   };
+  // Entrée envoie, Maj+Entrée revient à la ligne. La composition (accents, IBus) est suivie ici : sous Linux, WebKit
+  // marque parfois toutes les touches « en composition », ce qui empêchait Entrée d'envoyer.
+  const composing = useRef(false);
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); return; }
+    const enter = e.key === "Enter" || e.keyCode === 13;
+    if (enter && e.shiftKey) return; // retour à la ligne
+    if (enter && !composing.current && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); send(); return; }
     // ↑ ↓ dans une saisie vide (ou déjà dans l'historique) : messages précédents
     if ((e.key === "ArrowUp" || e.key === "ArrowDown") && (!p.draft || hi >= 0) && p.history.length) {
       e.preventDefault();
@@ -480,7 +495,7 @@ export function Composer(p: {
           {listening ? "Je t'écoute… (le texte s'écrit quand tu t'arrêtes de parler)" : "Transcription…"}
         </div>
       ) : (
-        <textarea ref={ta} rows={1} value={p.draft} onInput={(e) => p.setDraft((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey as any} onPaste={onPaste as any}
+        <textarea ref={ta} rows={1} value={p.draft} onInput={(e) => p.setDraft((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey as any} onPaste={onPaste as any} onBlur={() => (composing.current = false)}
           placeholder={p.space === "medias" ? "Décris ce qu'il faut créer" : p.space === "work" ? (p.cgOn ? "Demande à Claude Code et Codex" : "Que faut-il faire dans le projet ?") : "Écris ton message"}
           aria-label="Message" />
       )}
