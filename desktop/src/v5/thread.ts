@@ -25,6 +25,7 @@ export interface Msg {
   thinkStart?: number; // début et fin de la réflexion visible
   thinkEnd?: number;
   canvas?: boolean; // réponse en mode canevas (le document s'affiche à côté)
+  images?: string[]; // images collées avec un message de l'utilisateur (aperçus)
 }
 
 export const SUB_COLORS = ["#e87ba4", "#3987e5", "#c98500", "#199e70", "#d95926", "#9085e9", "#22b8cf", "#e66767"];
@@ -77,12 +78,12 @@ function toZone(s: ThreadState, who: string | undefined, b: Block): ThreadState 
 }
 
 /** Applique un événement du moteur. `cg` : le message envoyé était un tour /cg (connu de l'interface). */
-export function reduce(s: ThreadState, e: any, opts: { cg: boolean; canvas?: boolean } = { cg: false }): ThreadState {
+export function reduce(s: ThreadState, e: any, opts: { cg: boolean; canvas?: boolean; images?: string[] } = { cg: false }): ThreadState {
   const now = Date.now();
   switch (e.type) {
     case "turn": {
       const seq = s.seq + 2;
-      const user: Msg = { id: seq - 1, role: "user", text: e.text, blocks: [], space: e.space };
+      const user: Msg = { id: seq - 1, role: "user", text: e.text, blocks: [], space: e.space, images: opts.images?.length ? opts.images : undefined };
       const bot: Msg = { id: seq, role: "assistant", text: "", blocks: [], space: e.space, cg: opts.cg, started: now, canvas: !!opts.canvas };
       const fresh = opts.cg ? { zones: emptyThread().zones, phase: "Le coordinateur lit la demande…" } : {};
       return { ...s, ...fresh, subs: [], cgTurn: opts.cg, seq, msgs: [...s.msgs, user, bot] };

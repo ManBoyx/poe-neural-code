@@ -14,8 +14,8 @@ export const PERM_LABEL: Record<PermMode, string> = {
   demander: "tout confirmer (recommandé)",
   modifications: "modifications du projet acceptées d'office, commandes confirmées",
   lecture: "lecture seule : aucune écriture ni commande",
-  bypass: "tout dans le projet sans confirmation, commandes comprises (enfermées dans le projet) ; hors du projet, on demande (mot de passe)",
-  "bypass-total": "TOUT sur le PC sans aucune confirmation, commandes libres (mot de passe demandé)",
+  bypass: "tout dans le projet sans confirmation, commandes comprises",
+  "bypass-total": "TOUT sur le PC sans confirmation, commandes libres",
 }
 
 export interface Request {

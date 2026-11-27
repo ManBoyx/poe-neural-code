@@ -1,6 +1,6 @@
 /** Éléments de l'interface : barre latérale, fil, agents /cg, saisie, barre d'état, colonne de droite. */
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { EngineState, MediaModel, SessionRow, Space } from "./api";
+import { copyText, imageFileToDataUrl, readClipboardImage, type EngineState, type MediaModel, type SessionRow, type Space } from "./api";
 import { chartHtml, parseChart } from "./chart";
 import { I } from "./icons";
 import { chartsIn, mediaIn, renderMarkdown } from "./markdown";
@@ -181,8 +181,26 @@ function splitCanvas(text: string): { before: string; after: string; has: boolea
   return { before: text.slice(0, i), after: j < 0 ? "" : text.slice(j + 3), has: true };
 }
 
+function CopyButton({ text, title = "Copier" }: { text: () => string; title?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button class="mini press" title={done ? "Copié" : title} onClick={() => copyText(text()).then((ok) => { if (ok) { setDone(true); setTimeout(() => setDone(false), 1400); } })}>
+      <Ic i={done ? I.check : I.copy} />
+    </button>
+  );
+}
+
 export function MessageView({ m, busy, onCanvas }: { m: Msg; busy: boolean; onCanvas?: () => void }) {
-  if (m.role === "user") return <div class="msg user"><div class="bubble">{m.text}</div></div>;
+  if (m.role === "user")
+    return (
+      <div class="msg user">
+        <div class="user-col">
+          {m.images && <div class="user-imgs">{m.images.map((u) => <img src={u} alt="image jointe" />)}</div>}
+          {m.text && <div class="bubble">{m.text}</div>}
+          <div class="user-foot"><CopyButton text={() => m.text} title="Copier le message" /></div>
+        </div>
+      </div>
+    );
   const running = !m.done && busy;
   const texts = m.blocks.filter((b) => b.k === "text") as Extract<Block, { k: "text" }>[];
   const notices = m.blocks.filter((b) => b.k === "notice") as Extract<Block, { k: "notice" }>[];
@@ -203,7 +221,7 @@ export function MessageView({ m, busy, onCanvas }: { m: Msg; busy: boolean; onCa
         {m.done && (
           <div class="msg-foot">
             <span>{m.interrupted ? "Interrompu · " : ""}{m.seconds ? secs(m.seconds * 1000) : ""}{m.tokens ? ` · ${fmtTok(m.tokens)} tokens` : ""}</span>
-            <button class="mini press" title="Copier la réponse" onClick={() => navigator.clipboard?.writeText(msgText(m)).catch(() => {})}><Ic i={I.copy} /></button>
+            <CopyButton text={() => msgText(m)} title="Copier la réponse" />
           </div>
         )}
       </div>
@@ -384,7 +402,28 @@ export function Composer(p: {
   canvasOn: boolean; setCanvasOn: (b: boolean) => void; onOption: (name: string, v: boolean) => void; onDeep: () => void;
   onModels: () => void; onEffort: (v: string | null) => void; media: MediaModel[]; mediaModel: MediaModel | null; setMediaModel: (m: MediaModel | null) => void;
   voice: { state: string; level: number }; onDictate: () => void; onStopDictate: () => void; draft: string; setDraft: (s: string) => void; history: string[];
+  images: string[]; setImages: (f: (cur: string[]) => string[]) => void; onError: (msg: string) => void;
 }) {
+  const addFiles = async (files: File[]) => {
+    const imgs = files.filter((f) => /^image\/(png|jpeg|webp|gif)$/.test(f.type));
+    if (files.length && !imgs.length) return p.onError("Seules les images (PNG, JPEG, WebP, GIF) peuvent être jointes.");
+    for (const f of imgs) {
+      try {
+        const url = await imageFileToDataUrl(f);
+        p.setImages((cur) => (cur.length >= 6 ? (p.onError("6 images au plus par message."), cur) : [...cur, url]));
+      } catch (e: any) { p.onError(e.message); }
+    }
+  };
+  const onPaste = async (e: ClipboardEvent) => {
+    const files = [...(e.clipboardData?.items ?? [])].filter((i) => i.kind === "file").map((i) => i.getAsFile()).filter(Boolean) as File[];
+    if (files.length) { e.preventDefault(); return addFiles(files); }
+    // rien de collé comme fichier ni comme texte : l'image est peut-être dans le presse-papiers du système
+    if (!(e.clipboardData?.getData("text/plain") ?? "")) {
+      const url = await readClipboardImage();
+      if (url) p.setImages((cur) => (cur.length >= 6 ? cur : [...cur, url]));
+    }
+  };
+  const [dragging, setDragging] = useState(false);
   const ta = useRef<HTMLTextAreaElement>(null);
   const [hi, setHi] = useState(-1);
   const [menu, setMenu] = useState(false);
@@ -399,7 +438,7 @@ export function Composer(p: {
   }, [p.draft]);
   useEffect(() => { ta.current?.focus(); }, [p.space]);
   const send = () => {
-    if (!p.draft.trim() || p.busy) return;
+    if ((!p.draft.trim() && !p.images.length) || p.busy) return;
     p.onSend(p.draft);
     setHi(-1);
   };
@@ -421,14 +460,27 @@ export function Composer(p: {
     .map(([k, l]) => [l, p.media.filter((m) => cat(m) === k)] as [string, MediaModel[]])
     .filter((g) => g[1].length);
   return (
-    <div class="composer">
+    <div class={`composer ${dragging ? "drop" : ""}`}
+      onDragOver={(e) => { if ([...(e.dataTransfer?.items ?? [])].some((i) => i.kind === "file")) { e.preventDefault(); setDragging(true); } }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => { const f = [...(e.dataTransfer?.files ?? [])]; if (f.length) { e.preventDefault(); setDragging(false); addFiles(f); } }}>
+      {p.images.length > 0 && (
+        <div class="attach-row">
+          {p.images.map((u, i) => (
+            <div class="attach">
+              <img src={u} alt={`image ${i + 1}`} />
+              <button class="attach-x press" title="Retirer l'image" onClick={() => p.setImages((cur) => cur.filter((_, j) => j !== i))}><Ic i={I.close} /></button>
+            </div>
+          ))}
+        </div>
+      )}
       {listening || transcribing ? (
         <div class="listening" role="status">
           <span class="meter" style={{ "--l": String(Math.min(1, p.voice.level * 6)) } as any}><i /><i /><i /></span>
           {listening ? "Je t'écoute… (le texte s'écrit quand tu t'arrêtes de parler)" : "Transcription…"}
         </div>
       ) : (
-        <textarea ref={ta} rows={1} value={p.draft} onInput={(e) => p.setDraft((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey as any}
+        <textarea ref={ta} rows={1} value={p.draft} onInput={(e) => p.setDraft((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey as any} onPaste={onPaste as any}
           placeholder={p.space === "medias" ? "Décris ce qu'il faut créer" : p.space === "work" ? (p.cgOn ? "Demande à Claude Code et Codex" : "Que faut-il faire dans le projet ?") : "Écris ton message"}
           aria-label="Message" />
       )}
@@ -478,7 +530,7 @@ export function Composer(p: {
         {p.busy ? (
           <button class="send stop press" onClick={p.onStop} title="Arrêter (Échap)"><Ic i={I.stop} /></button>
         ) : (
-          <button class="send press" onClick={send} disabled={!p.draft.trim()} title="Envoyer (Entrée)"><Ic i={I.send} /></button>
+          <button class="send press" onClick={send} disabled={!p.draft.trim() && !p.images.length} title="Envoyer (Entrée)"><Ic i={I.send} /></button>
         )}
       </div>
     </div>
@@ -559,7 +611,7 @@ export function CanvasPanel(p: { html: string; streaming: boolean; edited: boole
         {p.streaming && <span class="dim small" style={{ display: "inline-flex", gap: "6px", alignItems: "center" }}><span class="spin" />S'écrit en direct</span>}
         {p.edited && !p.streaming && <button class="chip-btn press" onClick={p.onReset} title="Revenir à la version du modèle">Retouché à la main · annuler</button>}
         <span class="grow" />
-        <button class="icon-btn press" title="Copier le HTML" onClick={() => navigator.clipboard?.writeText(p.html).catch(() => {})}><Ic i={I.copy} /></button>
+        <button class="icon-btn press" title="Copier le HTML" onClick={() => copyText(p.html)}><Ic i={I.copy} /></button>
         <button class="icon-btn press" title="Fermer le canevas" onClick={p.onClose}><Ic i={I.close} /></button>
       </div>
       {tab === "apercu"

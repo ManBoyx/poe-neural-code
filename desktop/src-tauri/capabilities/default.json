@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Droits de la fenêtre principale : strict minimum (presse-papiers texte, liens web, choix d'un dossier).",
+  "description": "Droits de la fenêtre principale : strict minimum (presse-papiers texte et lecture d'image collée, liens web, choix d'un dossier).",
   "windows": [
     "main"
   ],
@@ -9,6 +9,7 @@
     "core:default",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-image",
     "opener:allow-open-url",
     "dialog:allow-open",
     "dialog:allow-save"

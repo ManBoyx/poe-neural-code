@@ -11,7 +11,7 @@ import { setKey } from "./core/secrets"
 import { verifyPassword } from "./core/auth"
 import { needsProject } from "./core/protect"
 import * as V from "./core/voice"
-import { EngineSession, type EngineEvent, type Space } from "./engine/session"
+import { cleanImages, EngineSession, type EngineEvent, type Space } from "./engine/session"
 import { approveFingerprint, pendingProject, revoke } from "./core/mcp"
 
 const args = process.argv.slice(2)
@@ -146,7 +146,7 @@ const server = Bun.serve({
         const space = (b.space ?? "conversation") as Space
         if (S.busy) return json({ error: "une réponse est en cours" }, 409)
         if (space === "work" && needsProject(S.cwd)) return json({ error: "projet requis", propose: S.proposeProject(String(b.text ?? "")) }, 412)
-        S.send(String(b.text ?? ""), space, { cg: !!b.cg, mediaModel: b.mediaModel, canvas: typeof b.canvas === "string" ? b.canvas : b.canvas === true ? "" : undefined }).catch(() => {})
+        S.send(String(b.text ?? ""), space, { cg: !!b.cg, mediaModel: b.mediaModel, canvas: typeof b.canvas === "string" ? b.canvas : b.canvas === true ? "" : undefined, images: cleanImages(b.images) }).catch(() => {})
         return json({ ok: true }, 202)
       }
       if (p === "/api/interrupt") return (S.interrupt(), json({ ok: true }))

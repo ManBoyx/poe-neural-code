@@ -40,6 +40,68 @@ export async function restartEngine(): Promise<void> {
   token = info.token;
 }
 
+/** Copie du texte : presse-papiers du système via Tauri dans l'application (celui du navigateur y est peu fiable). */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (isDesktop) {
+      const { writeText } = await import("@tauri-apps/plugin-clipboard-manager");
+      await writeText(text);
+      return true;
+    }
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // dernier recours : sélection temporaire + commande de copie du moteur web
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    } catch { return false; }
+  }
+}
+
+/** Image du presse-papiers (quand le collage ne transmet pas de fichier) en PNG, ou null. */
+export async function readClipboardImage(): Promise<string | null> {
+  if (!isDesktop) return null;
+  try {
+    const { readImage } = await import("@tauri-apps/plugin-clipboard-manager");
+    const img = await readImage();
+    const { width, height } = await img.size();
+    const rgba = await img.rgba();
+    const c = document.createElement("canvas");
+    c.width = width; c.height = height;
+    c.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
+    return c.toDataURL("image/png");
+  } catch { return null; }
+}
+
+/** Fichier image -> data URL, réduit (2048 px au plus, JPEG) s'il est grand, pour rester sous les limites des modèles. */
+export function imageFileToDataUrl(f: File): Promise<string> {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onerror = () => rej(new Error("lecture de l'image impossible"));
+    r.onload = () => {
+      const url = String(r.result);
+      const im = new Image();
+      im.onerror = () => rej(new Error("image illisible"));
+      im.onload = () => {
+        const max = 2048;
+        if (f.size <= 3_500_000 && im.width <= max && im.height <= max) return res(url);
+        const k = Math.min(1, max / Math.max(im.width, im.height));
+        const c = document.createElement("canvas");
+        c.width = Math.round(im.width * k); c.height = Math.round(im.height * k);
+        c.getContext("2d")!.drawImage(im, 0, 0, c.width, c.height);
+        res(c.toDataURL("image/jpeg", 0.9));
+      };
+      im.src = url;
+    };
+    r.readAsDataURL(f);
+  });
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public body: any) { super(message); }
 }

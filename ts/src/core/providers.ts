@@ -141,7 +141,9 @@ export function parseGeneric(providerId: string, data: any[]): ModelInfo[] {
   return data.map((d) => {
     const pIn = d.pricing?.prompt != null ? Number(d.pricing.prompt) * 1e6 : undefined
     const pOut = d.pricing?.completion != null ? Number(d.pricing.completion) * 1e6 : undefined
+    const arch = d.architecture ?? {}
     return { id: d.id, provider: providerId, context: d.context_length ?? d.context_window ?? undefined, priceIn: pIn, priceOut: pOut,
+             input: Array.isArray(arch.input_modalities) ? arch.input_modalities : undefined, output: Array.isArray(arch.output_modalities) ? arch.output_modalities : undefined,
              free: pIn === 0 && pOut === 0 ? true : undefined,
              tools: Array.isArray(d.supported_parameters) ? d.supported_parameters.includes("tools") : undefined }
   })

@@ -9,7 +9,8 @@
  * Les événements (texte, réflexion, outils, sous-agents, phases de /cg, autorisations, consommation) partent vers
  * l'écran par un rappel ; le serveur HTTP les relaie.
  */
-import { existsSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
 import { Budget, estimateUsd } from "../core/budget"
 import { cgTurn, CG_LABEL, type CgAgent, type CgMode } from "../core/cg"
 import { streamChat, type Msg } from "../core/chat"
@@ -42,6 +43,18 @@ export type EngineEvent =
   | { type: "usage"; input: number; output: number; measured: boolean; usd?: number | null }
   | { type: "done"; text: string; interrupted: boolean; seconds: number }
   | { type: "state" }
+
+/** Image collée ou déposée dans la saisie du desktop (data URL). */
+export interface PastedImage { name: string; dataUrl: string }
+const IMG_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/
+/** Garde seulement des images valides et raisonnables : 6 au plus, 12 Mo chacune au plus (en base64). */
+export function cleanImages(list: unknown): PastedImage[] {
+  if (!Array.isArray(list)) return []
+  return list
+    .filter((x: any) => x && typeof x.dataUrl === "string" && x.dataUrl.length <= 12_000_000 && IMG_RE.test(x.dataUrl))
+    .slice(0, 6)
+    .map((x: any, i) => ({ name: String(x.name ?? `image-${i + 1}`).replace(/[^\w.-]/g, "_").slice(0, 60) || `image-${i + 1}`, dataUrl: x.dataUrl }))
+}
 
 /** Canevas : un document que l'on voit à côté de la discussion et qui se met à jour en direct. */
 export const CANVAS_RULE =
@@ -269,7 +282,9 @@ export class EngineSession {
   }
 
   /** Un message de l'utilisateur dans un espace. `cg` : Claude Code et Codex ensemble (espace work). */
-  async send(text: string, space: Space, opts: { cg?: boolean; mediaModel?: { provider: string; id: string }; canvas?: string | null } = {}): Promise<void> {
+  async send(text: string, space: Space, opts: { cg?: boolean; mediaModel?: { provider: string; id: string }; canvas?: string | null; images?: PastedImage[] } = {}): Promise<void> {
+    const images = opts.images ?? []
+    const marker = images.length ? `\n\n[${images.length} image${images.length > 1 ? "s" : ""} jointe${images.length > 1 ? "s" : ""}]` : ""
     if (this.busy) throw new Error("une réponse est déjà en cours")
     if (space === "work" && needsProject(this.cwd)) throw new Error("projet requis")
     this.space = space
@@ -283,18 +298,20 @@ export class EngineSession {
     // modèle utilisé pour ce tour, figé au départ (un changement de modèle pendant la réponse ne le modifie pas)
     const used = space === "medias" ? opts.mediaModel?.id : opts.cg ? "claude+codex" : this.st.current?.model ?? this.st.current?.provider
     try {
-      const id = this.mem.append(this.ensureConv(text, space, opts.cg), "user", text)
+      const id = this.mem.append(this.ensureConv(text, space, opts.cg), "user", text + marker) // les images ne vont pas dans la mémoire
       const fact = rememberRequest(text)
       if (fact) {
         this.mem.addItem(this.district, "fact", fact, { sourceArchiveId: id })
         this.emit({ type: "notice", text: `Mémorisé : « ${fact} »`, level: "info" })
       }
-      if (space === "medias") final = await this.media(text, opts.mediaModel)
-      else if (space === "work" && opts.cg) final = await this.cg(text)
-      else if (this.st.current?.kind === "agent" && space === "work") final = await this.agent(this.st.current.provider, text)
-      else final = await this.api(text, space, opts.canvas)
+      // agents : les images sont déposées dans le projet, l'agent les lit par leur chemin
+      const forAgent = images.length && space === "work" && (opts.cg || this.st.current?.kind === "agent") ? this.saveImages(images) : ""
+      if (space === "medias") final = await this.media(text, opts.mediaModel, images)
+      else if (space === "work" && opts.cg) final = await this.cg(text + forAgent)
+      else if (this.st.current?.kind === "agent" && space === "work") final = await this.agent(this.st.current.provider, text + forAgent)
+      else final = await this.api(text, space, opts.canvas, images)
       if (final && !this.abort.signal.aborted) {
-        this.history.push({ role: "user", content: text }, { role: "assistant", content: final })
+        this.history.push({ role: "user", content: text + marker }, { role: "assistant", content: final })
         this.mem.append(this.conv!, "assistant", final, { space, model: used })
       }
     } catch (e) {
@@ -326,7 +343,30 @@ export class EngineSession {
     this.emit({ type: "usage", input: tin, output: tout, measured, usd })
   }
 
-  private async api(text: string, space: Space, canvas?: string | null): Promise<string> {
+  /** Contenu d'un message utilisateur avec images, si le modèle sait les lire ; sinon le texte seul, avec un avis. */
+  private userContent(text: string, images: PastedImage[], canRead: boolean): Msg["content"] {
+    if (!images.length) return text
+    if (!canRead) {
+      this.emit({ type: "notice", text: "Ce modèle ne lit pas les images : message envoyé sans elles. Choisis un modèle qui accepte les images.", level: "warn" })
+      return text
+    }
+    return [{ type: "text", text }, ...images.map((im) => ({ type: "image_url" as const, image_url: { url: im.dataUrl } }))]
+  }
+
+  /** Dépose les images dans <projet>/.eclipse/images et renvoie la phrase qui les indique à l'agent. */
+  private saveImages(images: PastedImage[]): string {
+    const dir = join(this.cwd, ".eclipse", "images")
+    mkdirSync(dir, { recursive: true })
+    const paths = images.map((im, i) => {
+      const ext = im.dataUrl.slice(11, im.dataUrl.indexOf(";")).replace("jpeg", "jpg")
+      const file = `${Date.now()}-${i + 1}-${im.name.replace(/\.[a-z0-9]+$/i, "")}.${ext}`
+      writeFileSync(join(dir, file), Buffer.from(im.dataUrl.slice(im.dataUrl.indexOf(",") + 1), "base64"))
+      return `.eclipse/images/${file}`
+    })
+    return `\n\nImages jointes par l'utilisateur (dans le projet) : ${paths.join(", ")}`
+  }
+
+  private async api(text: string, space: Space, canvas?: string | null, images: PastedImage[] = []): Promise<string> {
     const c = this.st.current
     if (!c || c.kind !== "api") throw new Error(space === "work" ? "Choisissez un modèle d'API ou un agent pour l'espace Work." : "Choisissez un modèle d'API (les agents travaillent dans l'espace Work).")
     const p = provider(c.provider)!
@@ -343,7 +383,9 @@ export class EngineSession {
                            sandbox: this.st.prefs.sandbox !== false, skills: this.skills, mcp: this.mcp } // les outils appliquent sandboxFor
     // canevas actif : la règle, et la version actuelle du document (éventuellement retouchée à la main par l'utilisateur)
     const canvasPart = canvas === undefined ? "" : "\n\n" + CANVAS_RULE + (canvas ? `\n\nVersion actuelle du canevas :\n\`\`\`html\n${canvas.slice(0, 60_000)}\n\`\`\`` : "")
-    const msgs: Msg[] = [{ role: "system", content: this.system(space, useTools, memCtx.text) + canvasPart }, ...this.history, { role: "user", content: text }]
+    // le catalogue dit si le modèle lit les images ; s'il ne dit rien (bot Poe, serveur local…), on essaie
+    const canRead = !mi || !mi.input?.length || mi.input.includes("image") || !!mi.output?.includes("image")
+    const msgs: Msg[] = [{ role: "system", content: this.system(space, useTools, memCtx.text) + canvasPart }, ...this.history, { role: "user", content: this.userContent(text, images, canRead) }]
     if (memCtx.used.length) this.emit({ type: "notice", text: `Mémoire : ${memCtx.used.length} élément(s) utilisé(s)`, level: "info" })
     let final = ""
     let tin = 0, tout = 0, measured = false
@@ -458,14 +500,15 @@ export class EngineSession {
     return r.markdown
   }
 
-  private async media(text: string, m?: { provider: string; id: string }): Promise<string> {
+  private async media(text: string, m?: { provider: string; id: string }, images: PastedImage[] = []): Promise<string> {
     if (!m) throw new Error("Choisissez un modèle d'image, de vidéo ou de son.")
     const p = provider(m.provider)!
     let out = ""
     let tin = 0, tout = 0
     const info = this.models[m.provider]?.find((x) => x.id === m.id)
     const mediaOnly = !info?.output || !info.output.includes("text")
-    for await (const e of streamChat(p, m.id, [{ role: "user", content: text }], { signal: this.abort!.signal, noStream: mediaOnly })) {
+    const canRead = !info || !info.input?.length || info.input.includes("image") || !!info.output?.includes("image")
+    for await (const e of streamChat(p, m.id, [{ role: "user", content: this.userContent(text, images, canRead) }], { signal: this.abort!.signal, noStream: mediaOnly })) {
       if (e.type === "text") {
         out += e.text
         this.emit({ type: "text", text: e.text, who: m.id })

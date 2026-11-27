@@ -440,3 +440,17 @@ button.chip:hover { background: var(--fill); }
 /* choix du modèle : catégories */
 .cat-title { font-size: 12.5px; font-weight: 600; margin: 12px 0 6px; color: var(--text); }
 .chip.more { color: var(--accent); }
+
+/* ---- Images collées ou déposées ---- */
+.composer.drop { box-shadow: 0 0 0 2px var(--accent); }
+.attach-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.attach { position: relative; width: 64px; height: 64px; border-radius: 10px; overflow: hidden; background: var(--fill2); }
+.attach img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.attach-x { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 10px; background: rgba(0, 0, 0, .62); color: #fff; font-size: 11px; display: grid; place-items: center; opacity: 0; transition: opacity .12s; }
+.attach:hover .attach-x, .attach-x:focus-visible { opacity: 1; }
+.user-col { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 78%; }
+.user-col .bubble { max-width: 100%; }
+.user-imgs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.user-imgs img { max-width: 220px; max-height: 220px; border-radius: 12px; display: block; }
+.user-foot { opacity: 0; transition: opacity .15s; }
+.msg.user:hover .user-foot, .user-foot:focus-within { opacity: 1; }

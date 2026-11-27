@@ -5,15 +5,15 @@
  * Même moteur, mêmes données que le terminal (mémoire, sessions, consommation, clés, MCP, projets).
  */
 import { useEffect, useMemo, useReducer, useRef, useState } from "preact/hooks";
-import { ApiError, connect, events, get, isDesktop, post, restartEngine, type EngineState, type MediaModel, type SessionRow, type Space } from "./api";
+import { ApiError, connect, copyText, events, get, isDesktop, post, restartEngine, type EngineState, type MediaModel, type SessionRow, type Space } from "./api";
 import { I } from "./icons";
 import { safeUrl } from "./markdown";
 import { Lightbox, ModelPicker, PermModal, ProjectChooser, Settings, UsageView } from "./modals";
 import { AgentSheet, AgentsStrip, bestMediaModel, CanvasPanel, Composer, KIND_LABEL, MessageView, Rail, railHasContent, Sidebar, StatusBar, wantedMedia, Welcome } from "./parts";
 import { emptyThread, fromHistory, lastCanvas, reduce, settle, type ThreadState } from "./thread";
 
-type Action = { t: "ev"; e: any; cg: boolean; canvas?: boolean } | { t: "set"; s: ThreadState } | { t: "settle" };
-const threadReducer = (s: ThreadState, a: Action) => (a.t === "set" ? a.s : a.t === "settle" ? settle(s) : reduce(s, a.e, { cg: a.cg, canvas: a.canvas }));
+type Action = { t: "ev"; e: any; cg: boolean; canvas?: boolean; images?: string[] } | { t: "set"; s: ThreadState } | { t: "settle" };
+const threadReducer = (s: ThreadState, a: Action) => (a.t === "set" ? a.s : a.t === "settle" ? settle(s) : reduce(s, a.e, { cg: a.cg, canvas: a.canvas, images: a.images }));
 
 type Overlay = { kind: "models" } | { kind: "settings"; tab?: string } | { kind: "usage" } | { kind: "project"; propose?: string; text?: string } | { kind: "image"; url: string };
 interface Toast { id: number; text: string; level: string }
@@ -52,6 +52,8 @@ export function App() {
   const [draft, setDraft] = useState("");
   const [today, setToday] = useState(0);
   const cgPending = useRef(false);
+  const imagesPending = useRef<string[]>([]);
+  const [images, setImages] = useState<string[]>([]); // images collées dans la saisie, pas encore envoyées
   const canvasPending = useRef(false);
   const [canvasOn, setCanvasOnRaw] = useState(() => store.get("canvas", "0") === "1");
   const [canvasOpen, setCanvasOpen] = useState(false);
@@ -130,15 +132,15 @@ export function App() {
       case "notice":
         // pendant une réponse, l'avis s'inscrit dans le fil ; sinon (ou si c'est une erreur) il s'affiche en bulle
         if (e.level === "error" || e.level === "warn") toast(e.text, e.level); // les simples informations restent discrètes
-        dispatch({ t: "ev", e, cg: cgPending.current, canvas: canvasPending.current });
+        dispatch({ t: "ev", e, cg: cgPending.current, canvas: canvasPending.current, images: e.type === "turn" ? imagesPending.current : undefined });
         return;
       case "done":
-        dispatch({ t: "ev", e, cg: cgPending.current, canvas: canvasPending.current });
+        dispatch({ t: "ev", e, cg: cgPending.current, canvas: canvasPending.current, images: e.type === "turn" ? imagesPending.current : undefined });
         loadUsage();
         reload();
         return;
       default:
-        dispatch({ t: "ev", e, cg: cgPending.current, canvas: canvasPending.current });
+        dispatch({ t: "ev", e, cg: cgPending.current, canvas: canvasPending.current, images: e.type === "turn" ? imagesPending.current : undefined });
     }
   }
 
@@ -173,7 +175,7 @@ export function App() {
       const copy = t.closest?.("[data-copy]");
       if (copy) {
         const code = copy.closest(".code")?.querySelector("code")?.textContent ?? "";
-        navigator.clipboard?.writeText(code).then(() => { copy.textContent = "Copié"; setTimeout(() => (copy.textContent = "Copier"), 1400); }).catch(() => {});
+        copyText(code).then((ok) => { if (ok) { copy.textContent = "Copié"; setTimeout(() => (copy.textContent = "Copier"), 1400); } });
         return;
       }
       const img = t.closest?.("[data-media]");
@@ -234,7 +236,7 @@ export function App() {
   };
   const send = async (text: string, force?: Space) => {
     const sp = force ?? space;
-    if (!st || st.busy || !text.trim()) return;
+    if (!st || st.busy || (!text.trim() && !images.length)) return;
     if (sp === "medias" && !mediaModel) return toast("Choisis d'abord un modèle d'image, de vidéo ou de son.", "warn");
     if (sp === "medias" && mediaModel) {
       const want = wantedMedia(text);
@@ -247,7 +249,10 @@ export function App() {
     try {
       // canevas : le modèle repart de la version affichée (celle du modèle, ou celle retouchée à la main)
       const cur = canvasPending.current ? canvasEdit ?? lastCanvas(thread)?.html ?? "" : undefined;
-      await post("/api/send", { text, space: sp, cg: cgPending.current, mediaModel: sp === "medias" ? mediaModel : undefined, canvas: cur });
+      imagesPending.current = images;
+      await post("/api/send", { text: text.trim() || "Regarde cette image.", space: sp, cg: cgPending.current, mediaModel: sp === "medias" ? mediaModel : undefined, canvas: cur,
+        images: images.map((dataUrl, i) => ({ name: `image-${i + 1}`, dataUrl })) });
+      setImages([]);
       if (canvasPending.current) { setCanvasEdit(null); setCanvasOpen(true); }
       setDraft("");
     } catch (e: any) {
@@ -334,7 +339,8 @@ export function App() {
             <Composer st={st} space={space} busy={busy} cgOn={cgOn} setCgOn={setCgOn} onSend={(t) => send(t)} onStop={() => post("/api/interrupt").catch(() => {})}
               canvasOn={canvasOn} setCanvasOn={setCanvasOn} onOption={setOption} onDeep={goDeep}
               onModels={() => setOverlay({ kind: "models" })} onEffort={(v) => post("/api/effort", { value: v }).catch((e) => toast(e.message, "error"))}
-              media={media} mediaModel={mediaModel} setMediaModel={setMediaModel} voice={voice} onDictate={dictate} onStopDictate={stopDictate} draft={draft} setDraft={setDraft} history={history} />
+              media={media} mediaModel={mediaModel} setMediaModel={setMediaModel} voice={voice} onDictate={dictate} onStopDictate={stopDictate} draft={draft} setDraft={setDraft} history={history}
+              images={images} setImages={setImages} onError={(m) => toast(m, "warn")} />
           </div>
         </div>
         <StatusBar st={st} today={today} connected={connected} />
