@@ -188,8 +188,10 @@ export function App(props: { cwd: string }) {
   const [voiceState, setVoiceState] = createSignal<"écoute" | "transcription">("écoute")
   const [voiceLevel, setVoiceLevel] = createSignal(0)
   let voiceListener: { stop: () => void; pause: (on: boolean) => void } | null = null
+  let voiceGen = 0 // chaque dictée a son numéro : un résultat d'une dictée annulée ou remplacée est ignoré
 
   function hangUp(msg = "Dictée annulée.") {
+    voiceGen++
     voiceListener?.stop()
     voiceListener = null
     setVoiceOn(false)
@@ -199,18 +201,23 @@ export function App(props: { cwd: string }) {
   async function startVoice() {
     const s = V.setup()
     if (!s.record) return note("Dictée indisponible : enregistreur absent (paquet alsa-utils, commande arecord).", "warn")
-    const k = await keyFor(provider("openai")!)
-    if (!k.ok) return note("La dictée utilise la transcription d'OpenAI (celle de ChatGPT) : ajoutez une clé OpenAI avec /connect.", "warn")
-    setVoiceOn(true)
+    const gen = ++voiceGen
+    setVoiceOn(true) // dès maintenant : Échap annule, même pendant la recherche de la clé
     setVoiceState("écoute")
+    const k = await keyFor(provider("openai")!)
+    if (gen !== voiceGen) return // annulée entre-temps : le micro ne s'ouvre pas
+    if (!k.ok) {
+      setVoiceOn(false)
+      return note("La dictée utilise la transcription d'OpenAI (celle de ChatGPT) : ajoutez une clé OpenAI avec /connect.", "warn")
+    }
     voiceListener = V.listen(s, {
       onUtterance: async (pcm) => {
-        if (!voiceOn() || voiceState() !== "écoute") return
+        if (gen !== voiceGen || voiceState() !== "écoute") return
         voiceListener?.stop()
         voiceListener = null
         setVoiceState("transcription")
         const r = await V.transcribeCloud(pcm, k.key, getLang())
-        if (!voiceOn()) return
+        if (gen !== voiceGen) return // annulée ou remplacée pendant la transcription
         setVoiceOn(false)
         if (!r.ok) return note(`Dictée : ${r.reason}`, "warn")
         if (!r.text) return flash("Rien entendu.")
@@ -220,7 +227,7 @@ export function App(props: { cwd: string }) {
         setDraft(text)
       },
       onLevel: (l) => setVoiceLevel(l),
-      onError: (m) => { if (voiceOn()) hangUp(`Dictée arrêtée : ${m}`) },
+      onError: (m) => { if (gen === voiceGen) hangUp(`Dictée arrêtée : ${m}`) },
     })
   }
   // discussion en cours avant d'entrer dans /cg, retrouvée à la sortie

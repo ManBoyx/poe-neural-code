@@ -280,6 +280,8 @@ export class EngineSession {
     const t0 = Date.now()
     this.abort = new AbortController()
     let final = ""
+    // modèle utilisé pour ce tour, figé au départ (un changement de modèle pendant la réponse ne le modifie pas)
+    const used = space === "medias" ? opts.mediaModel?.id : opts.cg ? "claude+codex" : this.st.current?.model ?? this.st.current?.provider
     try {
       const id = this.mem.append(this.ensureConv(text, space, opts.cg), "user", text)
       const fact = rememberRequest(text)
@@ -293,8 +295,6 @@ export class EngineSession {
       else final = await this.api(text, space, opts.canvas)
       if (final && !this.abort.signal.aborted) {
         this.history.push({ role: "user", content: text }, { role: "assistant", content: final })
-        // le modèle réellement utilisé (en Médias, c'est le modèle de médias choisi, pas le modèle de discussion)
-        const used = space === "medias" ? opts.mediaModel?.id : opts.cg ? "claude+codex" : this.st.current?.model ?? this.st.current?.provider
         this.mem.append(this.conv!, "assistant", final, { space, model: used })
       }
     } catch (e) {

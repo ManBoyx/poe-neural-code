@@ -212,12 +212,18 @@ export function MessageView({ m, busy, onCanvas }: { m: Msg; busy: boolean; onCa
 }
 
 /** Type de média qu'une demande attend, d'après ses mots (pour éviter de demander de la musique à un modèle d'images). */
-export function wantedMedia(text: string): "image" | "video" | "audio" | null {
+export function wantedKinds(text: string): Set<"image" | "video" | "audio"> {
   const t = text.toLowerCase();
-  if (/\b(musique|chanson|audio|beat|boucle musicale|mélodie|melodie|bruitage|voix off|podcast|phonk|rap|lo-?fi)\b|\b(un|des|du|le) sons?\b/.test(t)) return "audio";
-  if (/\b(vidéo|video|clip|film|animation|plan de drone|séquence|sequence)\b/.test(t)) return "video";
-  if (/\b(image|photo|affiche|dessin|illustration|logo|portrait|tableau|poster|wallpaper|fond d'écran)\b/.test(t)) return "image";
-  return null;
+  const out = new Set<"image" | "video" | "audio">();
+  if (/\b(musique|chanson|audio|beat|boucle musicale|mélodie|melodie|bruitage|voix off|podcast|phonk|rap|lo-?fi)\b|\b(un|des|du|le) sons?\b/.test(t)) out.add("audio");
+  if (/\b(vidéo|video|clip|film|animation|plan de drone|séquence|sequence)\b/.test(t)) out.add("video");
+  if (/\b(image|photo|affiche|dessin|illustration|logo|portrait|tableau|poster|wallpaper|fond d'écran)\b/.test(t)) out.add("image");
+  return out;
+}
+/** Le type attendu quand la demande n'en évoque qu'un ; null si elle en mélange plusieurs (« affiche d'un festival de musique »). */
+export function wantedMedia(text: string): "image" | "video" | "audio" | null {
+  const k = wantedKinds(text);
+  return k.size === 1 ? [...k][0] : null;
 }
 export const KIND_LABEL: Record<string, string> = { image: "image", video: "vidéo", audio: "son" };
 

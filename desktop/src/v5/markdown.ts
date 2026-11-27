@@ -5,10 +5,21 @@ import hljs from "highlight.js/lib/common";
 import { Marked } from "marked";
 import { chartHtml, parseChart } from "./chart";
 
-// par l'extension, ou par le chemin des liens de Poe, qui n'ont pas d'extension (…poecdn.net/base/audio/<empreinte>)
-const VIDEO = /\.(mp4|webm|mov|m4v)(\?|#|$)|poecdn\.net\/(?:[\w-]+\/)*video\//i;
-const AUDIO = /\.(mp3|wav|ogg|oga|m4a|flac|aac)(\?|#|$)|poecdn\.net\/(?:[\w-]+\/)*audio\//i;
-const IMAGE = /\.(png|jpe?g|webp|gif|avif)(\?|#|$)|poecdn\.net\/(?:[\w-]+\/)*image\//i;
+// par l'extension, ou, pour les liens de Poe (sans extension : https://…poecdn.net/base/audio/<empreinte>), par l'hôte
+// réellement poecdn.net et le dossier audio/video/image du chemin
+function poeKind(u: string): "audio" | "video" | "image" | null {
+  try {
+    const x = new URL(u);
+    if (x.protocol !== "https:" || !(x.hostname === "poecdn.net" || x.hostname.endsWith(".poecdn.net"))) return null;
+    const m = x.pathname.match(/\/(audio|video|image)\//);
+    return m ? (m[1] as "audio" | "video" | "image") : null;
+  } catch { return null; }
+}
+const ext = (re: RegExp) => ({ test: (u: string) => re.test(u.split(/[?#]/)[0]) });
+const VID = ext(/\.(mp4|webm|mov|m4v)$/i), AUD = ext(/\.(mp3|wav|ogg|oga|m4a|flac|aac)$/i), IMG = ext(/\.(png|jpe?g|webp|gif|avif)$/i);
+const VIDEO = { test: (u: string) => VID.test(u) || poeKind(u) === "video" };
+const AUDIO = { test: (u: string) => AUD.test(u) || poeKind(u) === "audio" };
+const IMAGE = { test: (u: string) => IMG.test(u) || poeKind(u) === "image" };
 export const safeUrl = (u: string) => /^(https?:|blob:|data:image\/(png|jpe?g|gif|webp|avif);)/i.test(u);
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
@@ -32,12 +43,13 @@ md.use({
     link({ href, text }) {
       if (safeUrl(href) && VIDEO.test(href)) return `<video class="media" controls preload="metadata" src="${esc(href)}"></video>`;
       if (safeUrl(href) && AUDIO.test(href)) return `<audio class="media" controls preload="metadata" src="${esc(href)}"></audio>`;
-      if (safeUrl(href) && /^https?:/i.test(href) && IMAGE.test(href) && /poecdn\.net/i.test(href) && text === href)
+      if (safeUrl(href) && poeKind(href) === "image")
         return `<a class="media-img" href="${esc(href)}" data-media="${esc(href)}"><img src="${esc(href)}" alt="image générée" loading="lazy"></a>`;
       return false;
     },
     image({ href, text }) {
       if (safeUrl(href) && VIDEO.test(href)) return `<video class="media" controls preload="metadata" src="${esc(href)}"></video>`;
+      if (safeUrl(href) && AUDIO.test(href)) return `<audio class="media" controls preload="metadata" src="${esc(href)}"></audio>`;
       if (!safeUrl(href)) return esc(text || "");
       return `<a class="media-img" href="${esc(href)}" data-media="${esc(href)}"><img src="${esc(href)}" alt="${esc(text || "image générée")}" loading="lazy"></a>`;
     },

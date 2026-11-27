@@ -318,9 +318,9 @@ export function App() {
               if (space === "work" && st.needsProject) return setOverlay({ kind: "project", text: t });
               if (space === "medias") {
                 const want = wantedMedia(t);
-                if (want && !mediaModel?.output.includes(want)) {
+                if (want) { // idée cliquée : le modèle le plus adapté (musique -> générateur de musique, pas une voix)
                   const m = bestMediaModel(media, t, want);
-                  if (m) { setMediaModel(m); toast(`Modèle de ${KIND_LABEL[want]} choisi : ${m.id}`); }
+                  if (m && m.id !== mediaModel?.id) { setMediaModel(m); toast(`Modèle de ${KIND_LABEL[want]} choisi : ${m.id}`); }
                 }
               }
               setDraft(t);
