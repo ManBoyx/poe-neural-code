@@ -5,6 +5,9 @@
   Whisper et la voix qui lisait les réponses ne sont plus utilisés. Échap annule à tout moment.
 - Un bot Poe hors catalogue ne reçoit pas d'outils et ses appels d'outils ne sont jamais exécutés.
 - Sélecteur : pas de « 0k » pour les modèles sans contexte de texte.
+- Modèles rangés par catégorie : multifonctions, code, recherche, discussion, images, vidéos, son.
+- Bypass : tout ce qui concerne le projet passe sans confirmation, commandes comprises (enfermées dans le projet).
+  Bypass total : tout sur le PC, sans confirmation. Dans les deux, les fichiers d'Eclipse restent protégés et sudo refusé.
 
 ## 5.0.1 — CLI (26 novembre 2026)
 - Poe : les 299 modèles du catalogue, y compris les 99 modèles d'images, de vidéos et de sons (Veo, Kling, Runway,
