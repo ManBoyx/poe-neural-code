@@ -1,5 +1,11 @@
 # Journal des versions
 
+## 5.0.2 — CLI (non publiée)
+- `/voice` devient une dictée : tu parles, le texte s'écrit dans la saisie, transcrit par OpenAI (celle de ChatGPT).
+  Whisper et la voix qui lisait les réponses ne sont plus utilisés. Échap annule à tout moment.
+- Un bot Poe hors catalogue ne reçoit pas d'outils et ses appels d'outils ne sont jamais exécutés.
+- Sélecteur : pas de « 0k » pour les modèles sans contexte de texte.
+
 ## 5.0.1 — CLI (26 novembre 2026)
 - Poe : les 299 modèles du catalogue, y compris les 99 modèles d'images, de vidéos et de sons (Veo, Kling, Runway,
   Flux, Nano Banana, GPT Image, ElevenLabs, Lyria…), qui étaient écartés. Ils répondent en une fois, comme Poe le
