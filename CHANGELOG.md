@@ -8,6 +8,10 @@
 - Modèles rangés par catégorie : multifonctions, code, recherche, discussion, images, vidéos, son.
 - Bypass : tout ce qui concerne le projet passe sans confirmation, commandes comprises (enfermées dans le projet).
   Bypass total : tout sur le PC, sans confirmation. Dans les deux, les fichiers d'Eclipse restent protégés et sudo refusé.
+- Claude Code enfermé en entier dans bubblewrap quand la sandbox est active (sa propre sandbox exige socat).
+- Aucune élévation de droits possible pour les commandes et les agents (no_new_privs), même sans bubblewrap ;
+  sudo, doas, pkexec, run0 et su refusés où qu'ils soient dans la commande.
+- Sans bubblewrap, le bypass demande chaque commande (rien ne peut l'enfermer dans le projet).
 
 ## 5.0.1 — CLI (26 novembre 2026)
 - Poe : les 299 modèles du catalogue, y compris les 99 modèles d'images, de vidéos et de sons (Veo, Kling, Runway,
