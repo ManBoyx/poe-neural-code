@@ -108,6 +108,35 @@ export function parsePoe(data: any[]): ModelInfo[] {
   return out
 }
 
+/** Catégories de modèles, pour ranger les listes : spécialistes ensemble, multifonctions ensemble. */
+export type ModelCategory = "multi" | "code" | "recherche" | "texte" | "image" | "video" | "audio"
+export const CATEGORY_ORDER: ModelCategory[] = ["multi", "code", "recherche", "texte", "image", "video", "audio"]
+export const CATEGORY_LABEL: Record<ModelCategory, string> = {
+  multi: "Multifonctions (texte et médias)", code: "Code", recherche: "Recherche", texte: "Discussion et texte",
+  image: "Génération d'images", video: "Génération de vidéos", audio: "Son (musique et voix)",
+}
+/**
+ * Catégorie d'un modèle, d'après le catalogue (types d'entrée et de sortie) et, pour le code et la recherche, son nom :
+ * - images, vidéos, son : modèles qui ne produisent QUE ce type de média ;
+ * - multifonctions : modèles polyvalents (avec outils) qui produisent texte ET média, ou qui comprennent l'image, la
+ *   vidéo et le son à la fois ; un générateur qui renvoie juste une phrase avec son média reste dans son type ;
+ * - code : modèles spécialisés (codex, coder, codestral, devstral…) ; les généralistes qui codent aussi restent en texte ;
+ * - recherche : Perplexity, Sonar, recherche approfondie.
+ */
+export function modelCategory(m: { id: string; input?: string[]; output?: string[]; tools?: boolean }): ModelCategory {
+  const out = m.output?.length ? m.output : ["text"]
+  const inp = m.input ?? []
+  const media = out.filter((o) => o !== "text")
+  const kind = (): ModelCategory => (media.includes("video") ? "video" : media.includes("image") ? "image" : "audio")
+  if (!out.includes("text") && media.length) return kind()
+  // texte + média mais sans outils : un générateur qui renvoie aussi une phrase (seedance, nano-banana…), pas un polyvalent
+  if (media.length && m.tools === false) return kind()
+  if (media.length || (inp.includes("audio") && inp.includes("video") && inp.includes("image"))) return "multi"
+  if (/(^|[-_.])(coder|codex|codestral|devstral)|kimi-dev|claude-code|(^|-)code(-|$)/i.test(m.id)) return "code"
+  if (/sonar|perplexity|research|search/i.test(m.id)) return "recherche"
+  return "texte"
+}
+
 export function parseGeneric(providerId: string, data: any[]): ModelInfo[] {
   return data.map((d) => {
     const pIn = d.pricing?.prompt != null ? Number(d.pricing.prompt) * 1e6 : undefined

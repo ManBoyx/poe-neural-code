@@ -13,6 +13,17 @@ import { join } from "node:path"
 import { home } from "./paths"
 import { guardPaths } from "./protect"
 
+/**
+ * Sandbox effective selon les permissions : le bypass autorise tout DANS le projet, donc les commandes et les agents y
+ * sont toujours enfermés (même si /sandbox est coupée) ; le bypass total autorise tout sur le PC, donc rien n'est
+ * enfermé (seuls les fichiers d'Eclipse restent intouchables). Sinon : le réglage /sandbox de l'utilisateur.
+ */
+export function sandboxFor(mode: string, pref: boolean): boolean {
+  if (mode === "bypass") return available().ok
+  if (mode === "bypass-total") return false
+  return pref && available().ok
+}
+
 export function available(): { ok: true; tool: string } | { ok: false; reason: string } {
   if (process.platform !== "linux") return { ok: false, reason: "sandbox disponible seulement sous Linux dans cette version" }
   const b = Bun.which("bwrap")

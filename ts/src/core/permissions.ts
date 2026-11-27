@@ -14,8 +14,8 @@ export const PERM_LABEL: Record<PermMode, string> = {
   demander: "tout confirmer (recommandé)",
   modifications: "modifications du projet acceptées d'office, commandes confirmées",
   lecture: "lecture seule : aucune écriture ni commande",
-  bypass: "aucune confirmation, sauf destructif ou hors du projet (mot de passe demandé)",
-  "bypass-total": "AUCUNE confirmation, même destructive ou hors du projet (mot de passe demandé)",
+  bypass: "tout dans le projet sans confirmation, commandes comprises (enfermées dans le projet) ; hors du projet, on demande (mot de passe)",
+  "bypass-total": "TOUT sur le PC sans aucune confirmation, commandes libres (mot de passe demandé)",
 }
 
 export interface Request {
@@ -26,6 +26,7 @@ export interface Request {
   outside?: boolean
   destructive?: boolean
   grantKey: string // « toujours pour cette session »
+  confined?: boolean // commande lancée dans la sandbox : elle ne peut écrire que dans le projet
   mustRead?: boolean // « autoriser » seulement après avoir affiché tout le détail (approbation d'un serveur MCP de projet)
 }
 
@@ -60,7 +61,10 @@ export class Permissions {
     if (r.kind === "read" && !r.outside) return done("lecture", true)
     if (this.mode === "lecture" && r.kind !== "read") return done("refusé (lecture seule)", false)
     if (this.mode === "bypass-total") return done("bypass total", true)
-    if (this.mode === "bypass" && !r.destructive && !r.outside) return done("bypass", true)
+    // bypass : tout ce qui concerne le projet passe, même destructif ; une commande enfermée dans le projet aussi.
+    // Une commande NON enfermée (pas de bubblewrap) et destructive, ou une action hors du projet, est demandée.
+    if (this.mode === "bypass" && r.kind === "exec" && (r.confined || !r.destructive)) return done("bypass", true)
+    if (this.mode === "bypass" && r.kind !== "exec" && !r.outside) return done("bypass", true)
     const sticky = !r.destructive && !r.outside
     if (sticky && this.grants.has(r.grantKey)) return done("session", true)
     if (this.mode === "modifications" && r.kind === "write" && !r.outside) return done("modifications auto", true)

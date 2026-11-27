@@ -87,7 +87,7 @@ export interface EngineState {
   modelParams: { name: string; kind: string; choices?: string[]; description?: string }[];
   modelOptions: Record<string, unknown>; modelOutput: string[] | null; deepResearch: { provider: string; id: string }[];
   recents: (Choice & { at: number })[]; busy: boolean; title: string; conv: number | null; space: Space;
-  perm: string; bypassVerified: boolean; sandbox: boolean;
+  perm: string; bypassVerified: boolean; sandbox: boolean; sandboxPref?: boolean;
   agents: { id: string; label: string; installed: boolean; version?: string; install?: string }[];
   detecting?: boolean;
   providers: { id: string; label: string; recommended: boolean; local: boolean; key: string; models: number }[];
@@ -96,13 +96,14 @@ export interface EngineState {
   memory: number;
 }
 export interface SessionRow { id: number; title: string; project: number; last: number; count: number; space: Space; cg: boolean }
-export interface ModelRow { id: string; free: boolean; priceIn?: number; priceOut?: number; context?: number; tools?: boolean; effort?: string[]; output?: string[] }
+export interface ModelRow { id: string; free: boolean; priceIn?: number; priceOut?: number; context?: number; tools?: boolean; effort?: string[]; output?: string[]; category?: string }
 export interface ModelsPayload {
   recents: (Choice & { at: number })[];
   providers: { id: string; label: string; recommended: boolean; local: boolean; key: string; models: ModelRow[] }[];
   agents: EngineState["agents"];
+  categories?: { id: string; label: string }[];
 }
-export interface MediaModel { provider: string; id: string; output: string[]; price?: number }
+export interface MediaModel { provider: string; id: string; output: string[]; price?: number; category?: string }
 export interface Usage {
   periods: { label: string; requests: number; usd: number; tokens: number }[];
   byModel: { model: string; requests: number; tokens: number; usd: number }[];

@@ -229,7 +229,7 @@ export const KIND_LABEL: Record<string, string> = { image: "image", video: "vid�
 
 /** Le modèle de médias le plus adapté à une demande : un vrai générateur de musique pour de la musique, une voix pour une voix. */
 export function bestMediaModel(media: MediaModel[], text: string, kind: "image" | "video" | "audio"): MediaModel | undefined {
-  const pure = media.filter((m) => !m.output.includes("text") && m.output.includes(kind));
+  const pure = media.filter((m) => (m.category ? m.category === kind : !m.output.includes("text")) && m.output.includes(kind));
   const t = text.toLowerCase();
   const prefer = kind === "audio"
     ? /\b(voix|parle|lis|lecture|narration|narrateur|tts)\b/.test(t) ? /tts|orpheus|elevenlabs-v|voice/i : /lyria|stable-audio|music|suno|\budio\b/i
@@ -415,14 +415,11 @@ export function Composer(p: {
   };
   const listening = p.voice.state === "écoute";
   const transcribing = p.voice.state === "transcription";
-  // générateurs purs d'abord (image, vidéo, son), puis les modèles de texte qui savent aussi créer des médias
-  const pure = (m: MediaModel) => !m.output.includes("text");
-  const groups: [string, MediaModel[]][] = [
-    ["Images", p.media.filter((m) => pure(m) && m.output.includes("image"))],
-    ["Vidéo", p.media.filter((m) => pure(m) && m.output.includes("video"))],
-    ["Son", p.media.filter((m) => pure(m) && m.output.includes("audio"))],
-    ["Texte et médias", p.media.filter((m) => !pure(m))],
-  ].filter((g) => (g[1] as MediaModel[]).length) as [string, MediaModel[]][];
+  // générateurs rangés par type (même classement que le choix du modèle), puis les polyvalents qui créent aussi des médias
+  const cat = (m: MediaModel) => m.category ?? (m.output.includes("text") ? "multi" : m.output.includes("video") ? "video" : m.output.includes("image") ? "image" : "audio");
+  const groups: [string, MediaModel[]][] = ([["image", "Images"], ["video", "Vidéo"], ["audio", "Son"], ["multi", "Multifonctions"]] as const)
+    .map(([k, l]) => [l, p.media.filter((m) => cat(m) === k)] as [string, MediaModel[]])
+    .filter((g) => g[1].length);
   return (
     <div class="composer">
       {listening || transcribing ? (

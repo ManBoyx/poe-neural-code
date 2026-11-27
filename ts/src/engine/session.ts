@@ -20,9 +20,9 @@ import { McpManager } from "../core/mcp"
 import { estimateTokens, Memory, rememberRequest } from "../core/memory"
 import { Permissions, type Decision, type PermMode, type Request } from "../core/permissions"
 import { isProtected, listProjects, needsProject, openProject, PROTECT_RULE, projectsRoot, slug } from "../core/protect"
-import { catalog, keyFor, provider, PROVIDERS, verifyKey, type ModelInfo } from "../core/providers"
+import { catalog, keyFor, provider, PROVIDERS, verifyKey, type ModelInfo, modelCategory, type ModelCategory } from "../core/providers"
 import { agentModels, runAgent, type Power } from "../core/agents"
-import { available as sandboxAvailable } from "../core/sandbox"
+import { available as sandboxAvailable, sandboxFor } from "../core/sandbox"
 import { Snapshots } from "../core/snapshots"
 import { choose, load, save, type Choice, type State } from "../core/store"
 import { openAiTools, READ_ONLY_TOOLS, runTool, summarize, type Todo, type ToolEnv } from "../core/tools"
@@ -229,7 +229,7 @@ export class EngineSession {
       modelOutput: mi?.output ?? null,
       deepResearch: Object.values(this.models).flat().filter((m) => /deep-research|researcher/i.test(m.id)).map((m) => ({ provider: m.provider, id: m.id })),
       recents: this.st.recents.slice(0, 8), busy: this.busy, title: this.title, conv: this.conv, space: this.space,
-      perm: this.perms.mode, bypassVerified: this.perms.bypassVerified, sandbox: this.st.prefs.sandbox !== false && sandboxAvailable().ok,
+      perm: this.perms.mode, bypassVerified: this.perms.bypassVerified, sandbox: sandboxFor(this.perms.mode, this.st.prefs.sandbox !== false), sandboxPref: this.st.prefs.sandbox !== false,
       agents: this.detected.map((d) => ({ id: d.id, label: d.label, installed: d.installed, version: d.version, install: d.install })), detecting: this.detecting,
       providers: PROVIDERS.map((p) => ({ id: p.id, label: p.label, recommended: !!p.recommended, local: !!p.local, key: this.keyState[p.id] ?? "…", models: this.models[p.id]?.length ?? 0 })),
       mcp: this.mcp.status, skills: this.skills.length, todos: this.todos,
@@ -251,11 +251,11 @@ export class EngineSession {
 
   /** Modèles qui produisent des images, des vidéos ou des sons (espace Médias), d'après le catalogue du fournisseur. */
   mediaModels() {
-    const out: { provider: string; id: string; output: string[]; price?: number }[] = []
+    const out: { provider: string; id: string; output: string[]; price?: number; category: ModelCategory }[] = []
     for (const [pid, ms] of Object.entries(this.models))
       for (const m of ms) {
         const o = (m.output ?? []).filter((x) => x === "image" || x === "video" || x === "audio")
-        if (o.length) out.push({ provider: pid, id: m.id, output: (m.output ?? []).includes("text") ? [...o, "text"] : o, price: m.priceOut })
+        if (o.length) out.push({ provider: pid, id: m.id, output: (m.output ?? []).includes("text") ? [...o, "text"] : o, price: m.priceOut, category: modelCategory(m) })
       }
     return out
   }
@@ -340,7 +340,7 @@ export class EngineSession {
     if (ev && mi?.effortParam) extra[mi.effortParam] = ev
     const useTools = space === "work" && (mi ? mi.tools !== false : c.provider !== "poe") // bot Poe hors catalogue : sans outils
     const env: ToolEnv = { roots: [this.cwd], perms: this.perms, memory: this.mem, districtId: this.district, todos: this.todos, signal: this.abort!.signal,
-                           sandbox: this.st.prefs.sandbox !== false, skills: this.skills, mcp: this.mcp }
+                           sandbox: this.st.prefs.sandbox !== false, skills: this.skills, mcp: this.mcp } // les outils appliquent sandboxFor
     // canevas actif : la règle, et la version actuelle du document (éventuellement retouchée à la main par l'utilisateur)
     const canvasPart = canvas === undefined ? "" : "\n\n" + CANVAS_RULE + (canvas ? `\n\nVersion actuelle du canevas :\n\`\`\`html\n${canvas.slice(0, 60_000)}\n\`\`\`` : "")
     const msgs: Msg[] = [{ role: "system", content: this.system(space, useTools, memCtx.text) + canvasPart }, ...this.history, { role: "user", content: text }]
@@ -408,7 +408,7 @@ export class EngineSession {
     let tin = 0, tout = 0, measured = false
     for await (const e of runAgent({ agent: id, binary: d.path!, cwd: this.cwd, prompt: text, model: a.model, effort: a.effort, power: this.agentPower(id),
                                      resume: this.agentSessions[id], system: ["Tu travailles dans Eclipse (desktop). Réponds en français, sans emoji.", memCtx.text].filter(Boolean).join("\n\n"),
-                                     signal: this.abort!.signal, sandbox: this.st.prefs.sandbox !== false, subagents: this.st.prefs.cgSubagents !== false })) {
+                                     signal: this.abort!.signal, sandbox: sandboxFor(this.perms.mode, this.st.prefs.sandbox !== false), subagents: this.st.prefs.cgSubagents !== false })) {
       if (e.type === "session") this.agentSessions[id] = e.id
       else if (e.type === "text") {
         if (!e.parent) final += (final ? "\n\n" : "") + e.text
@@ -437,7 +437,7 @@ export class EngineSession {
     const sup = await snaps.unsupported()
     const r = await cgTurn({
       text, cwd: this.cwd, agents: cfgs, lead: this.st.prefs.cgLead ?? "codex", sessions: this.cgSessions, memory: this.mem.context(this.district, text).text,
-      sandbox: this.st.prefs.sandbox !== false, signal: this.abort!.signal, mode: (this.st.prefs.cgMode ?? "auto") as CgMode, review: this.st.prefs.cgReview !== false,
+      sandbox: sandboxFor(this.perms.mode, this.st.prefs.sandbox !== false), signal: this.abort!.signal, mode: (this.st.prefs.cgMode ?? "auto") as CgMode, review: this.st.prefs.cgReview !== false,
       subagents: this.st.prefs.cgSubagents !== false, snapshot: sup ? undefined : (l) => snaps.snapshot(l), diff: sup ? undefined : (a, b) => snaps.diff(a, b),
     }, {
       phase: (phase) => this.emit({ type: "cg", phase }),

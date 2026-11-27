@@ -6,7 +6,7 @@
  */
 import { randomBytes } from "node:crypto"
 import { Budget, dayStart, monthStart, tokens, weekStart } from "./core/budget"
-import { keyFor, poeBalance, provider, PROVIDERS, verifyKey } from "./core/providers"
+import { CATEGORY_LABEL, CATEGORY_ORDER, keyFor, modelCategory, poeBalance, provider, PROVIDERS, verifyKey } from "./core/providers"
 import { setKey } from "./core/secrets"
 import { verifyPassword } from "./core/auth"
 import { needsProject } from "./core/protect"
@@ -115,7 +115,8 @@ const server = Bun.serve({
         return json({
           recents: S.st.recents.slice(0, 8),
           providers: PROVIDERS.map((pv) => ({ id: pv.id, label: pv.label, recommended: !!pv.recommended, local: !!pv.local, key: S.keyState[pv.id] ?? "…",
-            models: (S.models[pv.id] ?? []).map((m) => ({ id: m.id, free: !!m.free, priceIn: m.priceIn, priceOut: m.priceOut, context: m.context, tools: m.tools, effort: m.effort, output: m.output })) })),
+            models: (S.models[pv.id] ?? []).map((m) => ({ id: m.id, free: !!m.free, priceIn: m.priceIn, priceOut: m.priceOut, context: m.context, tools: m.tools, effort: m.effort, output: m.output, category: modelCategory(m) })) })),
+          categories: CATEGORY_ORDER.map((id) => ({ id, label: CATEGORY_LABEL[id] })),
           agents: S.state().agents,
         })
       }

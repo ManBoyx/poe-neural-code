@@ -43,10 +43,13 @@ const NERD = {
   recent: "\u{f02da}", api: "\u{f0318}", detected: "\u{f0379}", other: "\u{f0450}", search: "\u{f0349}", ok: "\u{f05e0}", off: "\u{f0766}",
   agent: "\u{f06a9}", model: "\u{f0b79}", server: "\u{f048b}", warn: "\u{f0026}", error: "\u{f0159}", think: "\u{f0335}", memory: "\u{f035b}",
   user: "\u{f0004}", soon: "\u{f0954}",
+  // catégories de modèles (glyphes vérifiés par leur nom dans la police : md-code_tags, md-image, md-video, md-music_note, md-creation)
+  code: "\u{f0174}", image: "\u{f02e9}", video: "\u{f0567}", music: "\u{f0387}", multi: "\u{f0674}",
 }
 const ASCII: typeof NERD = {
   recent: "*", api: "#", detected: ">", other: "+", search: "?", ok: "[ok]", off: "[ ]", agent: "@", model: "~", server: "=", warn: "[!]",
   error: "[x]", think: "...", memory: "[m]", user: ">", soon: "(bientôt)",
+  code: "</>", image: "[img]", video: "[vid]", music: "[son]", multi: "[*]",
 }
 export const I: typeof NERD = { ...NERD }
 export let iconSet: "nerd" | "texte" = "nerd"

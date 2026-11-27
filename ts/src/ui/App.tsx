@@ -26,7 +26,7 @@ import { Snapshots } from "../core/snapshots"
 import { verifyPassword } from "../core/auth"
 import * as V from "../core/voice"
 import { isProtected, listProjects, needsProject, openProject, projectsRoot, PROTECT_RULE, slug } from "../core/protect"
-import { available as sandboxAvailable } from "../core/sandbox"
+import { available as sandboxAvailable, sandboxFor } from "../core/sandbox"
 import { approveFingerprint as approveMcpFingerprint, McpManager, pendingProject, revoke as revokeMcp } from "../core/mcp"
 import { discoverPlugins, discoverSkills, loadPlugins, setTrust, skillCatalog, type PluginCommand, type PluginInfo, type Skill } from "../core/extensions"
 import { cgTurn, CG_LABEL, parsePlan, type CgAgent, type CgMode } from "../core/cg"
@@ -323,7 +323,8 @@ export function App(props: { cwd: string }) {
     if (p.agents) setTimeout(() => refreshZones(), 0)
   }
   const mode = () => prefs().mode ?? "build"
-  const sandboxOn = () => prefs().sandbox !== false && sandboxAvailable().ok
+  // sandbox effective : le bypass enferme toujours dans le projet, le bypass total jamais, sinon le réglage /sandbox
+  const sandboxOn = () => sandboxFor(permMode(), prefs().sandbox !== false)
   const sidebarOn = () => prefs().sidebar !== false // affichée par défaut sur un écran assez large
   const sessionKey = () => (conv ? `ts:${conv}` : `ts:pid-${process.pid}`)
   const rate = (): number | null => {
@@ -1564,10 +1565,12 @@ export function App(props: { cwd: string }) {
       case "sandbox": {
         const av = sandboxAvailable()
         if (!av.ok) return note(`Sandbox indisponible : ${av.reason}. Les commandes restent soumises aux permissions.`, "warn")
-        const on = arg === "on" ? true : arg === "off" ? false : !sandboxOn()
+        const on = arg === "on" ? true : arg === "off" ? false : !(prefs().sandbox !== false)
         updatePrefs({ sandbox: on })
-        return note(on ? `Sandbox active (${av.tool}) : les commandes des modèles et des agents n'écrivent que dans le projet, /tmp et les caches de build.`
-                       : "Sandbox désactivée : les commandes autorisées peuvent écrire partout où vous le pouvez, sauf dans les fichiers d'Eclipse. /sandbox pour la réactiver.", on ? "info" : "warn")
+        const bypassNote = permMode() === "bypass" ? "\nEn bypass, les commandes et les agents restent enfermés dans le projet, quel que soit ce réglage."
+          : permMode() === "bypass-total" ? "\nEn bypass total, rien n'est enfermé (tout est autorisé sur le PC), quel que soit ce réglage." : ""
+        return note((on ? `Sandbox active (${av.tool}) : les commandes des modèles et des agents n'écrivent que dans le projet, /tmp et les caches de build.`
+                       : "Sandbox désactivée : les commandes autorisées peuvent écrire partout où vous le pouvez, sauf dans les fichiers d'Eclipse. /sandbox pour la réactiver.") + bypassNote, on ? "info" : "warn")
       }
       case "details":
         setShowDetails((x) => !x)

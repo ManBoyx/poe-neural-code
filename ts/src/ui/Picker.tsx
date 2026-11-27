@@ -6,7 +6,7 @@
 import { createMemo, createSignal, For, Show } from "solid-js"
 import { useKeyboard } from "@opentui/solid"
 import type { Detected } from "../core/detect"
-import { PROVIDERS, type ModelInfo } from "../core/providers"
+import { CATEGORY_LABEL, CATEGORY_ORDER, modelCategory, PROVIDERS, type ModelCategory, type ModelInfo } from "../core/providers"
 import type { Choice, State } from "../core/store"
 import { C, I } from "./theme"
 import { short } from "../core/paths"
@@ -23,6 +23,9 @@ export interface ProviderStatus {
 type Row =
   | { kind: "header"; label: string; color: string; icon: string }
   | { kind: "item"; title: string; detail: string; right?: string; color: string; dim?: boolean; run: () => void }
+
+const CAT_COLOR: Record<ModelCategory, string> = { multi: C.accent, code: C.detected, recherche: C.recent, texte: C.api, image: C.other, video: C.other, audio: C.other }
+const CAT_ICON: Record<ModelCategory, string> = { multi: I.multi, code: I.code, recherche: I.search, texte: I.model, image: I.image, video: I.video, audio: I.music }
 
 export interface PickerProps {
   state: () => State
@@ -92,8 +95,14 @@ export function Picker(props: PickerProps) {
       else if (s.error && s.key === "local") out.push({ kind: "item", title: `${label(v)} ${s.error}`, detail: "lancez-le, puis rouvrez cette liste", color: C.warn, dim: true, run: () => {} })
       else if (s.error) out.push({ kind: "item", title: s.error, detail: "entrée : saisir ou changer la clé", color: C.warn, run: () => props.onNeedKey(v) })
       else {
-        const ms = (s.models ?? []).filter((m) => !q || m.id.toLowerCase().includes(q))
-        for (const m of ms) out.push({ kind: "item", title: m.id, detail: modelDetail(m), color: C.text, run: () => props.onChoose({ kind: "api", provider: v, model: m.id }) })
+        const ms = (s.models ?? []).filter((m) => !q || m.id.toLowerCase().includes(q) || CATEGORY_LABEL[modelCategory(m)].toLowerCase().includes(q))
+        // rangés par catégorie : code avec code, images avec images… ; les multifonctions ensemble
+        for (const cat of CATEGORY_ORDER) {
+          const g = ms.filter((m) => modelCategory(m) === cat)
+          if (!g.length) continue
+          out.push({ kind: "header", label: `${CATEGORY_LABEL[cat].toUpperCase()} · ${g.length}`, color: CAT_COLOR[cat], icon: CAT_ICON[cat] })
+          for (const m of g) out.push({ kind: "item", title: m.id, detail: modelDetail(m), color: C.text, run: () => props.onChoose({ kind: "api", provider: v, model: m.id }) })
+        }
         const raw = query().trim()
         if (v === "poe" && /^[\w.-]{2,60}$/.test(raw) && !ms.some((m) => m.id.toLowerCase() === q))
           out.push({ kind: "item", title: `Utiliser le bot Poe « ${raw} »`, detail: "n'importe quel bot public de poe.com, par son nom", color: C.api, run: () => props.onChoose({ kind: "api", provider: "poe", model: raw }) })
@@ -111,9 +120,9 @@ export function Picker(props: PickerProps) {
                    run: () => d.installed && props.onChoose({ kind: "agent", provider: d.id }) })
       let n = 0
       for (const p of PROVIDERS) for (const m of st[p.id]?.models ?? []) {
-        if (n >= 400 || !m.id.toLowerCase().includes(q)) continue
+        if (n >= 400 || !(m.id.toLowerCase().includes(q) || CATEGORY_LABEL[modelCategory(m)].toLowerCase().includes(q))) continue
         n++
-        out.push({ kind: "item", title: m.id, detail: modelDetail(m), right: p.label, color: C.text, run: () => props.onChoose({ kind: "api", provider: p.id, model: m.id }) })
+        out.push({ kind: "item", title: m.id, detail: modelDetail(m), right: `${p.label} · ${CATEGORY_LABEL[modelCategory(m)].split(" (")[0]}`, color: C.text, run: () => props.onChoose({ kind: "api", provider: p.id, model: m.id }) })
       }
       const missing = PROVIDERS.filter((p) => !p.local && st[p.id]?.key === "missing").map((p) => p.label)
       // tout bot public de poe.com s'appelle par son nom, même s'il n'est pas dans le catalogue de l'API

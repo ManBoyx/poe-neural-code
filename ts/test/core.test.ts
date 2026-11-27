@@ -240,3 +240,22 @@ describe("modèles d'images, de vidéos et de sons", () => {
     expect(ev2[0].type).toBe("error")
   })
 })
+
+describe("catégories de modèles", () => {
+  test("spécialistes ensemble, multifonctions ensemble", async () => {
+    const { modelCategory } = await import("../src/core/providers")
+    expect(modelCategory({ id: "veo-3.1", output: ["video"] })).toBe("video")
+    expect(modelCategory({ id: "gpt-image-2", output: ["image"] })).toBe("image")
+    expect(modelCategory({ id: "lyria-3", output: ["audio"] })).toBe("audio")
+    expect(modelCategory({ id: "gpt-5.4", output: ["text", "image"], tools: true })).toBe("multi")
+    expect(modelCategory({ id: "seedance-2.5-flash", output: ["text", "video"], tools: false })).toBe("video")
+    expect(modelCategory({ id: "nano-banana-2.1", output: ["text", "image"], tools: false })).toBe("image")
+    expect(modelCategory({ id: "gemini-omni", input: ["audio", "image", "text", "video"], output: ["text"] })).toBe("multi")
+    expect(modelCategory({ id: "gpt-5.3-codex", output: ["text"] })).toBe("code")
+    expect(modelCategory({ id: "qwen3-coder-next" })).toBe("code")
+    expect(modelCategory({ id: "perplexity-sonar" })).toBe("recherche")
+    expect(modelCategory({ id: "claude-sonnet-5.5", input: ["image", "text"], output: ["text"] })).toBe("texte")
+    expect(modelCategory({ id: "decoder-xl" })).toBe("texte") // « coder » au milieu d'un mot : pas un modèle de code
+    expect(modelCategory({ id: "codestral-2" })).toBe("code")
+  })
+})

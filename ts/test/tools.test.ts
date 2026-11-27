@@ -69,15 +69,19 @@ test("modes : lecture seule refuse, modifications accepte sans demander, « touj
   expect(asked.length).toBe(1) // la seconde commande « echo » est couverte par « toujours pour cette session »
 })
 
-test("bypass seulement après vérification ; destructif toujours confirmé ; sudo interdit", async () => {
+test("bypass seulement après vérification ; sans enfermement possible, le destructif est confirmé ; sudo interdit", async () => {
   expect(() => env.perms.setMode("bypass")).toThrow()
   env.perms.bypassVerified = true
   env.perms.setMode("bypass")
   expect((await call("run_command", { command: "echo ok" })).ok).toBe(true)
   expect(asked.length).toBe(0)
+  // une commande destructive NON enfermée (pas de bubblewrap) est demandée, même en bypass
   answer = "deny"
-  expect((await call("run_command", { command: "rm -rf build" })).ok).toBe(false)
+  expect(await env.perms.authorize({ tool: "run_command", kind: "exec", summary: "rm -rf build", destructive: true, confined: false, grantKey: "x" })).toBe(false)
   expect(asked[0].destructive).toBe(true)
+  // enfermée dans le projet : elle passe sans question
+  expect(await env.perms.authorize({ tool: "run_command", kind: "exec", summary: "rm -rf build", destructive: true, confined: true, grantKey: "x" })).toBe(true)
+  expect(asked.length).toBe(1)
   expect((await call("run_command", { command: "sudo ls" })).output).toContain("sudo n'est pas permis")
   expect(isDestructive("git push --force origin main")).toBe(true)
   expect(isDestructive("git status")).toBe(false)
@@ -128,7 +132,7 @@ test("sandbox : la commande écrit dans le projet, pas ailleurs ; le bypass ne l
   if (!available().ok) return
   env.sandbox = true
   env.perms.bypassVerified = true
-  env.perms.setMode("bypass-total")
+  env.perms.setMode("bypass") // le bypass classique garde les commandes enfermées dans le projet
   // hors du projet et hors de /tmp (la sandbox donne un /tmp privé) : dans le dossier personnel
   const outside = join(require("node:os").homedir(), `.eclipse-test-hors-projet-${process.pid}.txt`)
   const r = await call("run_command", { command: `echo dedans > ok.txt && cat ok.txt; echo x > ${outside}` })
@@ -137,6 +141,7 @@ test("sandbox : la commande écrit dans le projet, pas ailleurs ; le bypass ne l
   expect(existsSync(outside)).toBe(false)
   expect(r.output).toMatch(/lecture seule|Read-only/i)
   env.sandbox = false
+  env.perms.setMode("demander") // sandbox coupée hors bypass : la commande (autorisée) peut écrire ailleurs
   await call("run_command", { command: `echo x > ${outside}` })
   expect(existsSync(outside)).toBe(true)
   rmSync(outside)
@@ -189,4 +194,33 @@ test("garde : un descendant qui crée sa propre session meurt aussi au délai, e
   expect(Bun.spawnSync(["pgrep", "-f", `^sleep ${mark}\\.7$`]).stdout.toString().trim()).toBe("")
   const ps = await call("run_command", { command: `ls /proc | grep -c '^[0-9]'` })
   expect(Number(ps.output.trim().split("\n")[0])).toBeLessThan(10)
+})
+
+test("bypass : tout dans le projet sans confirmation, commandes enfermées ; bypass total : tout, commandes libres", async () => {
+  if (process.platform !== "linux" || !Bun.which("bwrap")) {
+    if (process.env.ECLIPSE_REQUIRE_BWRAP === "1") throw new Error("bubblewrap requis pour ce test (ECLIPSE_REQUIRE_BWRAP=1)")
+    return
+  }
+  env.sandbox = false // même sandbox coupée : le bypass enferme
+  env.perms.bypassVerified = true
+  env.perms.setMode("bypass")
+  const outside = join(require("node:os").homedir(), `.eclipse-test-bypass-${process.pid}.txt`)
+  asked.length = 0
+  const r = await call("run_command", { command: `rm -rf ./a.txt && echo fait; echo x > ${outside}` })
+  expect(asked.length).toBe(0) // aucune question, même pour « rm -rf »
+  expect(existsSync(join(proj, "a.txt"))).toBe(false) // le projet est modifiable
+  expect(existsSync(outside)).toBe(false) // hors du projet : impossible (commande enfermée)
+  expect(r.output).toContain("fait")
+  // écrire un fichier hors du projet avec l'outil : on demande encore en bypass classique
+  answer = "deny"
+  const w = await call("write_file", { path: outside, content: "x" })
+  expect(asked.length).toBe(1)
+  expect(w.ok).toBe(false)
+  // bypass total : plus aucune question, la commande peut écrire hors du projet
+  env.perms.setMode("bypass-total")
+  asked.length = 0
+  await call("run_command", { command: `echo x > ${outside}` })
+  expect(asked.length).toBe(0)
+  expect(existsSync(outside)).toBe(true)
+  rmSync(outside)
 })

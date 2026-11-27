@@ -27,6 +27,7 @@ export function Modal(p: { title: string; onClose: () => void; children: Compone
 export function ModelPicker({ onClose, onKeys, toast }: { onClose: () => void; onKeys: () => void; toast: (t: string, l?: string) => void }) {
   const [data, setData] = useState<ModelsPayload | null>(null);
   const [q, setQ] = useState("");
+  const [openCat, setOpenCat] = useState<string | null>(null);
   const inp = useRef<HTMLInputElement>(null);
   useEffect(() => { get<ModelsPayload>("/api/models").then(setData).catch((e) => toast(e.message, "error")); inp.current?.focus(); }, []);
   const choose = async (c: Choice) => {
@@ -37,9 +38,9 @@ export function ModelPicker({ onClose, onKeys, toast }: { onClose: () => void; o
   const hits = useMemo(() => {
     if (!data || !f) return [];
     const out: { c: Choice; text: string; meta: string }[] = [];
-    const kind = (o?: string[]) => (o && !o.includes("text") ? o.map((x) => (x === "image" ? "image" : x === "video" ? "vidéo" : x === "audio" ? "son" : x)).join(" + ") : "");
-    for (const pv of data.providers) for (const m of pv.models) if (`${m.id} ${pv.label} ${kind(m.output)}`.toLowerCase().includes(f))
-      out.push({ c: { kind: "api", provider: pv.id, model: m.id }, text: m.id, meta: [pv.label, kind(m.output), m.free ? "gratuit" : ""].filter(Boolean).join(" · ") });
+    const cat = (m: { category?: string }) => (data.categories ?? []).find((c) => c.id === m.category)?.label.split(" (")[0] ?? "";
+    for (const pv of data.providers) for (const m of pv.models) if (`${m.id} ${pv.label} ${cat(m)}`.toLowerCase().includes(f))
+      out.push({ c: { kind: "api", provider: pv.id, model: m.id }, text: m.id, meta: [pv.label, cat(m), m.free ? "gratuit" : ""].filter(Boolean).join(" · ") });
     for (const a of data.agents) if (a.installed && a.label.toLowerCase().includes(f)) out.push({ c: { kind: "agent", provider: a.id }, text: a.label, meta: "agent installé" });
     // n'importe quel bot public de poe.com, par son nom (même absent du catalogue de l'API)
     const raw = q.trim();
@@ -69,8 +70,19 @@ export function ModelPicker({ onClose, onKeys, toast }: { onClose: () => void; o
             {!data.agents.some((a) => a.installed) && <p class="list-row dim">Aucun agent détecté.</p>}
           </div>
           {ok.map((pv) => (<>
-            <div class="sec-title">{pv.label} · {pv.models.length} modèles (tape pour chercher parmi tous)</div>
-            <div class="chips">{pv.models.filter((m) => !m.output || m.output.includes("text")).slice(0, 14).map((m) => <button class="chip press" onClick={() => choose({ kind: "api", provider: pv.id, model: m.id })}>{m.id}</button>)}</div>
+            <div class="sec-title"><b>{pv.label}</b> · {pv.models.length} modèles, rangés par catégorie (tape pour chercher parmi tous)</div>
+            {(data.categories ?? [{ id: "", label: "" }]).map((c) => {
+              const g = pv.models.filter((m) => !c.id || m.category === c.id);
+              if (!g.length) return null;
+              const open = openCat === `${pv.id}/${c.id}`;
+              return (<>
+                {c.label && <div class="cat-title">{c.label} <span class="dim">· {g.length}</span></div>}
+                <div class="chips">
+                  {(open ? g : g.slice(0, 10)).map((m) => <button class="chip press" onClick={() => choose({ kind: "api", provider: pv.id, model: m.id })}>{m.id}</button>)}
+                  {g.length > 10 && <button class="chip more press" onClick={() => setOpenCat(open ? null : `${pv.id}/${c.id}`)}>{open ? "Moins" : `+ ${g.length - 10}`}</button>}
+                </div>
+              </>);
+            })}
           </>))}
           {missing.length > 0 && (<>
             <div class="sec-title">À connecter</div>
@@ -85,7 +97,7 @@ export function ModelPicker({ onClose, onKeys, toast }: { onClose: () => void; o
 // ------------------------------------------------------------------ réglages
 const PERMS: [string, string][] = [
   ["demander", "Tout confirmer (recommandé)"], ["modifications", "Modifications du projet acceptées, commandes confirmées"], ["lecture", "Lecture seule"],
-  ["bypass", "Aucune confirmation, sauf destructif ou hors du projet (mot de passe)"], ["bypass-total", "Aucune confirmation du tout (mot de passe)"],
+  ["bypass", "Bypass : tout dans le projet sans confirmation, commandes comprises"], ["bypass-total", "Bypass total : tout sur le PC sans aucune confirmation"],
 ];
 
 export function Settings({ st, onClose, toast, theme, setTheme, start = "general" }: { st: EngineState; onClose: () => void; toast: (t: string, l?: string) => void; theme: string; setTheme: (t: string) => void; start?: string }) {
@@ -173,8 +185,10 @@ function Perms({ st, toast }: { st: EngineState; toast: (t: string, l?: string) 
         </button>
       ))}</div>
       <h3>Sandbox</h3>
-      <label class="toggle"><input type="checkbox" checked={st.sandbox} onChange={(e) => post("/api/prefs", { sandbox: (e.target as HTMLInputElement).checked }).catch((x) => toast(x.message, "error"))} />
-        <span>Sandbox des commandes<span class="dim">Les commandes n'écrivent que dans le projet. Même sans sandbox, les fichiers d'Eclipse restent intouchables.</span></span></label>
+      <label class="toggle"><input type="checkbox" checked={st.sandboxPref ?? st.sandbox} disabled={st.perm.startsWith("bypass")} onChange={(e) => post("/api/prefs", { sandbox: (e.target as HTMLInputElement).checked }).catch((x) => toast(x.message, "error"))} />
+        <span>Sandbox des commandes<span class="dim">{st.perm === "bypass" ? "En bypass, les commandes et les agents sont toujours enfermés dans le projet."
+          : st.perm === "bypass-total" ? "En bypass total, rien n'est enfermé : tout est autorisé sur le PC."
+          : "Les commandes n'écrivent que dans le projet. Même sans sandbox, les fichiers d'Eclipse restent intouchables."}</span></span></label>
     </>
   );
 }
