@@ -26,13 +26,13 @@ import { Snapshots } from "../core/snapshots"
 import { verifyPassword } from "../core/auth"
 import * as V from "../core/voice"
 import { isProtected, listProjects, needsProject, openProject, projectsRoot, PROTECT_RULE, slug } from "../core/protect"
-import { available as sandboxAvailable, sandboxFor, agentBypass } from "../core/sandbox"
+import { available as sandboxAvailable, sandboxFor } from "../core/sandbox"
 import { approveFingerprint as approveMcpFingerprint, McpManager, pendingProject, revoke as revokeMcp } from "../core/mcp"
 import { discoverPlugins, discoverSkills, loadPlugins, setTrust, skillCatalog, type PluginCommand, type PluginInfo, type Skill } from "../core/extensions"
 import { cgTurn, CG_LABEL, parsePlan, type CgAgent, type CgMode } from "../core/cg"
 import { CgZones, cgTabs, SUB_COLORS, SubAgentView, type Zone, type ZoneEntry } from "./CgView"
 import { CgMenu } from "./CgMenu"
-import { type AgentModel, agentModels, AGENT_SUPPORT, POWER_LABEL, runAgent, type Power } from "../core/agents"
+import { type AgentModel, agentModels, agentPowerFor, AGENT_SUPPORT, POWER_LABEL, runAgent, type Power } from "../core/agents"
 import { coerce } from "../core/providers"
 import { VERSION, VERSION_INFO } from "../core/version"
 import { Picker, type ProviderStatus } from "./Picker"
@@ -513,8 +513,7 @@ export function App(props: { cwd: string }) {
     if (!d?.installed) return note(`${agentName(id)} n'est pas installé — ${d?.install ?? ""}`, "error")
     if (!AGENT_SUPPORT[id]) return note(`${d.label} n'est pas encore pilotable depuis Eclipse (Claude Code, Codex, OpenCode et Gemini le sont).`, "warn")
     const a = prefs().agents?.[id] ?? {}
-    let power: Power = opts.readOnly || mode() === "plan" || perms.mode === "lecture" ? "lecture" : (a.power ?? "modifications")
-    if (agentBypass(perms.mode) && perms.bypassVerified && power !== "lecture") power = "bypass"
+    const power = agentPowerFor(perms.mode, perms.bypassVerified, opts.readOnly || mode() === "plan" ? "lecture" : (a.power ?? "modifications"))
     const blocked = budget.blocked(`cli:${id}`)
     if (blocked) return note(`Envoi bloqué : ${blocked}.`, "error")
     if (AGENT_SUPPORT[id] === "non vérifié") note(`${d.label} : pilotage par sa sortie texte, pas encore vérifié par un vrai essai.`, "warn")
@@ -661,9 +660,7 @@ export function App(props: { cwd: string }) {
     for (const a of ["claude", "codex"] as CgAgent[]) {
       const d = detected().find((x) => x.id === a)
       const s = prefs().agents?.[a] ?? {}
-      let power: Power = s.power ?? (a === "codex" ? "commandes" : "modifications")
-      if (perms.mode === "lecture" || mode() === "plan") power = "lecture"
-      else if (agentBypass(perms.mode) && perms.bypassVerified) power = "bypass"
+      const power = agentPowerFor(perms.mode, perms.bypassVerified, mode() === "plan" ? "lecture" : (s.power ?? (a === "codex" ? "commandes" : "modifications")))
       if (d?.installed) cfgs[a] = { binary: d.path!, model: s.model, effort: s.effort, power }
     }
     if (!cfgs.claude && !cfgs.codex) return note("/cg : ni Claude Code ni Codex n'est installé.", "error")

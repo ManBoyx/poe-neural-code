@@ -234,7 +234,25 @@ test("bypass : une commande non enfermée est toujours demandée ; sudo et ses c
   for (const c of ["echo a && sudo ls", "(sudo id)", "x=$(sudo id)", "env FOO=1 sudo id", "echo `pkexec id`", "doas ls", "run0 id", "true; su -c id"]) {
     expect((await call("run_command", { command: c })).output).toContain("sudo n'est pas permis")
   }
-  expect((await call("run_command", { command: "echo sudoku resultat" })).ok).toBe(true)
+  for (const c of ["/usr/bin/sudo id", "nohup sudo id", "timeout 5 sudo id", "X=1 Y=2 sudo id", "echo a\nsudo id"]) {
+    expect((await call("run_command", { command: c })).output).toContain("sudo n'est pas permis")
+  }
+  // un simple argument n'est pas une élévation
+  env.perms.setMode("bypass-total")
+  for (const c of ["echo sudoku resultat", "echo su", "grep -c su /dev/null || true"]) expect((await call("run_command", { command: c })).ok).toBe(true)
+})
+
+test("une autorisation « pour la session » donnée avec la sandbox ne vaut pas sans elle", async () => {
+  answer = "session"
+  env.sandbox = true
+  expect((await call("run_command", { command: "echo un" })).ok).toBe(true)
+  expect(asked.length).toBe(1)
+  expect((await call("run_command", { command: "echo deux" })).ok).toBe(true)
+  expect(asked.length).toBe(1) // même commande, toujours enfermée : pas de nouvelle question
+  env.sandbox = false
+  answer = "deny"
+  expect((await call("run_command", { command: "echo trois" })).ok).toBe(false)
+  expect(asked.length).toBe(2) // sans sandbox : on redemande
 })
 
 test("dans la garde, aucun programme ne peut obtenir de droits root (no_new_privs)", async () => {

@@ -355,7 +355,7 @@ export function App() {
       {overlay?.kind === "usage" && <UsageView onClose={() => setOverlay(null)} />}
       {overlay?.kind === "project" && (
         <ProjectChooser st={st} propose={overlay.propose} toast={toast} onClose={() => setOverlay(null)}
-          onDone={() => { const t = overlay.text; setOverlay(null); dispatch({ t: "set", s: emptyThread() }); reload(); if (t || images.length) setTimeout(() => send(t ?? "", "work"), 300); }} />
+          onDone={() => { const t = overlay.text; setOverlay(null); dispatch({ t: "set", s: emptyThread() }); reload(); if (t !== undefined) setTimeout(() => send(t, "work"), 300); }} />
       )}
       {overlay?.kind === "image" && <Lightbox url={overlay.url} onClose={() => setOverlay(null)} />}
       {perm && <PermModal perm={perm} onDecide={(d) => { post("/api/perm", { id: perm.id, decision: d }).catch(() => {}); setPerm(null); }} />}

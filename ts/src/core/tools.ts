@@ -13,9 +13,13 @@ import type { Kind, Memory } from "./memory"
 import type { McpManager } from "./mcp"
 import type { Skill } from "./extensions"
 
-/** Élévation de droits (sudo, doas, pkexec, run0, su) n'importe où dans la commande. Ce n'est qu'un premier filtre :
- *  la vraie barrière est no_new_privs (bubblewrap ou setpriv), qui empêche tout programme setuid de devenir root. */
-const ROOT_RE = /(^|[\s;&|(){}`'"=!])(sudo|doas|pkexec|run0|su)(?=$|[\s;&|()<>`'"])/
+/**
+ * Élévation de droits (sudo, doas, pkexec, run0, su) lancée comme commande, où qu'elle soit dans la ligne : début,
+ * après ; & | ( { ` $( ou !, derrière env/exec/nohup/time/xargs…, avec des variables (X=1) ou par son chemin
+ * (/usr/bin/sudo). Un simple argument (« grep su ») n'est pas visé. Ce n'est qu'un premier filtre : la vraie barrière
+ * est no_new_privs (bubblewrap ou setpriv), qui empêche tout programme setuid de devenir root.
+ */
+const ROOT_RE = /(?:^|[\n;&|(){}`!]|\$\()\s*(?:(?:env|exec|nohup|time|nice|ionice|command|builtin|xargs|stdbuf|setsid|chrt|timeout\s+\S+)\s+|-\S+\s+|\w+=\S*\s+)*(?:\S*\/)?(?:sudo|doas|pkexec|run0|su)(?=$|[\s;&|()<>`'"])/
 
 export interface ToolCall {
   id: string
@@ -204,7 +208,7 @@ export async function runTool(env: ToolEnv, call: ToolCall): Promise<ToolResult>
         if (isProtected(env.roots[0])) return { ok: false, output: "refusé : le dossier de travail est un dossier d'Eclipse. Ouvrez un projet (/projet NOM)." }
         if (ROOT_RE.test(cmd)) return { ok: false, output: "sudo n'est pas permis aux modèles : lancez la commande vous-même si elle est nécessaire" }
         const confined = sandboxFor(env.perms.mode, !!env.sandbox)
-        const ok = await env.perms.authorize({ tool: "run_command", kind: "exec", summary: cmd, detail: cmd, destructive: isDestructive(cmd), confined, grantKey: `exec:${cmd.split(/\s+/)[0]}` })
+        const ok = await env.perms.authorize({ tool: "run_command", kind: "exec", summary: cmd, detail: cmd, destructive: isDestructive(cmd), confined, grantKey: `exec:${confined ? "enfermée" : "libre"}:${cmd.split(/\s+/)[0]}` })
         if (!ok) return { ok: false, output: "commande refusée par l'utilisateur" }
         let sh = process.platform === "win32" ? ["cmd", "/c", cmd] : [process.env.SHELL?.endsWith("zsh") ? "zsh" : "bash", "-lc", cmd]
         sh = confined ? wrap(sh, env.roots, env.roots[0]) : guard(sh, env.roots[0])

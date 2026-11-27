@@ -9,7 +9,7 @@
  * Les événements (texte, réflexion, outils, sous-agents, phases de /cg, autorisations, consommation) partent vers
  * l'écran par un rappel ; le serveur HTTP les relaie.
  */
-import { closeSync, constants as FS, existsSync, lstatSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs"
+import { closeSync, constants as FS, existsSync, lstatSync, mkdirSync, openSync, realpathSync, unlinkSync, writeSync } from "node:fs"
 import { join, sep } from "node:path"
 import { Budget, estimateUsd } from "../core/budget"
 import { cgTurn, CG_LABEL, type CgAgent, type CgMode } from "../core/cg"
@@ -22,8 +22,8 @@ import { estimateTokens, Memory, rememberRequest } from "../core/memory"
 import { Permissions, type Decision, type PermMode, type Request } from "../core/permissions"
 import { isProtected, listProjects, needsProject, openProject, PROTECT_RULE, projectsRoot, slug } from "../core/protect"
 import { catalog, keyFor, provider, PROVIDERS, verifyKey, type ModelInfo, modelCategory, type ModelCategory } from "../core/providers"
-import { agentModels, runAgent, type Power } from "../core/agents"
-import { available as sandboxAvailable, sandboxFor, agentBypass } from "../core/sandbox"
+import { agentModels, agentPowerFor, runAgent, type Power } from "../core/agents"
+import { available as sandboxAvailable, sandboxFor } from "../core/sandbox"
 import { Snapshots } from "../core/snapshots"
 import { choose, load, save, type Choice, type State } from "../core/store"
 import { openAiTools, READ_ONLY_TOOLS, runTool, summarize, type Todo, type ToolEnv } from "../core/tools"
@@ -54,13 +54,20 @@ const MAGIC: Record<string, (b: Buffer) => boolean> = {
   webp: (b) => b.toString("latin1", 0, 4) === "RIFF" && b.toString("latin1", 8, 12) === "WEBP",
   gif: (b) => /^GIF8[79]a$/.test(b.toString("latin1", 0, 6)),
 }
+/** Fin attendue de chaque format : une image tronquée (copie interrompue) est refusée. */
+const COMPLETE: Record<string, (b: Buffer) => boolean> = {
+  png: (b) => b.subarray(-12).equals(Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82])), // bloc IEND
+  jpeg: (b) => b.subarray(-16).includes(Buffer.from([0xff, 0xd9])), // marqueur EOI (octets de remplissage tolérés)
+  webp: (b) => b.readUInt32LE(4) + 8 <= b.length, // taille annoncée dans l'en-tête RIFF
+  gif: (b) => b.subarray(-4).includes(0x3b), // terminateur
+}
 /** Une image valide : data URL du bon format, base64 correct, octets qui sont bien une image de ce type, 12 Mo au plus. */
 function validImage(x: any): boolean {
   if (!x || typeof x.dataUrl !== "string" || x.dataUrl.length > 12_000_000) return false
   const m = IMG_RE.exec(x.dataUrl)
   if (!m || m[2].length % 4 !== 0) return false
   const bytes = Buffer.from(m[2], "base64")
-  return bytes.length > 12 && MAGIC[m[1]](bytes)
+  return bytes.length > 12 && MAGIC[m[1]](bytes) && COMPLETE[m[1]](bytes)
 }
 /** Garde les images valides, 6 au plus. `rejected` : nombre d'images écartées (pour le signaler). */
 export function cleanImages(list: unknown): { images: PastedImage[]; rejected: number } {
@@ -93,7 +100,17 @@ export function writeImages(cwd: string, images: PastedImage[]): string[] {
     const ext = im.dataUrl.slice(11, im.dataUrl.indexOf(";")).replace("jpeg", "jpg")
     const file = `${Date.now()}-${i + 1}-${im.name.replace(/\.[a-z0-9]+$/i, "")}.${ext}`
     const fd = openSync(join(dir, file), FS.O_WRONLY | FS.O_CREAT | FS.O_EXCL | FS.O_NOFOLLOW, 0o644)
-    try { writeSync(fd, Buffer.from(im.dataUrl.slice(im.dataUrl.indexOf(",") + 1), "base64")) } finally { closeSync(fd) }
+    try {
+      // un dossier parent remplacé entre la vérification et l'ouverture : le fichier (encore vide) est retiré, rien n'est écrit
+      if (process.platform === "linux") {
+        const real = realpathSync.native(`/proc/self/fd/${fd}`)
+        if (!real.startsWith(root + sep) || isProtected(real)) {
+          try { unlinkSync(real) } catch { /* déjà parti */ }
+          throw new Error("images : dossier déplacé pendant l'enregistrement, hors du projet — rien n'a été écrit")
+        }
+      }
+      writeSync(fd, Buffer.from(im.dataUrl.slice(im.dataUrl.indexOf(",") + 1), "base64"))
+    } finally { closeSync(fd) }
     return `.eclipse/images/${file}`
   })
   return paths
@@ -472,9 +489,7 @@ export class EngineSession {
 
   private agentPower(id: string): Power {
     const a = this.st.prefs.agents?.[id] ?? {}
-    if (this.perms.mode === "lecture") return "lecture"
-    if (agentBypass(this.perms.mode) && this.perms.bypassVerified) return "bypass"
-    return a.power ?? (id === "codex" ? "commandes" : "modifications")
+    return agentPowerFor(this.perms.mode, this.perms.bypassVerified, a.power ?? (id === "codex" ? "commandes" : "modifications"))
   }
 
   private async agent(id: string, text: string): Promise<string> {

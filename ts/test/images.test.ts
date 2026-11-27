@@ -28,6 +28,7 @@ test("seules les vraies images passent ; les autres sont comptées comme refusé
   expect(r.images.map((i) => i.name)).toEqual(["ok.png"])
   expect(r.rejected).toBe(5)
   expect(cleanImages(Array(7).fill({ name: "x", dataUrl: url("png", PNG) })).rejected).toBe(1) // 6 au plus
+  expect(cleanImages([{ name: "coupée", dataUrl: url("png", PNG.subarray(0, PNG.length - 20)) }]).rejected).toBe(1) // tronquée
 })
 
 test("les images vont dans <projet>/.eclipse/images, octets intacts", () => {

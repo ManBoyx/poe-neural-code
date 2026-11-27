@@ -139,3 +139,13 @@ echo '{"type":"result","subtype":"success","result":"fini"}'`)
     else process.env.ECLIPSE_ROOT = prev
   }
 })
+
+test("puissance des agents : bypass total = tout ; bypass = tout seulement s'ils peuvent être enfermés", async () => {
+  const { agentPowerFor } = await import("../src/core/agents")
+  const { available } = await import("../src/core/sandbox")
+  expect(agentPowerFor("bypass-total", true, "modifications")).toBe("bypass")
+  expect(agentPowerFor("bypass", true, "commandes")).toBe(available().ok ? "bypass" : "modifications")
+  expect(agentPowerFor("bypass", false, "commandes")).toBe("commandes") // bypass non vérifié : réglage de l'agent
+  expect(agentPowerFor("lecture", true, "commandes")).toBe("lecture")
+  expect(agentPowerFor("bypass-total", true, "lecture")).toBe("lecture") // mode plan
+})

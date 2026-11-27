@@ -12,6 +12,17 @@ import { agentStateDirs, available as sandboxAvailable, guard, wrap } from "./sa
 import { isProtected, PROTECT_RULE } from "./protect"
 
 export type Power = "lecture" | "modifications" | "commandes" | "bypass"
+
+/**
+ * Puissance réelle d'un agent selon le mode de permission. Bypass total : tout. Bypass : tout, car l'agent sera enfermé
+ * dans le projet ; sans bubblewrap rien ne peut l'y enfermer, donc modifications au plus (aucune commande automatique).
+ */
+export function agentPowerFor(mode: string, verified: boolean, wanted: Power): Power {
+  if (mode === "lecture" || wanted === "lecture") return "lecture"
+  if (mode === "bypass-total" && verified) return "bypass"
+  if (mode === "bypass" && verified) return sandboxAvailable().ok ? "bypass" : "modifications"
+  return wanted
+}
 export const POWER_LABEL: Record<Power, string> = {
   lecture: "lecture seule",
   modifications: "lecture et modifications de fichiers",
@@ -192,9 +203,9 @@ export async function* runAgent(r: AgentRun): AsyncGenerator<AgentEvent> {
   // (projet + leurs réglages en écriture). Codex garde la sienne. Sandbox coupée : la garde (fichiers d'Eclipse en
   // lecture seule, aucune élévation de droits).
   const whole = r.sandbox && r.agent !== "codex" && sandboxAvailable().ok
-  const finalCmd = whole ? wrap(cmd, [r.cwd, ...agentStateDirs(r.agent)], r.cwd) : guard(cmd, r.cwd)
   let proc: ReturnType<typeof Bun.spawn>
   try {
+    const finalCmd = whole ? wrap(cmd, [r.cwd, ...agentStateDirs(r.agent)], r.cwd) : guard(cmd, r.cwd)
     proc = Bun.spawn(finalCmd, { cwd: r.cwd, env, stdin: textMode ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe", detached: true })
   } catch (e) {
     yield { type: "error", message: `${r.agent} : lancement impossible (${(e as Error).message})` }

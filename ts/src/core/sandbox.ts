@@ -24,11 +24,6 @@ export function sandboxFor(mode: string, pref: boolean): boolean {
   return pref && available().ok
 }
 
-/** Un agent reçoit tous les droits en bypass total, ou en bypass s'il peut être enfermé dans le projet. */
-export function agentBypass(mode: string): boolean {
-  return mode === "bypass-total" || (mode === "bypass" && available().ok)
-}
-
 export function available(): { ok: true; tool: string } | { ok: false; reason: string } {
   if (process.platform !== "linux") return { ok: false, reason: "sandbox disponible seulement sous Linux dans cette version" }
   const b = Bun.which("bwrap")
@@ -66,9 +61,12 @@ export function wrap(cmd: string[], writable: string[], cwd: string): string[] {
 export function guard(cmd: string[], cwd: string): string[] {
   const b = process.platform === "linux" ? Bun.which("bwrap") : null
   if (!b) {
-    // sans bubblewrap : au moins aucune élévation de droits (sudo, pkexec…) pour la commande et ses descendants
-    const sp = process.platform === "linux" ? Bun.which("setpriv") : null
-    return sp ? [sp, "--no-new-privs", "--", ...cmd] : cmd
+    if (process.platform !== "linux") return cmd
+    // sans bubblewrap : au moins aucune élévation de droits (sudo, pkexec…) pour la commande et ses descendants ;
+    // sans setpriv non plus, on ne lance rien plutôt que sans protection
+    const sp = Bun.which("setpriv")
+    if (!sp) throw new Error("ni bubblewrap ni setpriv (util-linux) : installez bubblewrap pour lancer des commandes et des agents")
+    return [sp, "--no-new-privs", "--", ...cmd]
   }
   // espace de PID privé : /proc ne montre que les processus de la commande (pas de passage par /proc/PID/root d'un
   // processus hors garde), et tout l'arbre meurt avec elle, même un descendant qui a créé sa propre session
