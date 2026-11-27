@@ -17,10 +17,12 @@ export type Power = "lecture" | "modifications" | "commandes" | "bypass"
  * Puissance réelle d'un agent selon le mode de permission. Bypass total : tout. Bypass : tout, car l'agent sera enfermé
  * dans le projet ; sans bubblewrap rien ne peut l'y enfermer, donc modifications au plus (aucune commande automatique).
  */
-export function agentPowerFor(mode: string, verified: boolean, wanted: Power): Power {
+export function agentPowerFor(mode: string, verified: boolean, wanted: Power, agent?: string): Power {
   if (mode === "lecture" || wanted === "lecture") return "lecture"
   if (mode === "bypass-total" && verified) return "bypass"
-  if (mode === "bypass" && verified) return sandboxAvailable().ok ? "bypass" : "modifications"
+  // sans bubblewrap : Claude Code, Codex et Gemini limitent eux-mêmes leurs modifications au projet ; OpenCode ne
+  // sait pas se restreindre en ligne de commande, il reste donc en lecture
+  if (mode === "bypass" && verified) return sandboxAvailable().ok ? "bypass" : agent === "opencode" ? "lecture" : "modifications"
   return wanted
 }
 export const POWER_LABEL: Record<Power, string> = {

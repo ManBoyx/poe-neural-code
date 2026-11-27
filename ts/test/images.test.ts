@@ -29,6 +29,9 @@ test("seules les vraies images passent ; les autres sont comptées comme refusé
   expect(r.rejected).toBe(5)
   expect(cleanImages(Array(7).fill({ name: "x", dataUrl: url("png", PNG) })).rejected).toBe(1) // 6 au plus
   expect(cleanImages([{ name: "coupée", dataUrl: url("png", PNG.subarray(0, PNG.length - 20)) }]).rejected).toBe(1) // tronquée
+  const GIF = Buffer.from("474946383961010001000000002c00000000010001000002024c01003b", "hex")
+  expect(cleanImages([{ name: "g", dataUrl: url("gif", GIF) }]).rejected).toBe(0)
+  expect(cleanImages([{ name: "g", dataUrl: url("gif", Buffer.concat([GIF.subarray(0, -1), Buffer.from([0x3b, 0x00])])) }]).rejected).toBe(1)
 })
 
 test("les images vont dans <projet>/.eclipse/images, octets intacts", () => {

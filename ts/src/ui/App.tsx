@@ -513,7 +513,7 @@ export function App(props: { cwd: string }) {
     if (!d?.installed) return note(`${agentName(id)} n'est pas installé — ${d?.install ?? ""}`, "error")
     if (!AGENT_SUPPORT[id]) return note(`${d.label} n'est pas encore pilotable depuis Eclipse (Claude Code, Codex, OpenCode et Gemini le sont).`, "warn")
     const a = prefs().agents?.[id] ?? {}
-    const power = agentPowerFor(perms.mode, perms.bypassVerified, opts.readOnly || mode() === "plan" ? "lecture" : (a.power ?? "modifications"))
+    const power = agentPowerFor(perms.mode, perms.bypassVerified, opts.readOnly || mode() === "plan" ? "lecture" : (a.power ?? "modifications"), id)
     const blocked = budget.blocked(`cli:${id}`)
     if (blocked) return note(`Envoi bloqué : ${blocked}.`, "error")
     if (AGENT_SUPPORT[id] === "non vérifié") note(`${d.label} : pilotage par sa sortie texte, pas encore vérifié par un vrai essai.`, "warn")
@@ -660,7 +660,7 @@ export function App(props: { cwd: string }) {
     for (const a of ["claude", "codex"] as CgAgent[]) {
       const d = detected().find((x) => x.id === a)
       const s = prefs().agents?.[a] ?? {}
-      const power = agentPowerFor(perms.mode, perms.bypassVerified, mode() === "plan" ? "lecture" : (s.power ?? (a === "codex" ? "commandes" : "modifications")))
+      const power = agentPowerFor(perms.mode, perms.bypassVerified, mode() === "plan" ? "lecture" : (s.power ?? (a === "codex" ? "commandes" : "modifications")), a)
       if (d?.installed) cfgs[a] = { binary: d.path!, model: s.model, effort: s.effort, power }
     }
     if (!cfgs.claude && !cfgs.codex) return note("/cg : ni Claude Code ni Codex n'est installé.", "error")

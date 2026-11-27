@@ -148,4 +148,5 @@ test("puissance des agents : bypass total = tout ; bypass = tout seulement s'ils
   expect(agentPowerFor("bypass", false, "commandes")).toBe("commandes") // bypass non vérifié : réglage de l'agent
   expect(agentPowerFor("lecture", true, "commandes")).toBe("lecture")
   expect(agentPowerFor("bypass-total", true, "lecture")).toBe("lecture") // mode plan
+  expect(agentPowerFor("bypass", true, "commandes", "opencode")).toBe(available().ok ? "bypass" : "lecture")
 })

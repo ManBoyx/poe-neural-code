@@ -234,7 +234,7 @@ test("bypass : une commande non enfermée est toujours demandée ; sudo et ses c
   for (const c of ["echo a && sudo ls", "(sudo id)", "x=$(sudo id)", "env FOO=1 sudo id", "echo `pkexec id`", "doas ls", "run0 id", "true; su -c id"]) {
     expect((await call("run_command", { command: c })).output).toContain("sudo n'est pas permis")
   }
-  for (const c of ["/usr/bin/sudo id", "nohup sudo id", "timeout 5 sudo id", "X=1 Y=2 sudo id", "echo a\nsudo id"]) {
+  for (const c of ["/usr/bin/sudo id", "nohup sudo id", "timeout 5 sudo id", "X=1 Y=2 sudo id", "echo a\nsudo id", '"sudo" id', "'/usr/bin/sudo' id", "if true; then sudo id; fi", "for i in 1; do sudo id; done"]) {
     expect((await call("run_command", { command: c })).output).toContain("sudo n'est pas permis")
   }
   // un simple argument n'est pas une élévation
@@ -243,6 +243,7 @@ test("bypass : une commande non enfermée est toujours demandée ; sudo et ses c
 })
 
 test("une autorisation « pour la session » donnée avec la sandbox ne vaut pas sans elle", async () => {
+  if (!(await import("../src/core/sandbox")).available().ok) return // sans bubblewrap, aucune commande n'est enfermée
   answer = "session"
   env.sandbox = true
   expect((await call("run_command", { command: "echo un" })).ok).toBe(true)

@@ -320,7 +320,8 @@ export function App() {
         <div class="scroller" ref={scroller} onScroll={onScroll}>
           <div class="thread">
             {empty ? <Welcome space={space} st={st} onPick={(t) => {
-              if (space === "work" && st.needsProject) return setOverlay({ kind: "project", text: t });
+              // sans projet : la suggestion va dans la saisie et on choisit le projet ; rien ne part sans Entrée
+              if (space === "work" && st.needsProject) { setDraft(t); return setOverlay({ kind: "project" }); }
               if (space === "medias") {
                 const want = wantedMedia(t);
                 if (want) { // idée cliquée : le modèle le plus adapté (musique -> générateur de musique, pas une voix)

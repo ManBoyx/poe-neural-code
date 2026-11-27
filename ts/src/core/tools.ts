@@ -19,7 +19,7 @@ import type { Skill } from "./extensions"
  * (/usr/bin/sudo). Un simple argument (« grep su ») n'est pas visé. Ce n'est qu'un premier filtre : la vraie barrière
  * est no_new_privs (bubblewrap ou setpriv), qui empêche tout programme setuid de devenir root.
  */
-const ROOT_RE = /(?:^|[\n;&|(){}`!]|\$\()\s*(?:(?:env|exec|nohup|time|nice|ionice|command|builtin|xargs|stdbuf|setsid|chrt|timeout\s+\S+)\s+|-\S+\s+|\w+=\S*\s+)*(?:\S*\/)?(?:sudo|doas|pkexec|run0|su)(?=$|[\s;&|()<>`'"])/
+const ROOT_RE = /(?:^|[\n;&|(){}`!]|\$\()\s*(?:(?:env|exec|nohup|time|nice|ionice|command|builtin|xargs|stdbuf|setsid|chrt|then|else|elif|do|if|while|until|timeout\s+\S+)\s+|-\S+\s+|\w+=\S*\s+)*["']?(?:\S*\/)?(?:sudo|doas|pkexec|run0|su)["']?(?=$|[\s;&|()<>`])/
 
 export interface ToolCall {
   id: string

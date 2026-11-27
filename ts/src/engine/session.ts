@@ -59,7 +59,7 @@ const COMPLETE: Record<string, (b: Buffer) => boolean> = {
   png: (b) => b.subarray(-12).equals(Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82])), // bloc IEND
   jpeg: (b) => b.subarray(-16).includes(Buffer.from([0xff, 0xd9])), // marqueur EOI (octets de remplissage tolérés)
   webp: (b) => b.readUInt32LE(4) + 8 <= b.length, // taille annoncée dans l'en-tête RIFF
-  gif: (b) => b.subarray(-4).includes(0x3b), // terminateur
+  gif: (b) => b[b.length - 1] === 0x3b, // terminateur, dernier octet
 }
 /** Une image valide : data URL du bon format, base64 correct, octets qui sont bien une image de ce type, 12 Mo au plus. */
 function validImage(x: any): boolean {
@@ -489,7 +489,7 @@ export class EngineSession {
 
   private agentPower(id: string): Power {
     const a = this.st.prefs.agents?.[id] ?? {}
-    return agentPowerFor(this.perms.mode, this.perms.bypassVerified, a.power ?? (id === "codex" ? "commandes" : "modifications"))
+    return agentPowerFor(this.perms.mode, this.perms.bypassVerified, a.power ?? (id === "codex" ? "commandes" : "modifications"), id)
   }
 
   private async agent(id: string, text: string): Promise<string> {
