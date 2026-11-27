@@ -1451,6 +1451,8 @@ export function App(props: { cwd: string }) {
       case "permissions": {
         const apply = async (m: string) => {
           closeOverlay()
+          if (m.startsWith("bypass") && process.platform === "linux" && !sandboxAvailable().ok)
+            return note("Le bypass exige bubblewrap (paquet bubblewrap) : sans lui, rien ne protège le projet ni les fichiers d'Eclipse.", "error")
           if ((m === "bypass" || m === "bypass-total") && !perms.bypassVerified) {
             flash("Vérification du mot de passe de l'ordinateur…")
             await renderer.suspend() // la fenêtre du système, ou son invite texte, prend la main

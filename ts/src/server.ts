@@ -10,6 +10,7 @@ import { CATEGORY_LABEL, CATEGORY_ORDER, keyFor, modelCategory, poeBalance, prov
 import { setKey } from "./core/secrets"
 import { verifyPassword } from "./core/auth"
 import { needsProject } from "./core/protect"
+import { available as sandboxAvailable } from "./core/sandbox"
 import * as V from "./core/voice"
 import { cleanImages, EngineSession, type EngineEvent, type Space } from "./engine/session"
 import { approveFingerprint, pendingProject, revoke } from "./core/mcp"
@@ -159,6 +160,8 @@ const server = Bun.serve({
       }
       if (p === "/api/permmode") {
         const b = await body()
+        if (String(b.mode).startsWith("bypass") && process.platform === "linux" && !sandboxAvailable().ok)
+          return json({ ok: false, message: "Le bypass exige bubblewrap (paquet bubblewrap) : sans lui, rien ne protège le projet ni les fichiers d'Eclipse." })
         if (String(b.mode).startsWith("bypass") && !S.perms.bypassVerified) {
           const r = await verifyPassword(async (cmd) => (await Bun.spawn(cmd, { stdio: ["ignore", "ignore", "ignore"] }).exited))
           if (!r.ok) return json({ ok: false, message: `Bypass refusé : ${r.reason}` })

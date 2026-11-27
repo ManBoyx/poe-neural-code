@@ -8,6 +8,7 @@
  * Le bypass n'est activé qu'après vérification du mot de passe de l'ordinateur par le système (polkit) ;
  * il dure jusqu'à la fermeture d'Eclipse.
  */
+import { available as sandboxAvailable } from "./sandbox"
 export type PermMode = "demander" | "modifications" | "lecture" | "bypass" | "bypass-total"
 
 export const PERM_LABEL: Record<PermMode, string> = {
@@ -52,6 +53,9 @@ export class Permissions {
 
   setMode(m: PermMode): void {
     if ((m === "bypass" || m === "bypass-total") && !this.bypassVerified) throw new Error("bypass non vérifié")
+    // sans bubblewrap, rien n'enferme les commandes dans le projet ni ne protège les fichiers d'Eclipse : pas de bypass
+    if ((m === "bypass" || m === "bypass-total") && process.platform === "linux" && !sandboxAvailable().ok)
+      throw new Error("le bypass exige bubblewrap (paquet bubblewrap) : sans lui, rien ne protège le projet ni les fichiers d'Eclipse")
     this.mode = m
   }
 
