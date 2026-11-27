@@ -224,3 +224,22 @@ test("bypass : tout dans le projet sans confirmation, commandes enfermées ; byp
   expect(existsSync(outside)).toBe(true)
   rmSync(outside)
 })
+
+test("bypass : une commande non enfermée est toujours demandée ; sudo et ses cousins refusés où qu'ils soient", async () => {
+  env.perms.bypassVerified = true
+  env.perms.setMode("bypass")
+  answer = "deny"
+  expect(await env.perms.authorize({ tool: "run_command", kind: "exec", summary: "ls", destructive: false, confined: false, grantKey: "y" })).toBe(false)
+  expect(asked.length).toBe(1)
+  for (const c of ["echo a && sudo ls", "(sudo id)", "x=$(sudo id)", "env FOO=1 sudo id", "echo `pkexec id`", "doas ls", "run0 id", "true; su -c id"]) {
+    expect((await call("run_command", { command: c })).output).toContain("sudo n'est pas permis")
+  }
+  expect((await call("run_command", { command: "echo sudoku resultat" })).ok).toBe(true)
+})
+
+test("dans la garde, aucun programme ne peut obtenir de droits root (no_new_privs)", async () => {
+  env.perms.bypassVerified = true
+  env.perms.setMode("bypass-total")
+  const r = await call("run_command", { command: "grep NoNewPrivs /proc/self/status" })
+  expect(r.output).toMatch(/NoNewPrivs:\s*1/)
+})

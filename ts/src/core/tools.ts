@@ -13,6 +13,10 @@ import type { Kind, Memory } from "./memory"
 import type { McpManager } from "./mcp"
 import type { Skill } from "./extensions"
 
+/** Élévation de droits (sudo, doas, pkexec, run0, su) n'importe où dans la commande. Ce n'est qu'un premier filtre :
+ *  la vraie barrière est no_new_privs (bubblewrap ou setpriv), qui empêche tout programme setuid de devenir root. */
+const ROOT_RE = /(^|[\s;&|(){}`'"=!])(sudo|doas|pkexec|run0|su)(?=$|[\s;&|()<>`'"])/
+
 export interface ToolCall {
   id: string
   name: string
@@ -198,7 +202,7 @@ export async function runTool(env: ToolEnv, call: ToolCall): Promise<ToolResult>
         const cmd = String(a.command ?? "").trim()
         if (!cmd) return { ok: false, output: "commande vide" }
         if (isProtected(env.roots[0])) return { ok: false, output: "refusé : le dossier de travail est un dossier d'Eclipse. Ouvrez un projet (/projet NOM)." }
-        if (/(^|[;&|]\s*)sudo\b/.test(cmd)) return { ok: false, output: "sudo n'est pas permis aux modèles : lancez la commande vous-même si elle est nécessaire" }
+        if (ROOT_RE.test(cmd)) return { ok: false, output: "sudo n'est pas permis aux modèles : lancez la commande vous-même si elle est nécessaire" }
         const confined = sandboxFor(env.perms.mode, !!env.sandbox)
         const ok = await env.perms.authorize({ tool: "run_command", kind: "exec", summary: cmd, detail: cmd, destructive: isDestructive(cmd), confined, grantKey: `exec:${cmd.split(/\s+/)[0]}` })
         if (!ok) return { ok: false, output: "commande refusée par l'utilisateur" }

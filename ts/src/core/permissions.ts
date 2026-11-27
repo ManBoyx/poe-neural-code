@@ -61,9 +61,9 @@ export class Permissions {
     if (r.kind === "read" && !r.outside) return done("lecture", true)
     if (this.mode === "lecture" && r.kind !== "read") return done("refusé (lecture seule)", false)
     if (this.mode === "bypass-total") return done("bypass total", true)
-    // bypass : tout ce qui concerne le projet passe, même destructif ; une commande enfermée dans le projet aussi.
-    // Une commande NON enfermée (pas de bubblewrap) et destructive, ou une action hors du projet, est demandée.
-    if (this.mode === "bypass" && r.kind === "exec" && (r.confined || !r.destructive)) return done("bypass", true)
+    // bypass : tout ce qui concerne le projet passe, même destructif ; une commande passe si elle est enfermée dans le
+    // projet. Une commande NON enfermée (pas de bubblewrap), ou une action hors du projet, est demandée.
+    if (this.mode === "bypass" && r.kind === "exec" && r.confined) return done("bypass", true)
     if (this.mode === "bypass" && r.kind !== "exec" && !r.outside) return done("bypass", true)
     const sticky = !r.destructive && !r.outside
     if (sticky && this.grants.has(r.grantKey)) return done("session", true)

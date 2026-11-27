@@ -59,7 +59,6 @@ export function buildCommand(r: AgentRun): string[] {
       if (r.effort) c.push("--effort", r.effort)
       if (r.resume) c.push("--resume", r.resume)
       if (r.system) c.push("--append-system-prompt", r.system)
-      if (r.sandbox) c.push("--settings", JSON.stringify({ sandbox: { enabled: true } }))
       const sub = r.subagents !== false ? ",Agent" : ""
       if (r.power === "lecture") c.push("--tools", "Read,Grep,Glob" + sub)
       else if (r.power === "modifications") c.push("--permission-mode", "acceptEdits", "--tools", "Read,Grep,Glob,Edit,Write" + sub)
@@ -189,9 +188,11 @@ export async function* runAgent(r: AgentRun): AsyncGenerator<AgentEvent> {
   const cmd = buildCommand(r)
   const textMode = r.agent === "opencode" || r.agent === "gemini"
   if (r.agent === "opencode" || r.agent === "gemini") cmd.push(r.agent === "gemini" ? "-p" : "--", promptFor(r))
-  // agents sans sandbox utilisable ici : enveloppés entiers dans bubblewrap (projet + leurs réglages en écriture) ;
-  // les autres (et tous quand la sandbox est coupée) passent par la garde : fichiers d'Eclipse en lecture seule
-  const finalCmd = r.sandbox && textMode && sandboxAvailable().ok ? wrap(cmd, [r.cwd, ...agentStateDirs(r.agent)], r.cwd) : guard(cmd, r.cwd)
+  // agents sans sandbox utilisable ici (Claude Code : la sienne exige socat) : enveloppés entiers dans bubblewrap
+  // (projet + leurs réglages en écriture). Codex garde la sienne. Sandbox coupée : la garde (fichiers d'Eclipse en
+  // lecture seule, aucune élévation de droits).
+  const whole = r.sandbox && r.agent !== "codex" && sandboxAvailable().ok
+  const finalCmd = whole ? wrap(cmd, [r.cwd, ...agentStateDirs(r.agent)], r.cwd) : guard(cmd, r.cwd)
   let proc: ReturnType<typeof Bun.spawn>
   try {
     proc = Bun.spawn(finalCmd, { cwd: r.cwd, env, stdin: textMode ? "ignore" : "pipe", stdout: "pipe", stderr: "pipe", detached: true })

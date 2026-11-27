@@ -2,10 +2,10 @@
  * Sandbox (bac à sable), activée par défaut. Sous Linux, les commandes lancées par les modèles tournent dans
  * bubblewrap : tout le système est en lecture seule, sauf le projet (et les dossiers ajoutés), un /tmp privé et les
  * caches des outils de build. Le réseau reste disponible (installations de paquets, tests qui appellent une API).
- * Les agents utilisent leur propre sandbox (Claude Code : sandbox.enabled ; Codex : sandbox_mode) ; ceux qui n'en
- * ont pas d'utilisable ici (Gemini sans Docker, OpenCode) sont enveloppés entiers dans bubblewrap, avec leur dossier
- * de réglages accessible en écriture.
- * Le bypass ne désactive pas la sandbox : il ne fait que supprimer les confirmations.
+ * Codex utilise sa propre sandbox (sandbox_mode). Les autres agents (Claude Code, dont la sandbox exige socat, Gemini
+ * sans Docker, OpenCode) sont enveloppés entiers dans bubblewrap, avec leur dossier de réglages accessible en écriture.
+ * Le bypass force la sandbox (tout est permis, mais dans le projet) ; le bypass total la retire.
+ * Partout, sudo et les autres programmes « setuid » ne peuvent pas obtenir de droits root (no_new_privs).
  * Sandbox coupée ou non, les fichiers d'Eclipse sont toujours en lecture seule pour ces processus (voir guard).
  */
 import { existsSync } from "node:fs"
@@ -22,6 +22,11 @@ export function sandboxFor(mode: string, pref: boolean): boolean {
   if (mode === "bypass") return available().ok
   if (mode === "bypass-total") return false
   return pref && available().ok
+}
+
+/** Un agent reçoit tous les droits en bypass total, ou en bypass s'il peut être enfermé dans le projet. */
+export function agentBypass(mode: string): boolean {
+  return mode === "bypass-total" || (mode === "bypass" && available().ok)
 }
 
 export function available(): { ok: true; tool: string } | { ok: false; reason: string } {
@@ -60,7 +65,11 @@ export function wrap(cmd: string[], writable: string[], cwd: string): string[] {
  */
 export function guard(cmd: string[], cwd: string): string[] {
   const b = process.platform === "linux" ? Bun.which("bwrap") : null
-  if (!b) return cmd
+  if (!b) {
+    // sans bubblewrap : au moins aucune élévation de droits (sudo, pkexec…) pour la commande et ses descendants
+    const sp = process.platform === "linux" ? Bun.which("setpriv") : null
+    return sp ? [sp, "--no-new-privs", "--", ...cmd] : cmd
+  }
   // espace de PID privé : /proc ne montre que les processus de la commande (pas de passage par /proc/PID/root d'un
   // processus hors garde), et tout l'arbre meurt avec elle, même un descendant qui a créé sa propre session
   const args = [b, "--dev-bind", "/", "/", "--unshare-pid", "--proc", "/proc"]
@@ -73,7 +82,7 @@ export function guard(cmd: string[], cwd: string): string[] {
 export function agentStateDirs(agent: string): string[] {
   const h = home()
   return ({
-    claude: [join(h, ".claude"), join(h, ".claude.json")],
+    claude: [join(h, ".claude"), join(h, ".claude.json"), join(h, ".claude.json.backup"), join(h, ".local/share/claude"), join(h, ".local/state/claude")],
     codex: [join(h, ".codex")],
     gemini: [join(h, ".gemini")],
     opencode: [join(h, ".local/share/opencode"), join(h, ".config/opencode"), join(h, ".opencode")],

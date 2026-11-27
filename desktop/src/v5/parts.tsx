@@ -437,16 +437,19 @@ export function Composer(p: {
     el.style.height = Math.min(240, el.scrollHeight) + "px";
   }, [p.draft]);
   useEffect(() => { ta.current?.focus(); }, [p.space]);
-  // événements de composition abonnés directement (Preact ne les relie pas sous leur nom en casse mixte)
+  // événements de composition abonnés directement (Preact ne les relie pas sous leur nom en casse mixte). Vérifié à
+  // chaque rendu : le champ est recréé après la dictée, il faut alors rebrancher les écouteurs sur le nouveau.
+  const watched = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => {
     const el = ta.current;
-    if (!el) return;
-    const on = () => (composing.current = true);
-    const off = () => (composing.current = false);
-    el.addEventListener("compositionstart", on);
-    el.addEventListener("compositionend", off);
-    return () => { el.removeEventListener("compositionstart", on); el.removeEventListener("compositionend", off); };
-  }, [ta.current]);
+    if (el === watched.current) return;
+    watched.current?.removeEventListener("compositionstart", onCompStart);
+    watched.current?.removeEventListener("compositionend", onCompEnd);
+    el?.addEventListener("compositionstart", onCompStart);
+    el?.addEventListener("compositionend", onCompEnd);
+    watched.current = el;
+    composing.current = false;
+  });
   const send = () => {
     if ((!p.draft.trim() && !p.images.length) || p.busy) return;
     p.onSend(p.draft);
@@ -455,6 +458,8 @@ export function Composer(p: {
   // Entrée envoie, Maj+Entrée revient à la ligne. La composition (accents, IBus) est suivie ici : sous Linux, WebKit
   // marque parfois toutes les touches « en composition », ce qui empêchait Entrée d'envoyer.
   const composing = useRef(false);
+  const onCompStart = useRef(() => { composing.current = true; }).current;
+  const onCompEnd = useRef(() => { composing.current = false; }).current;
   const onKey = (e: KeyboardEvent) => {
     const enter = e.key === "Enter" || e.keyCode === 13;
     if (enter && e.shiftKey) return; // retour à la ligne

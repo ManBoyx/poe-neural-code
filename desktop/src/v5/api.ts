@@ -63,19 +63,22 @@ export async function copyText(text: string): Promise<boolean> {
   }
 }
 
-/** Image du presse-papiers (quand le collage ne transmet pas de fichier) en PNG, ou null. */
+/** Image du presse-papiers (quand le collage ne transmet pas de fichier), réduite comme un fichier collé, ou null. */
 export async function readClipboardImage(): Promise<string | null> {
   if (!isDesktop) return null;
+  let img: { size(): Promise<{ width: number; height: number }>; rgba(): Promise<Uint8Array>; close(): Promise<void> } | null = null;
   try {
     const { readImage } = await import("@tauri-apps/plugin-clipboard-manager");
-    const img = await readImage();
+    img = await readImage();
     const { width, height } = await img.size();
     const rgba = await img.rgba();
     const c = document.createElement("canvas");
     c.width = width; c.height = height;
     c.getContext("2d")!.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
-    return c.toDataURL("image/png");
+    const blob = await new Promise<Blob | null>((r) => c.toBlob(r, "image/png"));
+    return blob ? await imageFileToDataUrl(new File([blob], "presse-papiers.png", { type: "image/png" })) : null;
   } catch { return null; }
+  finally { img?.close().catch(() => {}); } // libère l'image gardée par l'application
 }
 
 /** Fichier image -> data URL, réduit (2048 px au plus, JPEG) s'il est grand, pour rester sous les limites des modèles. */

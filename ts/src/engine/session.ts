@@ -9,8 +9,8 @@
  * Les événements (texte, réflexion, outils, sous-agents, phases de /cg, autorisations, consommation) partent vers
  * l'écran par un rappel ; le serveur HTTP les relaie.
  */
-import { existsSync, mkdirSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { closeSync, constants as FS, existsSync, lstatSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs"
+import { join, sep } from "node:path"
 import { Budget, estimateUsd } from "../core/budget"
 import { cgTurn, CG_LABEL, type CgAgent, type CgMode } from "../core/cg"
 import { streamChat, type Msg } from "../core/chat"
@@ -23,7 +23,7 @@ import { Permissions, type Decision, type PermMode, type Request } from "../core
 import { isProtected, listProjects, needsProject, openProject, PROTECT_RULE, projectsRoot, slug } from "../core/protect"
 import { catalog, keyFor, provider, PROVIDERS, verifyKey, type ModelInfo, modelCategory, type ModelCategory } from "../core/providers"
 import { agentModels, runAgent, type Power } from "../core/agents"
-import { available as sandboxAvailable, sandboxFor } from "../core/sandbox"
+import { available as sandboxAvailable, sandboxFor, agentBypass } from "../core/sandbox"
 import { Snapshots } from "../core/snapshots"
 import { choose, load, save, type Choice, type State } from "../core/store"
 import { openAiTools, READ_ONLY_TOOLS, runTool, summarize, type Todo, type ToolEnv } from "../core/tools"
@@ -46,14 +46,57 @@ export type EngineEvent =
 
 /** Image collée ou déposée dans la saisie du desktop (data URL). */
 export interface PastedImage { name: string; dataUrl: string }
-const IMG_RE = /^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/
-/** Garde seulement des images valides et raisonnables : 6 au plus, 12 Mo chacune au plus (en base64). */
-export function cleanImages(list: unknown): PastedImage[] {
-  if (!Array.isArray(list)) return []
-  return list
-    .filter((x: any) => x && typeof x.dataUrl === "string" && x.dataUrl.length <= 12_000_000 && IMG_RE.test(x.dataUrl))
-    .slice(0, 6)
-    .map((x: any, i) => ({ name: String(x.name ?? `image-${i + 1}`).replace(/[^\w.-]/g, "_").slice(0, 60) || `image-${i + 1}`, dataUrl: x.dataUrl }))
+const IMG_RE = /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/]+={0,2})$/
+/** Signature des premiers octets de chaque format accepté. */
+const MAGIC: Record<string, (b: Buffer) => boolean> = {
+  png: (b) => b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  jpeg: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  webp: (b) => b.toString("latin1", 0, 4) === "RIFF" && b.toString("latin1", 8, 12) === "WEBP",
+  gif: (b) => /^GIF8[79]a$/.test(b.toString("latin1", 0, 6)),
+}
+/** Une image valide : data URL du bon format, base64 correct, octets qui sont bien une image de ce type, 12 Mo au plus. */
+function validImage(x: any): boolean {
+  if (!x || typeof x.dataUrl !== "string" || x.dataUrl.length > 12_000_000) return false
+  const m = IMG_RE.exec(x.dataUrl)
+  if (!m || m[2].length % 4 !== 0) return false
+  const bytes = Buffer.from(m[2], "base64")
+  return bytes.length > 12 && MAGIC[m[1]](bytes)
+}
+/** Garde les images valides, 6 au plus. `rejected` : nombre d'images écartées (pour le signaler). */
+export function cleanImages(list: unknown): { images: PastedImage[]; rejected: number } {
+  if (!Array.isArray(list)) return { images: [], rejected: 0 }
+  const ok = list.filter(validImage)
+  const images = ok.slice(0, 6).map((x: any, i) => ({ name: String(x.name ?? `image-${i + 1}`).replace(/[^\w.-]/g, "_").slice(0, 60) || `image-${i + 1}`, dataUrl: x.dataUrl }))
+  return { images, rejected: list.length - images.length }
+}
+
+/**
+ * Dépose les images dans <projet>/.eclipse/images et renvoie leurs chemins relatifs. Aucun lien
+ * symbolique n'est suivi (ni .eclipse, ni images, ni le fichier, créé exclusivement) : rien ne s'écrit hors du projet
+ * ni dans les fichiers d'Eclipse.
+ */
+export function writeImages(cwd: string, images: PastedImage[]): string[] {
+  const root = realpathSync.native(cwd)
+  if (isProtected(root)) throw new Error("images : le dossier de travail est un dossier d'Eclipse")
+  let dir = root
+  for (const part of [".eclipse", "images"]) {
+    dir = join(dir, part)
+    try {
+      if (!lstatSync(dir).isDirectory()) throw new Error(`images : ${part} n'est pas un vrai dossier (lien symbolique ou fichier)`)
+    } catch (e: any) {
+      if (e?.code !== "ENOENT") throw e
+      mkdirSync(dir)
+    }
+  }
+  if (!realpathSync.native(dir).startsWith(root + sep)) throw new Error("images : dossier hors du projet")
+  const paths = images.map((im, i) => {
+    const ext = im.dataUrl.slice(11, im.dataUrl.indexOf(";")).replace("jpeg", "jpg")
+    const file = `${Date.now()}-${i + 1}-${im.name.replace(/\.[a-z0-9]+$/i, "")}.${ext}`
+    const fd = openSync(join(dir, file), FS.O_WRONLY | FS.O_CREAT | FS.O_EXCL | FS.O_NOFOLLOW, 0o644)
+    try { writeSync(fd, Buffer.from(im.dataUrl.slice(im.dataUrl.indexOf(",") + 1), "base64")) } finally { closeSync(fd) }
+    return `.eclipse/images/${file}`
+  })
+  return paths
 }
 
 /** Canevas : un document que l'on voit à côté de la discussion et qui se met à jour en direct. */
@@ -353,18 +396,11 @@ export class EngineSession {
     return [{ type: "text", text }, ...images.map((im) => ({ type: "image_url" as const, image_url: { url: im.dataUrl } }))]
   }
 
-  /** Dépose les images dans <projet>/.eclipse/images et renvoie la phrase qui les indique à l'agent. */
+  /** Dépose les images dans le projet et renvoie la phrase qui les indique à l'agent. */
   private saveImages(images: PastedImage[]): string {
-    const dir = join(this.cwd, ".eclipse", "images")
-    mkdirSync(dir, { recursive: true })
-    const paths = images.map((im, i) => {
-      const ext = im.dataUrl.slice(11, im.dataUrl.indexOf(";")).replace("jpeg", "jpg")
-      const file = `${Date.now()}-${i + 1}-${im.name.replace(/\.[a-z0-9]+$/i, "")}.${ext}`
-      writeFileSync(join(dir, file), Buffer.from(im.dataUrl.slice(im.dataUrl.indexOf(",") + 1), "base64"))
-      return `.eclipse/images/${file}`
-    })
-    return `\n\nImages jointes par l'utilisateur (dans le projet) : ${paths.join(", ")}`
+    return `\n\nImages jointes par l'utilisateur (dans le projet) : ${writeImages(this.cwd, images).join(", ")}`
   }
+
 
   private async api(text: string, space: Space, canvas?: string | null, images: PastedImage[] = []): Promise<string> {
     const c = this.st.current
@@ -384,7 +420,7 @@ export class EngineSession {
     // canevas actif : la règle, et la version actuelle du document (éventuellement retouchée à la main par l'utilisateur)
     const canvasPart = canvas === undefined ? "" : "\n\n" + CANVAS_RULE + (canvas ? `\n\nVersion actuelle du canevas :\n\`\`\`html\n${canvas.slice(0, 60_000)}\n\`\`\`` : "")
     // le catalogue dit si le modèle lit les images ; s'il ne dit rien (bot Poe, serveur local…), on essaie
-    const canRead = !mi || !mi.input?.length || mi.input.includes("image") || !!mi.output?.includes("image")
+    const canRead = !mi || !mi.input?.length || mi.input.includes("image")
     const msgs: Msg[] = [{ role: "system", content: this.system(space, useTools, memCtx.text) + canvasPart }, ...this.history, { role: "user", content: this.userContent(text, images, canRead) }]
     if (memCtx.used.length) this.emit({ type: "notice", text: `Mémoire : ${memCtx.used.length} élément(s) utilisé(s)`, level: "info" })
     let final = ""
@@ -437,7 +473,7 @@ export class EngineSession {
   private agentPower(id: string): Power {
     const a = this.st.prefs.agents?.[id] ?? {}
     if (this.perms.mode === "lecture") return "lecture"
-    if (this.perms.mode.startsWith("bypass") && this.perms.bypassVerified) return "bypass"
+    if (agentBypass(this.perms.mode) && this.perms.bypassVerified) return "bypass"
     return a.power ?? (id === "codex" ? "commandes" : "modifications")
   }
 
@@ -507,7 +543,7 @@ export class EngineSession {
     let tin = 0, tout = 0
     const info = this.models[m.provider]?.find((x) => x.id === m.id)
     const mediaOnly = !info?.output || !info.output.includes("text")
-    const canRead = !info || !info.input?.length || info.input.includes("image") || !!info.output?.includes("image")
+    const canRead = !info || !info.input?.length || info.input.includes("image")
     for await (const e of streamChat(p, m.id, [{ role: "user", content: this.userContent(text, images, canRead) }], { signal: this.abort!.signal, noStream: mediaOnly })) {
       if (e.type === "text") {
         out += e.text

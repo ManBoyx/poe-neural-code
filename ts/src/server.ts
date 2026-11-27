@@ -145,8 +145,10 @@ const server = Bun.serve({
         const b = await body()
         const space = (b.space ?? "conversation") as Space
         if (S.busy) return json({ error: "une réponse est en cours" }, 409)
+        const imgs = cleanImages(b.images)
+        if (imgs.rejected) return json({ error: `${imgs.rejected} image${imgs.rejected > 1 ? "s" : ""} refusée${imgs.rejected > 1 ? "s" : ""} : PNG, JPEG, WebP ou GIF valide, 6 au plus, 9 Mo au plus chacune` }, 400)
         if (space === "work" && needsProject(S.cwd)) return json({ error: "projet requis", propose: S.proposeProject(String(b.text ?? "")) }, 412)
-        S.send(String(b.text ?? ""), space, { cg: !!b.cg, mediaModel: b.mediaModel, canvas: typeof b.canvas === "string" ? b.canvas : b.canvas === true ? "" : undefined, images: cleanImages(b.images) }).catch(() => {})
+        S.send(String(b.text ?? ""), space, { cg: !!b.cg, mediaModel: b.mediaModel, canvas: typeof b.canvas === "string" ? b.canvas : b.canvas === true ? "" : undefined, images: imgs.images }).catch(() => {})
         return json({ ok: true }, 202)
       }
       if (p === "/api/interrupt") return (S.interrupt(), json({ ok: true }))
