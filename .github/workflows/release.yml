@@ -63,16 +63,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      - name: Interface graphique dans le moteur (pour « eclipse web »)
+      - run: npm install -g bun@1.4.5
+      - name: Moteur Eclipse 5 (TypeScript, exécutable autonome)
         shell: bash
         run: |
-          (cd desktop && npm ci --no-fund && npm run build)
-          rm -rf src/poe_neural_code/web/static && cp -r desktop/dist src/poe_neural_code/web/static
-      - name: Moteur Eclipse (PyInstaller)
-        run: |
-          python -m pip install . pyinstaller
-          npm install --prefix src/poe_neural_code/cg_sdk --omit=optional --no-audit --no-fund
-          pyinstaller --noconfirm --log-level WARN --distpath build/engine/dist --workpath build/engine/work packaging/engine/eclipse-engine.spec
+          (cd ts && bun install --frozen-lockfile)
+          bun packaging/engine-ts/build.ts bun-linux-x64-baseline > build-engine.log 2>&1 || { grep -v '^Downloading' build-engine.log | tail -30; exit 1; }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
@@ -118,16 +114,12 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
-      - name: Interface graphique dans le moteur (pour « eclipse web »)
+      - run: npm install -g bun@1.4.5
+      - name: Moteur Eclipse 5 (TypeScript, exécutable autonome)
         shell: bash
         run: |
-          (cd desktop && npm ci --no-fund && npm run build)
-          rm -rf src/poe_neural_code/web/static && cp -r desktop/dist src/poe_neural_code/web/static
-      - name: Moteur Eclipse (PyInstaller)
-        run: |
-          python -m pip install . pyinstaller
-          npm install --prefix src/poe_neural_code/cg_sdk --omit=optional --no-audit --no-fund
-          pyinstaller --noconfirm --log-level WARN --distpath build/engine/dist --workpath build/engine/work packaging/engine/eclipse-engine.spec
+          (cd ts && bun install --frozen-lockfile)
+          bun packaging/engine-ts/build.ts bun-windows-x64-baseline > build-engine.log 2>&1 || { grep -v '^Downloading' build-engine.log | tail -30; exit 1; }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
