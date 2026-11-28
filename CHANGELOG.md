@@ -1,6 +1,6 @@
 # Journal des versions
 
-## 5.0.2 — CLI (non publiée)
+## 5.0.2 — CLI (28 novembre 2026)
 - `/voice` devient une dictée : tu parles, le texte s'écrit dans la saisie, transcrit par OpenAI (celle de ChatGPT).
   Whisper et la voix qui lisait les réponses ne sont plus utilisés. Échap annule à tout moment.
 - Un bot Poe hors catalogue ne reçoit pas d'outils et ses appels d'outils ne sont jamais exécutés.
@@ -11,7 +11,7 @@
 - Claude Code enfermé en entier dans bubblewrap quand la sandbox est active (sa propre sandbox exige socat).
 - Aucune élévation de droits possible pour les commandes et les agents (no_new_privs), même sans bubblewrap ;
   sudo, doas, pkexec, run0 et su refusés où qu'ils soient dans la commande.
-- Sans bubblewrap, le bypass demande chaque commande (rien ne peut l'enfermer dans le projet).
+- Sans bubblewrap, le bypass ne peut pas s'activer (rien ne pourrait protéger le projet ni les fichiers d'Eclipse).
 
 ## 5.0.1 — CLI (26 novembre 2026)
 - Poe : les 299 modèles du catalogue, y compris les 99 modèles d'images, de vidéos et de sons (Veo, Kling, Runway,
